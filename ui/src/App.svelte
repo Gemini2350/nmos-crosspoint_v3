@@ -8,7 +8,7 @@
   import ServerConnector from "./lib/ServerConnector/ServerConnectorService";
   import OverlayMenuService from "./lib/OverlayMenu/OverlayMenuService";
 
-  import { Icon, Squares2x2, Share, ListBullet, WrenchScrewdriver, ServerStack, LockOpen, LockClosed  } from "svelte-hero-icons";
+  import { Icon, Squares2x2, Share, ListBullet, WrenchScrewdriver, LockOpen, LockClosed  } from "svelte-hero-icons";
 
 
   import Crosspoint from './routes/crosspoint.svelte';
@@ -18,8 +18,6 @@
   import Logging from './routes/logging.svelte';
 
   import Debug from './routes/debug.svelte';
-  import Devices from './routes/devices.svelte';
-  import Matroxcip from './routes/mediadevices/matroxcip.svelte';
   import Riedelembrionix from './routes/mediadevices/riedelembrionix.svelte';
     import OverlayMenu from "./lib/OverlayMenu/OverlayMenu.svelte";
     import ServerConnectorOverlay from "./lib/ServerConnector/ServerConnectorOverlay.svelte";
@@ -29,12 +27,8 @@
 
   let routes = [
         {label:"Crosspoint", icon:Squares2x2, link:"/crosspoint"},
-        
-        
         {label:"Details", icon:ListBullet, link:"/details"},
-        
         {label:"Topology", icon:Share, link:"/topology"},
-        {label:"Devices", icon:ServerStack, link:"/mediadevices"},
 
         {label:"Setup",  icon:WrenchScrewdriver, link:"/setup"},
     ];
@@ -128,7 +122,7 @@
       set_theme();
     })
 
-    let autoTake = false;
+    let autoTake = true;
     function toggleAutotake(){
       ServerConnector.setAutoTake(autoTake);
     }
@@ -189,11 +183,7 @@
     <Route path="/debug" component={Debug}/>
     <Route path="/logging" component={Logging}/>
 
-    <Route path="/mediadevices/matroxcip" component={Matroxcip}/>
     <Route path="/mediadevices/riedelembrionix" component={Riedelembrionix}/>
-
-    <Route path="/mediadevices" component={Devices}/>
-
 
     <Route path="/setup" component={Setup}/>
 

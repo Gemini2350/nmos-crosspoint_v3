@@ -230,13 +230,15 @@ class _ServerConnector {
         this.connect();
       },10)
 
+      // Auto-Take is enabled by default. Only honour an explicit "false"
+      // that the user has previously stored via the UI toggle.
       let mode = localStorage.getItem("nmos_crosspoint_auto_take");
-      if(mode == "true"){
-          this.autoTake = true;
+      if(mode == "false"){
+          this.autoTake = false;
       }
     }
 
-    public autoTake = false;
+    public autoTake = true;
     public setAutoTake(mode:boolean){
       this.autoTake = mode;
       localStorage.setItem("nmos_crosspoint_auto_take", (mode ? "true":"false"));

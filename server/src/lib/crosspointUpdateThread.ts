@@ -106,15 +106,10 @@ class CrosspointUpdateThread{
             }
         }
 
-        if(this.settings.autoMulticast){
-            parentPort.postMessage(JSON.stringify({
-                log:{severity:"info", topic:"Multicast Config", text:"Starting automatic Multicast configuration.", raw:null}
-            }));
-            setInterval(()=>{
-                // Todo, when disabled, the service should run but not do any changes
-                this.updateMulticast();
-            },30000);
-        }
+        // Legacy autoMulticast loop has been replaced by the MulticastLeaseManager
+        // in the main thread (see ./multicastLeaseManager.ts). Keeping the
+        // updateMulticast() method around for now (dead code path), but the
+        // interval no longer starts here.
     }
 
 
@@ -868,21 +863,48 @@ class CrosspointUpdateThread{
                 case 'audio/L24':
                 case 'audio/L16':
                 case 'audio':
-                case 'urn:x-nmos:format:audio':
-                    if(flow.sample_rate.denominator){
-                        denom = flow.sample_rate.denominator;
+                case 'urn:x-nmos:format:audio': {
+                    // Prefer SDP manifest values when present — see comment in getNmosSenderForamt().
+                    let sampleRate = 0;
+                    let channels = (source && Array.isArray(source.channels)) ? source.channels.length : 0;
+                    let depth = flow.bit_depth || 0;
+                    try{
+                        let manifest = this.nmosState.sendersManifestDetail[senderId];
+                        if(manifest && Array.isArray(manifest.media)){
+                            for(let m of manifest.media){
+                                if(m && m.type === "audio" && Array.isArray(m.rtp) && m.rtp.length > 0){
+                                    let rtp = m.rtp[0];
+                                    if(rtp && rtp.rate){ sampleRate = Number(rtp.rate) || 0; }
+                                    if(rtp && rtp.encoding){ channels = Number(rtp.encoding) || channels; }
+                                    if(rtp && typeof rtp.codec === "string"){
+                                        let codec = rtp.codec.toUpperCase();
+                                        if(codec === "L16"){ depth = 16; }
+                                        else if(codec === "L24"){ depth = 24; }
+                                        else if(codec === "AM824"){ depth = 32; }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }catch(e){}
+                    if(!sampleRate && flow.sample_rate){
+                        if(flow.sample_rate.denominator){
+                            denom = flow.sample_rate.denominator;
+                        }
+                        sampleRate = (flow.sample_rate.numerator || 0) / denom;
                     }
                     // TODO VLAN and samples per Packet
                     bitrate = BitrateCalculator.calculateAudio({
                             encoding:"raw",
-                            sampleRate:flow.sample_rate.numerator / denom,
-                            channels:source.channels.length,
-                            depth:flow.bit_depth,
+                            sampleRate: sampleRate,
+                            channels: channels,
+                            depth: depth,
                             samplesPerPacket:48,
                             vlan:false,
                         }).averageEthernet/1000000
                     bitrateHint = "ok";
                   break;
+                }
                 case 'video':
                 case 'video/raw':
                 case 'urn:x-nmos:format:video':
@@ -965,23 +987,43 @@ class CrosspointUpdateThread{
           let rgb = "";
           let depth = 0;
           switch (flow.format) {
-            
-            case 'urn:x-nmos:format:audio':
-    
-              if(flow.sample_rate.denominator){
-                denom = flow.sample_rate.denominator;
+
+            case 'urn:x-nmos:format:audio': {
+              // Prefer the rate from the SDP manifest (a=rtpmap:<pt> <codec>/<rate>/<chan>)
+              // since some devices report a stale or default value in their IS-04
+              // flow resource (e.g. 44100 even when the actual stream is 48 kHz).
+              let sampleRate = 0;
+              let channels = (source && Array.isArray(source.channels)) ? source.channels.length : 0;
+              try{
+                let manifest = this.nmosState.sendersManifestDetail[senderId];
+                if(manifest && Array.isArray(manifest.media)){
+                  for(let m of manifest.media){
+                    if(m && m.type === "audio" && Array.isArray(m.rtp) && m.rtp.length > 0){
+                      let rtp = m.rtp[0];
+                      if(rtp && rtp.rate){ sampleRate = Number(rtp.rate) || 0; }
+                      if(rtp && rtp.encoding){ channels = Number(rtp.encoding) || channels; }
+                      break;
+                    }
+                  }
+                }
+              }catch(e){}
+              if(!sampleRate && flow.sample_rate){
+                if(flow.sample_rate.denominator){
+                  denom = flow.sample_rate.denominator;
+                }
+                sampleRate = (flow.sample_rate.numerator || 0) / denom;
               }
+              let khz = sampleRate ? Math.round(sampleRate / 100) / 10 : 0; // 1 decimal place
               info +=
                 '' +
-                source.channels.length +
+                channels +
                 'Ch ' +
-                flow.bit_depth +
+                (flow.bit_depth || '?') +
                 'bit ' +
-                Math.floor(
-                  flow.sample_rate.numerator / denom / 1000
-                ) +
+                khz +
                 'kHz';
               break;
+            }
             case 'video':
             case 'urn:x-nmos:format:video':
               

@@ -20,6 +20,7 @@ import * as jsonpatch from 'fast-json-patch';
 import * as sdpTransform from 'sdp-transform';
 import { CrosspointAbstraction, CrosspointConnectionSenderInfo } from "./crosspointAbstraction";
 import { Topology } from "./topology";
+import { MulticastLeaseManager } from "./multicastLeaseManager";
 
 const fs = require("fs");
 
@@ -526,8 +527,13 @@ export class NmosRegistryConnector {
                     }catch(e){}
 
                     
-                    if (manifest_href && active && senderId) {
-                        //console.log("----- load manifest for "+label)
+                    // We previously only fetched the manifest while the sender's
+                    // subscription was active. Most ST 2110 senders expose the SDP
+                    // unconditionally (it describes the staged transport), so we
+                    // try regardless. If the device 404s we log a debug warning
+                    // and move on - the catch handler stays untouched.
+                    let _activeUnused = active; // kept for backwards compatibility
+                    if (manifest_href && senderId) {
                         axios.get(g.post.manifest_href).then(response => {
                             if(response.data.length > 10){
                                 // TODO Check for BAD SDP Files, is this already enough, more than 10 chars and more than 0 flows
@@ -612,18 +618,38 @@ export class NmosRegistryConnector {
                         SyncLog.log("warn", "NMOS", "Can not get active configuration of sender, no controls available.")
                     }
 
+                    let gotData = false;
                     for(let href of active_href){
                         try{
                             let response = await axios.get(href);
                             this.nmosState.senderActiveData[senderId] = response.data;
-                            return;
+                            gotData = true;
+                            break;
                         }catch(e){
                             SyncLog.log("warn", "NMOS", "Can not get active configuration of sender:",{error: e.message, href : href});
                         }
                     }
 
+                    // Always publish the new state so the UI sees changes even
+                    // for inactive senders (e.g. after setFlowMulticast).
                     this.syncNmos.setState(this.nmosState);
                     this.updateCrosspoint();
+                    if(!gotData){
+                        // no-op: kept for clarity
+                    }
+
+                    // ----- Multicast Lease Manager: ensure + reconcile -----
+                    // Runs only when auto-allocation is enabled and we received
+                    // up-to-date active data. The manager allocates a pair if
+                    // the sender doesn't have one yet, then forces the
+                    // configured addresses if reality drifts from the lease.
+                    if(gotData){
+                        try{
+                            this.reconcileSenderWithLease(senderId);
+                        }catch(e:any){
+                            SyncLog.log("warn", "Multicast Lease", "Reconcile failed for " + senderId + ": " + e.message);
+                        }
+                    }
                 }
             } else {
                 if (type == "senders") {
@@ -672,6 +698,63 @@ export class NmosRegistryConnector {
     reconnectOnChanges(senderId:string){
         CrosspointAbstraction.instance.reconnectOnChangesFromNmos(senderId);
     }
+
+    /**
+     * Find whether the given sender's multicast IPs collide with any *other*
+     * currently active sender on the same leg index. Returns null if there's
+     * no conflict, otherwise returns the offending sender's label, id, the
+     * conflicting leg index and the multicast IP.
+     *
+     * Same-sender legs do NOT conflict with each other (primary/secondary
+     * failover is allowed to use the same multicast). Cross-leg comparison
+     * is also allowed — only leg 0 of one sender vs leg 0 of another etc.
+     */
+    findMulticastConflict(senderId:string): { id:string, label:string, leg:number, multicast:string } | null {
+        try{
+            let activeData:any = (this.nmosState as any).senderActiveData?.[senderId];
+            if(!activeData || !Array.isArray(activeData.transport_params)){
+                return null;
+            }
+            // Build the list of multicasts we want to claim, per leg index.
+            let ourLegs: Array<{ index:number, ip:string }> = [];
+            activeData.transport_params.forEach((tp:any, index:number)=>{
+                if(tp && typeof tp.destination_ip === "string" && tp.destination_ip){
+                    ourLegs.push({ index, ip: tp.destination_ip });
+                }
+            });
+            if(ourLegs.length === 0){
+                return null;
+            }
+            // Iterate every OTHER sender that is currently active.
+            for(let otherId in this.nmosState.senders){
+                if(otherId === senderId){ continue; }
+                let other = this.nmosState.senders[otherId];
+                if(!other || !other.subscription || !other.subscription.active){
+                    continue;
+                }
+                let otherActive:any = (this.nmosState as any).senderActiveData?.[otherId];
+                if(!otherActive || !Array.isArray(otherActive.transport_params)){
+                    continue;
+                }
+                for(let leg of ourLegs){
+                    let tp = otherActive.transport_params[leg.index];
+                    if(tp && typeof tp.destination_ip === "string" && tp.destination_ip === leg.ip){
+                        let label = other.label || otherId;
+                        // Add device label as prefix for context
+                        try{
+                            let dev = this.nmosState.devices[other.device_id];
+                            if(dev && dev.label){
+                                label = dev.label + " / " + label;
+                            }
+                        }catch(e){}
+                        return { id: otherId, label, leg: leg.index, multicast: leg.ip };
+                    }
+                }
+            }
+        }catch(e){}
+        return null;
+    }
+
 
     async connectionGetSenderInfo(senderId:string){
         let info:CrosspointConnectionSenderInfo = {
@@ -933,41 +1016,37 @@ export class NmosRegistryConnector {
                 }
             }
 
+            // Determine number of legs: prefer interface_bindings, otherwise
+            // fall back to whatever the sender currently advertises in its
+            // active transport_params; default to 1 leg.
+            let legCount = 1;
+            try{
+                if(Array.isArray(sender.interface_bindings) && sender.interface_bindings.length > 0){
+                    legCount = sender.interface_bindings.length;
+                }else{
+                    let activeData = (this.nmosState as any).senderActiveData?.[senderId];
+                    if(activeData && Array.isArray(activeData.transport_params) && activeData.transport_params.length > 0){
+                        legCount = activeData.transport_params.length;
+                    }
+                }
+            }catch(e){}
+            if(legCount < 1){ legCount = 1; }
+
+            let rtpEnabled = !disable;
+            let transportParams:any[] = [];
+            for(let i=0;i<legCount;i++){
+                transportParams.push({ rtp_enabled: rtpEnabled });
+            }
+
             let patch:any = {
                 "receiver_id": null,
-                "master_enable": true,
+                "master_enable": !disable,
                 "activation": {
                     "mode": "activate_immediate",
                     "requested_time": null,
                 },
-                "transport_params": [
-                    {
-                        "rtp_enabled": true,
-                    },
-                    {
-                        "rtp_enabled": true,
-                    }
-                ]
+                "transport_params": transportParams
             };
-
-            if(disable){
-                patch = {
-                    "receiver_id": null,
-                    "master_enable": false,
-                    "activation": {
-                        "mode": "activate_immediate",
-                        "requested_time": null,
-                    },
-                    "transport_params": [
-                        {
-                            "rtp_enabled": false,
-                        },
-                        {
-                            "rtp_enabled": false,
-                        }
-                    ]
-                };
-            }
 
 
             for(let href of controlHrefs){
@@ -1009,6 +1088,75 @@ export class NmosRegistryConnector {
     }
 
 
+    /**
+     * Toggle a receiver's master_enable flag. Used by the Details page
+     * to activate / deactivate a receiver without changing its current
+     * sender subscription (sender_id and transport_file stay in place).
+     */
+    async enableReceiver(receiverId:string, disable=false){
+        try{
+            let versionFound = false;
+            let controlHrefs:any[] = [];
+
+            let receiver = this.nmosState.receivers[receiverId];
+            if(!receiver){
+                SyncLog.log("warning", "NMOS", "Cannot toggle receiver, unknown id: " + receiverId);
+                return;
+            }
+            let device = this.nmosState.devices[receiver.device_id];
+
+            let controlTypes = [
+                {type:"urn:x-nmos:control:sr-ctrl/v1.1", version:"v1.1"},
+                {type:"urn:x-nmos:control:sr-ctrl/v1.0", version:"v1.0"}
+            ];
+            for(let type of controlTypes){
+                device.controls.forEach((control:any)=>{
+                    if(control.type == type.type){
+                        controlHrefs.push({href:control.href, version:type.version});
+                        versionFound = true;
+                    }
+                });
+                if(versionFound){ break; }
+            }
+
+            let patch:any = {
+                master_enable: !disable,
+                activation: {
+                    mode: "activate_immediate",
+                    requested_time: null
+                }
+            };
+
+            for(let href of controlHrefs){
+                let fixSlash = (href.href[href.href.length-1] == "/") ? "" : "/";
+                let patchHref = href.href + fixSlash + "single/receivers/" + receiverId + "/staged";
+                try{
+                    await axios.patch(patchHref, patch, {timeout:30000});
+                    SyncLog.log("success", "nmos", "Successfully " + (disable?"disabled":"enabled") + " receiver: " + receiverId, {href:patchHref, data:patch});
+                    return;
+                }catch(e:any){
+                    if(axios.isAxiosError(e)){
+                        if(e.code == "ETIMEDOUT"){
+                            SyncLog.log("info", "nmos", "Patch on " + receiverId + " timed out, trying next.");
+                        }else{
+                            let logBody:any = {controlHrefs, failedControl:patchHref, patch};
+                            if(e.code == "ERR_BAD_REQUEST" && e.response){
+                                logBody.error = e.response.data;
+                            }else{
+                                logBody.message = e.message;
+                            }
+                            SyncLog.log("error", "nmos", "Receiver " + receiverId + " returned Error: " + e.code, logBody);
+                            return;
+                        }
+                    }else{
+                        return;
+                    }
+                }
+            }
+        }catch(e){}
+    }
+
+
     async setFlowMulticast(senderId:string, data:any){
 
         try{
@@ -1032,24 +1180,58 @@ export class NmosRegistryConnector {
                 }
             }
 
+            // Determine number of legs the sender actually advertises.
+            let legCount = 1;
+            try{
+                if(Array.isArray(sender.interface_bindings) && sender.interface_bindings.length > 0){
+                    legCount = sender.interface_bindings.length;
+                }else{
+                    let activeData = (this.nmosState as any).senderActiveData?.[senderId];
+                    if(activeData && Array.isArray(activeData.transport_params) && activeData.transport_params.length > 0){
+                        legCount = activeData.transport_params.length;
+                    }
+                }
+            }catch(e){}
+            if(legCount < 1){ legCount = 1; }
+
+            // Also stretch the array if the requested index demands it
+            if(Array.isArray(data.legs)){
+                data.legs.forEach((l:any)=>{
+                    if(typeof l.index === "number" && l.index + 1 > legCount){
+                        legCount = l.index + 1;
+                    }
+                });
+            }
+
+            let transportParams:any[] = [];
+            for(let i=0;i<legCount;i++){
+                transportParams.push({});
+            }
+
             let patch:any = {
                 "receiver_id": null,
                 "activation": {
                     "mode": "activate_immediate",
                     "requested_time": null,
                 },
-                "transport_params": [
-                    {
-                        
-                    },
-                    {
-                       
-                    }
-                ]
+                "transport_params": transportParams
             };
 
             data.legs.forEach((l)=>{
-                patch.transport_params[l.index] = {destination_ip:l.multicast, source_ip:"auto"}
+                if(typeof l.index !== "number" || l.index < 0 || l.index >= legCount){
+                    return;
+                }
+                let leg:any = {source_ip:"auto"};
+                if(l.multicast !== undefined && l.multicast !== null && l.multicast !== ""){
+                    leg.destination_ip = l.multicast;
+                }
+                if(l.port !== undefined && l.port !== null && l.port !== ""){
+                    let p = parseInt(""+l.port);
+                    if(!isNaN(p) && p > 0 && p < 65536){
+                        leg.destination_port = p;
+                    }
+                }
+                patch.transport_params[l.index] = leg;
             });
 
             
@@ -1098,6 +1280,78 @@ export class NmosRegistryConnector {
 
         }
 
+    }
+
+
+    /**
+     * Ensure the given sender has a Multicast Lease and that its active IS-05
+     * transport_params reflect the lease's addresses. Called after every
+     * senderActiveData refresh. Idempotent and safe to call repeatedly.
+     */
+    private reconcileSenderWithLease(senderId:string){
+        let manager = MulticastLeaseManager.instance;
+        if(!manager){ return; }
+
+        let sender = this.nmosState.senders[senderId];
+        if(!sender){ return; }
+        let flow:any = this.nmosState.flows[sender.flow_id];
+        if(!flow){ return; }
+        let source:any = this.nmosState.sources[flow.source_id];
+
+        let mediaType:string = flow.media_type || "";
+        let channels:number = 0;
+        try{
+            if(source && Array.isArray(source.channels)){
+                channels = source.channels.length;
+            }
+        }catch(e){}
+
+        let deviceLabel = "";
+        let nodeId = "";
+        try{
+            let dev = this.nmosState.devices[sender.device_id];
+            if(dev){ deviceLabel = dev.label || ""; nodeId = dev.node_id || ""; }
+        }catch(e){}
+
+        // Reuse the active port if known (most senders default to 5004)
+        let port = 5004;
+        try{
+            let active:any = (this.nmosState as any).senderActiveData?.[senderId];
+            if(active && Array.isArray(active.transport_params) && active.transport_params.length > 0){
+                let tp = active.transport_params[0];
+                if(tp && typeof tp.destination_port === "number" && tp.destination_port > 0){
+                    port = tp.destination_port;
+                }
+            }
+        }catch(e){}
+
+        let lease = manager.ensureLease({ senderId, mediaType, channels, deviceLabel, nodeId, port });
+        if(!lease){ return; }
+
+        // Compare lease against current active transport_params
+        let active:any = (this.nmosState as any).senderActiveData?.[senderId];
+        if(!active || !Array.isArray(active.transport_params)){ return; }
+
+        let legs:any[] = [];
+        active.transport_params.forEach((tp:any, idx:number)=>{
+            let desiredIp = (idx === 0) ? lease.primaryIp : (idx === 1 ? lease.secondaryIp : null);
+            if(desiredIp === null){ return; }
+            let needIp   = (tp && tp.destination_ip   !== desiredIp);
+            let needPort = (tp && typeof tp.destination_port === "number" && tp.destination_port !== lease.port);
+            if(needIp || needPort){
+                let legUpdate:any = { index: idx };
+                if(needIp){   legUpdate.multicast = desiredIp; }
+                if(needPort){ legUpdate.port = lease.port; }
+                legs.push(legUpdate);
+            }
+        });
+
+        if(legs.length > 0){
+            SyncLog.log("info", "Multicast Lease", "Reconciling sender " + senderId + " to lease addresses.", {legs});
+            // Fire-and-forget — the PATCH triggers another getSenderActive,
+            // which lands here again but finds no diff and stops.
+            this.setFlowMulticast(senderId, { legs }).catch(()=>{});
+        }
     }
 
 

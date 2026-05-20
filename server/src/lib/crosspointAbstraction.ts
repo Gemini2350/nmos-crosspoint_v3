@@ -2,6 +2,7 @@ import { SyncObject } from "./SyncServer/syncObject";
 import { LoggedError, SyncLog } from "./syncLog";
 import { error } from "console";
 import { NmosRegistryConnector } from "./nmosConnector";
+import { MulticastLeaseManager } from "./multicastLeaseManager";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -90,7 +91,17 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             if(id.startsWith("nmos_")){
                 let nmosId = id.slice(5);
                 NmosRegistryConnector.instance.enableFlow(nmosId,disable);
-            } 
+            }
+            resolve({});
+        });
+    }
+
+    enableReceiver(id:string, disable=false){
+        return new Promise((resolve, reject) => {
+            if(id.startsWith("nmos_")){
+                let nmosId = id.slice(5);
+                NmosRegistryConnector.instance.enableReceiver(nmosId, disable);
+            }
             resolve({});
         });
     }
@@ -99,8 +110,25 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         return new Promise((resolve, reject) => {
             if(id.startsWith("nmos_")){
                 let nmosId = id.slice(5);
+
+                // Record the manual edit in the Lease Manager so it doesn't
+                // immediately reconcile our user-typed value back to the
+                // previously-allocated lease address.
+                try{
+                    if(MulticastLeaseManager.instance && Array.isArray(data?.legs)){
+                        data.legs.forEach((l:any) => {
+                            if(typeof l.index !== "number") return;
+                            let ip = (typeof l.multicast === "string") ? l.multicast.trim() : "";
+                            let port = (typeof l.port === "number" && l.port > 0) ? l.port : undefined;
+                            if(ip || port !== undefined){
+                                MulticastLeaseManager.instance.recordManualEdit(nmosId, l.index, ip, port);
+                            }
+                        });
+                    }
+                }catch(e){}
+
                 NmosRegistryConnector.instance.setFlowMulticast(nmosId,data);
-            } 
+            }
             resolve({});
         });
     }
@@ -108,6 +136,29 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     
     crosspointApi(data:any){
         return new Promise((resolve, reject) => {
+            // Intercept device-delete here so the Multicast Lease Manager can
+            // release the freed senders' pairs back into the pool. The worker
+            // thread doesn't have direct access to the lease manager singleton,
+            // so we do it on the main thread before forwarding the command.
+            try{
+                if(data && data.action === "delete" && data.devId && !data.flowId){
+                    let dev = this.crosspointState.devices.find((d:any) => d.id === data.devId);
+                    if(dev){
+                        let senderIds:string[] = [];
+                        for(let type of Object.keys(dev.senders || {})){
+                            (dev.senders[type] || []).forEach((s:any)=>{
+                                if(s && s.id){ senderIds.push(s.id.startsWith("nmos_") ? s.id.slice(5) : s.id); }
+                            });
+                        }
+                        if(senderIds.length > 0 && MulticastLeaseManager.instance){
+                            MulticastLeaseManager.instance.releaseLeases(senderIds);
+                        }
+                    }
+                }
+            }catch(e:any){
+                SyncLog.log("warn", "Multicast Lease", "Could not release leases on delete: " + e.message);
+            }
+
             this.worker.postMessage(JSON.stringify({
                 crosspointChanges:data
             }));
@@ -409,7 +460,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                             let nmosId = src.id.slice(5);
                             senderInfo = await NmosRegistryConnector.instance.connectionGetSenderInfo(nmosId);
                         }
-                        
+
                     }catch(e){
                         reject({src:src,dst:dst,status:"failed sender info"});
                     }
@@ -425,10 +476,35 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     }
                 }
 
-                // TODO handle inactive Sender
+                // If the source sender is currently inactive, we try to activate
+                // it on-the-fly. First make sure its multicast isn't already
+                // claimed by another active sender on the same leg.
+                if(src && src.id.startsWith("nmos_") && senderInfo && senderInfo.active === false){
+                    let nmosId = src.id.slice(5);
+                    let conflict = NmosRegistryConnector.instance.findMulticastConflict(nmosId);
+                    if(conflict){
+                        let msg = "Multicast " + conflict.multicast +
+                                  " (Leg " + (conflict.leg + 1) + ") is already in use by sender: " +
+                                  conflict.label;
+                        SyncLog.log("warning", "connect_crosspoint", "Refusing to auto-activate " + src.id + " — " + msg);
+                        reject({src:src,dst:dst,status:"failed", detail:{message: msg, log:""}});
+                        return;
+                    }
+                    SyncLog.log("info", "connect_crosspoint", "Auto-activating inactive sender before connect: " + src.id);
+                    try{
+                        await NmosRegistryConnector.instance.enableFlow(nmosId, false);
+                        // mark the locally-cached senderInfo as active so downstream
+                        // code doesn't take another inactive-path.
+                        senderInfo.active = true;
+                    }catch(e:any){
+                        let msg = "Could not auto-activate sender: " + (e && e.message ? e.message : "unknown");
+                        reject({src:src,dst:dst,status:"failed", detail:{message: msg, log:""}});
+                        return;
+                    }
+                }
 
 
-                    
+
                 if(dst.id.startsWith("nmos_")){
                     try{
                         let nmosId = dst.id.slice(5);

@@ -1,5 +1,365 @@
+// Colors aligned with crosspoint.scss
+$det-color-video: theme('colors.green.500');
+$det-color-audio: theme('colors.amber.500');
+$det-color-data:  theme('colors.blue.500');
 
 .details-page {
 
-    
+    // No fixed thead anymore – sticky group/section rows take over the role
+    // of the column header. Heights here match the CSS top offsets below.
+    $det-device-row-height: 56px;
+
+    // Device row (top level)
+    tr.det-device {
+        background-color: theme('colors.base-300') !important;
+        cursor: pointer;
+
+        // Stays visible while scrolling through its expanded content
+        td {
+            position: sticky;
+            top: 0;
+            z-index: 4;
+            background-color: theme('colors.base-300') !important;
+            padding-top: 12px;
+            padding-bottom: 12px;
+        }
+
+        // The td itself stays as a regular table-cell so position:sticky
+        // works reliably. The flex layout sits inside a wrapper div.
+        .det-device-label {
+            // intentionally no display:flex here
+        }
+        .det-device-label-inner {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+
+            strong {
+                font-size: 1.0rem;
+            }
+        }
+        .det-device-label-text {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.15;
+            gap: 1px;
+        }
+        .det-device-name-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .det-device-edit {
+            // Pencil sits directly next to the name, always visible (not just on hover)
+            visibility: visible !important;
+            position: static !important;
+            padding: 2px !important;
+            min-height: 0;
+            opacity: 0.6;
+            &:hover { opacity: 1; }
+            svg { width: 14px; height: 14px; }
+        }
+        .det-device-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            border-radius: 4px;
+            color: theme('colors.sky.400');
+            opacity: 0.7;
+            transition: opacity 0.1s, background-color 0.1s;
+
+            svg { width: 14px; height: 14px; }
+
+            &:hover {
+                opacity: 1;
+                background-color: theme('colors.base-200');
+            }
+        }
+        .det-device-gmid {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.7rem;
+            color: theme('colors.slate.400');
+            letter-spacing: 0.02em;
+
+            &.det-device-gmid-warn {
+                color: theme('colors.amber.500');
+                font-weight: 600;
+            }
+        }
+        .det-device-counts {
+            margin-left: auto;
+            color: theme('colors.slate.400');
+            font-size: 0.8rem;
+        }
+    }
+
+    // Section header inside an expanded device ("SENDERS" / "RECEIVERS")
+    // Doubles as the column legend (Type/Codec/…/Manifest).
+    tr.det-section {
+        cursor: pointer;
+        td {
+            // Sticks just below the device row when scrolling
+            position: sticky;
+            top: $det-device-row-height;
+            z-index: 3;
+
+            padding: 8px 16px 8px 12px;
+            font-size: 0.7rem;
+            letter-spacing: 0.06em;
+            color: theme('colors.slate.300');
+            text-transform: uppercase;
+            background-color: theme('colors.base-200') !important;
+            border-top: 1px solid theme('colors.base-300');
+            border-bottom: 1px solid theme('colors.base-300');
+        }
+        .det-section-title {
+            font-weight: 700;
+            letter-spacing: 0.12em;
+        }
+        .det-section-count {
+            color: theme('colors.slate.500');
+            font-weight: 400;
+            margin-left: 4px;
+        }
+        .data-table-expand {
+            display: inline-block;
+            width: 22px;
+            svg {
+                width: 16px;
+                height: 16px;
+                color: theme('colors.slate.400');
+            }
+            &.data-table-expand-active svg {
+                transform: rotate(90deg);
+            }
+        }
+        &.det-section-receivers .det-section-title {
+            color: theme('colors.sky.400');
+        }
+        &.det-section-senders .det-section-title {
+            color: theme('colors.green.400');
+        }
+        &:hover td {
+            background-color: theme('colors.base-300') !important;
+        }
+    }
+
+    // Receiver-side: small note showing the connected sender
+    tr.det-flow-rx {
+        .det-recv-source {
+            margin-left: 8px;
+            color: theme('colors.slate.400');
+            font-size: 0.8rem;
+            font-style: italic;
+        }
+    }
+
+    // Sender row (second level) — same look as crosspoint type pill
+    tr.det-flow {
+
+        .cp-type {
+            display: inline-block;
+            position: relative;
+            padding: 4px;
+            margin: 2px 4px 2px 0;
+            height: 28px;
+            width: 28px;
+            border-radius: 6px;
+            vertical-align: middle;
+
+            background-color: theme('colors.neutral-600');
+
+            svg {
+                width: 18px;
+                height: 18px;
+                color: theme('colors.neutral-400');
+            }
+
+            &.cp-type-video svg { color: $det-color-video; }
+            &.cp-type-audio svg { color: $det-color-audio; }
+            &.cp-type-data  svg { color: $det-color-data;  }
+
+            &.active {
+                &.cp-type-video { background-color: $det-color-video; }
+                &.cp-type-audio { background-color: $det-color-audio; }
+                &.cp-type-data  { background-color: $det-color-data;  }
+                svg { color: #ffffff; }
+            }
+
+            // Clickable activation toggle
+            &.det-toggle-active {
+                cursor: pointer;
+                transition: transform 0.08s ease-in-out, box-shadow 0.08s ease-in-out;
+
+                &:hover {
+                    transform: scale(1.08);
+                    box-shadow: 0 0 0 2px rgba(255,255,255,0.12);
+                }
+                &:active {
+                    transform: scale(0.95);
+                }
+            }
+        }
+
+        .det-flow-type-label {
+            text-transform: uppercase;
+            font-size: 0.8rem;
+            color: theme('colors.slate.400');
+            vertical-align: middle;
+        }
+
+        &.is-inactive {
+            td {
+                color: theme('colors.slate.500');
+            }
+        }
+
+        // Destination IP / port group
+        .det-leg {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin: 2px 0;
+
+            .det-leg-label {
+                color: theme('colors.slate.400');
+                font-size: 0.75rem;
+                min-width: 44px;
+            }
+            .det-leg-colon {
+                color: theme('colors.slate.400');
+                margin: 0 2px;
+            }
+            .det-leg-value {
+                font-family: 'Roboto Mono', monospace;
+            }
+            .det-leg-input {
+                font-family: 'Roboto Mono', monospace;
+                background-color: theme('colors.base-200');
+                border: 1px solid theme('colors.base-300');
+                border-radius: 3px;
+                padding: 1px 6px;
+                color: inherit;
+                font-size: 0.9rem;
+
+                &:focus {
+                    outline: none;
+                    border-color: theme('colors.info');
+                }
+            }
+            .det-leg-input-port {
+                width: 5.5em;
+            }
+            .det-leg-btn {
+                padding: 0 6px;
+                min-height: 22px;
+                height: 22px;
+                margin-left: 4px;
+            }
+            .det-leg-error {
+                margin-left: 6px;
+                font-size: 0.7rem;
+            }
+            // Live warning when the typed IP matches another active sender on the same leg
+            .det-leg-warning {
+                margin-left: 6px;
+                font-size: 0.75rem;
+                font-weight: 600;
+                color: theme('colors.amber.400');
+            }
+            .det-leg-input-warn {
+                border-color: theme('colors.amber.500') !important;
+                background-color: rgba(245, 158, 11, 0.08);
+            }
+            .det-dup-hint {
+                font-size: 0.7rem;
+                font-weight: 600;
+                margin-left: 6px;
+                padding: 1px 4px;
+                background: theme('colors.red.700');
+                color: white;
+                border-radius: 3px;
+            }
+        }
+
+        // Duplicate Multicast IP highlight
+        .det-leg-duplicate {
+            background-color: rgba(226, 30, 30, 0.25);
+            border: 1px solid theme('colors.red.600');
+        }
+
+        // Receiver legs are display-only — but keep the colour/weight the
+        // same as the editable sender legs so the rows look consistent.
+        .det-leg-readonly {
+            color: inherit;
+        }
+    }
 }
+
+html[data-theme="light"] {
+    .details-page {
+        tr.det-flow.is-inactive td {
+            color: theme('colors.slate.500');
+        }
+        tr.det-flow .det-leg-duplicate {
+            background-color: rgba(226, 30, 30, 0.18);
+        }
+    }
+}
+
+// Compact counter pill in the details filter bar (top-right)
+.det-counters {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    white-space: nowrap;
+
+    color: theme('colors.slate.400');
+    cursor: default !important;
+    pointer-events: none;
+
+    .det-counter-sep {
+        color: theme('colors.slate.500');
+    }
+    strong {
+        font-weight: 600;
+        color: theme('colors.slate.300');
+    }
+}
+
+
+// SDP viewer modal
+.modal-box.det-sdp-modal {
+    max-width: min(80vw, 900px);
+    width: min(80vw, 900px);
+
+    .det-sdp-content {
+        background-color: theme('colors.base-300');
+        color: theme('colors.base-content');
+        padding: 12px 16px;
+        border-radius: 6px;
+        max-height: 60vh;
+        overflow: auto;
+        font-family: 'Roboto Mono', monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre;
+        margin-top: 12px;
+    }
+}
+
+// SDP action button (in sender row Actions column)
+.details-page tr.det-flow .data-table-action-buttons .btn {
+    .det-action-label {
+        margin-left: 4px;
+        font-size: 0.8rem;
+    }
+    svg { width: 18px; height: 18px; }
+}
+

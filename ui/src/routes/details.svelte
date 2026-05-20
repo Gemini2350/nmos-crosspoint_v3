@@ -3,40 +3,18 @@
     import type { Subject } from "rxjs";
     import { onDestroy, onMount } from "svelte";
 
-    import { Icon, MagnifyingGlass, RectangleGroup, Cog, Pencil, ChevronRight,
-       VideoCamera, Microphone, SpeakerWave, Tv,
-       ArrowRightStartOnRectangle, ArrowLeftEndOnRectangle,
-       CodeBracketSquare,
-       BarsArrowDown, BarsArrowUp, ArrowUturnLeft, CodeBracket,
-
-       Trash
-
+    import { Icon, MagnifyingGlass, RectangleGroup, Pencil, ChevronRight,
+       VideoCamera, Microphone, DocumentText,
+       CodeBracketSquare, ArrowTopRightOnSquare
      } from "svelte-hero-icons";
-    import SetupFlow from "../lib/SetupFlow.svelte";
-    import SetupDevice from "../lib/SetupDevice.svelte";
 
     import ScrollArea from "../lib/ScrollArea.svelte";
     import { getSearchTokens, tokenSearch } from "../lib/functions";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
-    import InlineEditor from "../lib/InlineEditor.svelte";
 
 
-    let tableCols = [
-        
-        {id:"num", name:"#" ,          sortable:true,  resize:false, fixed:true, fixedOffset:56, width:100 },
-        {id:"available", name:"" ,     sortable:true,  resize:false, fixed:true, fixedOffset:156, width:60 },
-        {id:"type", name:"Type" ,      sortable:false, resize:false, fixed:true, fixedOffset:216, width:60   },
-        {id:"name", name:"Name" ,      sortable:true, resize:false,  fixed:true, fixedOffset:276 },
-        
-        {id:"codec", name:"Codec" ,    sortable:false, resize:true  },
-        {id:"format", name:"Format" ,  sortable:false, resize:true  },
-        {id:"bitrate", name:"Bitrate", sortable:false, resize:true  },
-        {id:"sync", name:"Sync" ,      sortable:false, resize:true  },
-        {id:"flow", name:"Settings" ,  sortable:false, resize:true  },
-        {id:"info", name:"Info" ,      sortable:false, resize:true  },
-    ]
-
-    let mediaTypes = {
+    // ----- Media type -> Display name -----
+    let mediaTypes:any = {
       "video/raw" : "RAW Video",
       "video/jxsv" : "JPEG-XS Video",
       "video/colibri" : "Colibri Video",
@@ -46,27 +24,39 @@
       "video/smpte291":"ANC"
     }
 
-    let searchExpandedDevices:string[] = [];
+    // Same icon set as Crosspoint sender side
+    function getFlowTypeIcon(type:string){
+      switch(type){
+        case "video":
+          return VideoCamera;
+        case "audio":
+        case "audiochannel":
+          return Microphone;
+        case "data":
+        case "mqtt":
+        case "websocket":
+          return CodeBracketSquare;
+        default:
+          return CodeBracketSquare;
+      }
+    }
 
+
+    // ----- Filter state (persisted to localStorage) -----
     let filter:any = {
-      version:"11133",
-      expanded: { devices :[]},
-      hiddenCols:[],
-      widthCols:{},
-      sortCols:[],
+      version:"21005",
+      expanded: { devices:[] },
+      // Per-device collapse state for sub-sections. Default is "expanded";
+      // a device id in these lists means the section is COLLAPSED.
+      collapsedSenders: [],
+      collapsedReceivers: [],
       search:"",
       searchFormat:"",
-      searchIp:"",
-      hiddenTypes:[],
-      showRx:true,
-      showTx:true
-
-
+      searchIp:""
     };
 
-    let sourceState:any = {};
-    let list:any = [];
-
+    // ----- Source data -----
+    let sourceState:any = { devices: [] };
     let nmosState:any = {
         devices: {},
         sources: {},
@@ -77,24 +67,648 @@
         sendersManifestDetail :{}
     };
 
-    let sync:Subject<any> ;
-    let syncNmos:Subject<any> ;
+    let sync:Subject<any>;
+    let syncNmos:Subject<any>;
+    let syncSetup:Subject<any>;
 
-      function reRender(){
-        list = [...list];
+
+    // ----- Build & render flat device list -----
+    interface SenderRow {
+      id:string;
+      nmosId:string;
+      type:string;
+      name:string;
+      alias:string;
+      active:boolean;
+      available:boolean;
+      manifestOk:boolean;
+      format:string;
+      codec:string;
+      bitrate:any;
+      legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string }>;
+    }
+    interface ReceiverRow {
+      id:string;
+      nmosId:string;
+      type:string;
+      name:string;
+      alias:string;
+      active:boolean;
+      available:boolean;
+      codec:string;
+      // Info copied from the currently connected sender (if any)
+      connectedSenderId:string;
+      connectedSenderLabel:string;
+      format:string;
+      bitrate:any;
+      legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string }>;
+    }
+    interface DeviceRow {
+      id:string;
+      // Display label, format: "Node - Device"
+      label:string;
+      // Tooltip with original NMOS labels
+      tooltip:string;
+      // The crosspoint device's alias (used for the change-alias modal)
+      alias:string;
+      name:string;
+      available:boolean;
+      // PTP Grand-Master ID the node clock is locked to (or "" if none / not PTP).
+      gmid:string;
+      // Whether that clock currently reports "locked:true"
+      gmidLocked:boolean;
+      // Link to the device's web UI (derived from the NMOS Node's href). "" if unknown.
+      deviceUrl:string;
+      senders:SenderRow[];
+      receivers:ReceiverRow[];
+    }
+
+    let deviceList:DeviceRow[] = [];
+    // Per-leg duplicate set: duplicateIpsByLeg[legIndex] = Set of duplicate IPs
+    // We track legs separately because primary and secondary network legs are
+    // independent failover paths — using the same multicast on both is fine.
+    let duplicateIpsByLeg:{[legIndex:number]:Set<string>} = {};
+    let countDevices = 0;
+    let countSenders = 0;
+    let countReceivers = 0;
+
+    // Acceptable PTP GMID — comes from the Setup page via the `setupConfig` sync.
+    // Used to colour the device status dot green (match) vs. yellow (mismatch).
+    let acceptableGmid:string = "";
+
+    // Vendor profiles — also from the setupConfig sync. Determine how the
+    // "open device web UI" link is built (protocol/port/path) per vendor.
+    interface VendorProfile {
+      id: string;
+      name: string;
+      // comma-separated list of case-insensitive substrings
+      labels: string;
+      protocol: string;
+      port: number | string;
+      path: string;
+    }
+    let vendorProfiles:VendorProfile[] = [];
+
+    function _splitVendorLabels(s:string):string[] {
+      if(!s){ return []; }
+      return s.split(",").map(x => x.trim().toLowerCase()).filter(x => x.length > 0);
+    }
+    function _matchVendorProfile(profile:VendorProfile, label:string, description:string):boolean {
+      let needles = _splitVendorLabels(profile.labels);
+      if(needles.length === 0){ return false; }
+      let hay = ((label||"") + " " + (description||"")).toLowerCase();
+      for(let n of needles){
+        if(hay.includes(n)) return true;
       }
+      return false;
+    }
+
+    // Normalise GMIDs so different separator / case styles compare cleanly.
+    function normaliseGmid(v:string){
+      if(!v){return "";}
+      return v.toUpperCase().replace(/[^0-9A-F]/g,"");
+    }
+
+    function deviceDotClass(dev:DeviceRow){
+      if(!dev.available){ return "error"; }
+      let want = normaliseGmid(acceptableGmid);
+      // If no acceptable GMID is configured, stay on the previous behaviour (green).
+      if(!want){ return "success"; }
+      let have = normaliseGmid(dev.gmid);
+      if(have && have === want && dev.gmidLocked){
+        return "success";
+      }
+      // PTP not locked or wrong GM → yellow / warning
+      return "warning";
+    }
+
+
+    function renderCodecs(list:string[]){
+      let codec:string[] = [];
+      if(!list){return "";}
+      list.forEach((c)=>{
+        if(mediaTypes.hasOwnProperty(c)){
+          codec.push(mediaTypes[c]);
+        }else{
+          codec.push(c);
+        }
+      });
+      return codec.join(", ");
+    }
+
+    function renderBitrate(bitrate:any){
+      // bitrate may be number (legacy) or { v:number, hint:string }
+      let v:number = 0;
+      let hint:string = "ok";
+      if(typeof bitrate === "number"){
+        v = bitrate;
+      }else if(bitrate && typeof bitrate === "object"){
+        v = Number(bitrate.v) || 0;
+        hint = bitrate.hint || "ok";
+      }
+      // One decimal place
+      v = Math.round(v*10)/10;
+      if(hint === "unknown" || v <= 0){
+        return "—";
+      }
+      if(v < 1){
+        return "< 1 MBit/s";
+      }
+      let pre = "";
+      if(hint === "max"){pre = "max ";}
+      else if(hint === "ok"){pre = "ca. ";}
+      // toFixed(1) so 1000 prints as "1000.0" — keeps the column visually consistent
+      return pre + v.toFixed(1) + " MBit/s";
+    }
+
+    // Build per-leg display info. IS-05 `/active` is the authoritative source
+    // for what the sender is currently configured to transmit — the SDP may
+    // lag behind (or 404 entirely for inactive senders), so we use IS-05 first
+    // and fall back to the parsed SDP only when no transport_params are known.
+    function getLegsFromManifest(nmosSenderId:string){
+      let legs:Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string }> = [];
+
+      try{
+        let active = (nmosState as any).senderActiveData ? (nmosState as any).senderActiveData[nmosSenderId] : null;
+        if(active && Array.isArray(active.transport_params) && active.transport_params.length > 0){
+          active.transport_params.forEach((tp:any, index:number)=>{
+            legs.push({
+              index,
+              dstIp: tp && tp.destination_ip ? (""+tp.destination_ip) : "",
+              dstPort: tp && (tp.destination_port !== undefined && tp.destination_port !== null) ? tp.destination_port : "",
+              srcIp: tp && tp.source_ip ? (""+tp.source_ip) : ""
+            });
+          });
+          return legs;
+        }
+      }catch(e){}
+
+      // Fallback: parse the SDP manifest
+      try{
+        let manifest = nmosState.sendersManifestDetail ? nmosState.sendersManifestDetail[nmosSenderId] : null;
+        if(manifest && Array.isArray(manifest.media) && manifest.media.length > 0){
+          manifest.media.forEach((media:any, index:number)=>{
+            let dstIp = "";
+            let srcIp = "";
+            let port:string|number = "";
+            try{
+              if(media.sourceFilter){
+                dstIp = media.sourceFilter.destAddress || "";
+                srcIp = media.sourceFilter.srcList || "";
+              }
+              if(!dstIp && media.connection && media.connection.ip){
+                dstIp = (""+media.connection.ip).split("/")[0];
+              }
+              if(media.port !== undefined && media.port !== null){
+                port = media.port;
+              }
+            }catch(e){}
+            legs.push({ index, dstIp, dstPort:port, srcIp });
+          });
+        }
+      }catch(e){}
+
+      return legs;
+    }
+
+
+    // Codec name from a sender's SDP manifest. Maps the canonical RTP names
+    // (L16/L24/AM824/raw/jxsv/smpte291…) to human-readable labels.
+    function getCodecFromManifest(nmosSenderId:string){
+      if(!nmosSenderId){ return ""; }
+      try{
+        let manifest = nmosState.sendersManifestDetail ? nmosState.sendersManifestDetail[nmosSenderId] : null;
+        if(!manifest || !Array.isArray(manifest.media) || manifest.media.length === 0){ return ""; }
+        let labels:string[] = [];
+        manifest.media.forEach((m:any)=>{
+          if(!m || !Array.isArray(m.rtp) || m.rtp.length === 0){ return; }
+          let codec = ("" + (m.rtp[0].codec || "")).toUpperCase();
+          let pretty = codec;
+          switch(codec){
+            case "L16":      pretty = "16 Bit LPCM"; break;
+            case "L24":      pretty = "24 Bit LPCM"; break;
+            case "AM824":    pretty = "ST2110-31 AES3"; break;
+            case "RAW":      pretty = "RAW Video"; break;
+            case "JXSV":     pretty = "JPEG-XS Video"; break;
+            case "SMPTE291": pretty = "ANC"; break;
+            case "VC2":      pretty = "VC-2"; break;
+            default:
+              if(codec){ pretty = codec; }
+              else { pretty = ""; }
+          }
+          if(pretty && !labels.includes(pretty)){
+            labels.push(pretty);
+          }
+        });
+        return labels.join(", ");
+      }catch(e){}
+      return "";
+    }
+
+
+    // Helper: build a tiny "view" of the sender a receiver is connected to.
+    // Returns null if the receiver isn't connected or the sender is unknown.
+    function lookupConnectedSender(connectedFlowId:string){
+      if(!connectedFlowId || !connectedFlowId.startsWith("nmos_")){ return null; }
+      let nmosId = connectedFlowId.substring(5);
+      let nmosSender:any = nmosState.senders ? nmosState.senders[nmosId] : null;
+      if(!nmosSender){ return null; }
+      // Find a friendly label — fall back to the NMOS label or id.
+      let label = nmosSender.label || nmosId;
+      try{
+        let dev = nmosState.devices ? nmosState.devices[nmosSender.device_id] : null;
+        if(dev && dev.label){
+          label = dev.label + " / " + label;
+        }
+      }catch(e){}
+      return { nmosId, label, nmosSender };
+    }
+
+
+    // Derive a clickable URL pointing at the device's web UI from the NMOS
+    // node's `href` field. We keep the scheme/host/port the node advertises
+    // and drop the API path so the link opens the device's root page.
+    //
+    // If a matching Vendor Profile is configured (Setup page), we override
+    // protocol/port/path with the profile's values but keep the host (IP)
+    // from the node's href.
+    function getDeviceUrlFromNode(nodeId:string){
+      try{
+        let node = nmosState.nodes ? nmosState.nodes[nodeId] : null;
+        if(!node || !node.href){ return ""; }
+        let u = new URL(""+node.href);
+        let host = u.hostname; // bare host (no port)
+
+        // Try vendor profiles first
+        let label = node.label || "";
+        let description = node.description || "";
+        for(let profile of vendorProfiles){
+          if(_matchVendorProfile(profile, label, description)){
+            let proto = (profile.protocol === "https") ? "https" : "http";
+            let port = parseInt(""+profile.port);
+            if(isNaN(port) || port <= 0 || port > 65535){
+              port = (proto === "https") ? 443 : 80;
+            }
+            let path = (typeof profile.path === "string" && profile.path) ? profile.path : "/";
+            if(!path.startsWith("/")){ path = "/" + path; }
+            // Drop the default port from the URL for nicer display
+            let portSuffix = ((proto === "http" && port === 80) || (proto === "https" && port === 443))
+                ? "" : (":" + port);
+            return proto + "://" + host + portSuffix + path;
+          }
+        }
+
+        // Fallback: use whatever the NMOS node advertises (scheme + host + port)
+        return u.protocol + "//" + u.host + "/";
+      }catch(e){}
+      return "";
+    }
+
+
+    // Extract the PTP Grand-Master ID from the NMOS node's `clocks` array.
+    // The NMOS node resource exposes one or more clock entries; for ST 2110 we
+    // want a `ref_type === "ptp"` entry. Returns "" if no PTP clock is present.
+    function getGmidFromNode(nodeId:string){
+      try{
+        let node = nmosState.nodes ? nmosState.nodes[nodeId] : null;
+        if(!node || !Array.isArray(node.clocks)){
+          return { gmid:"", locked:false };
+        }
+        // Prefer a PTP clock that reports locked:true
+        let firstPtp:any = null;
+        for(let clk of node.clocks){
+          if(clk && clk.ref_type === "ptp"){
+            if(!firstPtp){ firstPtp = clk; }
+            if(clk.locked && clk.gmid){
+              return { gmid: ("" + clk.gmid).toUpperCase(), locked: true };
+            }
+          }
+        }
+        if(firstPtp && firstPtp.gmid){
+          return { gmid: ("" + firstPtp.gmid).toUpperCase(), locked: !!firstPtp.locked };
+        }
+      }catch(e){}
+      return { gmid:"", locked:false };
+    }
+
+
+    function rebuild(){
+      // ipCount[legIndex][ip] = count
+      let ipCount:{[legIndex:number]:{[ip:string]:number}} = {};
+      let newList:DeviceRow[] = [];
+
+      let cpDevices:any[] = (sourceState && Array.isArray(sourceState.devices)) ? sourceState.devices : [];
+
+      let searchTokens = filter.search ? getSearchTokens(filter.search) : [];
+      let formatTokens = filter.searchFormat ? getSearchTokens(filter.searchFormat) : [];
+      let ipTokens = filter.searchIp ? getSearchTokens(filter.searchIp) : [];
+
+      // ----- Pre-pass: build a global sender lookup so receivers can find their
+      // connected sender even when that sender lives on a different device that
+      // gets processed later in the main pass. -----
+      let senderRowById:{[id:string]:SenderRow} = {};
+      let senderTypesGlobal = ["video","audio","data","audiochannel","mqtt","websocket","unknown"];
+      cpDevices.forEach((dev:any)=>{
+        senderTypesGlobal.forEach((t)=>{
+          if(dev.senders && Array.isArray(dev.senders[t])){
+            dev.senders[t].forEach((s:any)=>{
+              let nmosId = (typeof s.id === "string" && s.id.startsWith("nmos_")) ? s.id.substring(5) : "";
+              senderRowById[s.id] = {
+                id: s.id,
+                nmosId,
+                type: s.type,
+                name: s.name,
+                alias: s.alias || s.name,
+                active: !!s.active,
+                available: !!s.available,
+                manifestOk: !!s.manifestOk,
+                format: s.format || "",
+                codec: renderCodecs(s.capabilities && s.capabilities.mediaTypes ? s.capabilities.mediaTypes : []),
+                bitrate: s.bitrate,
+                legs: nmosId ? getLegsFromManifest(nmosId) : []
+              };
+            });
+          }
+        });
+      });
+
+      cpDevices.forEach((dev:any)=>{
+        let flowTypeList = ["video","audio","data","audiochannel","mqtt","websocket","unknown"];
+        let allSenders:any[] = [];
+        flowTypeList.forEach((t)=>{
+          if(dev.senders && Array.isArray(dev.senders[t])){
+            allSenders = allSenders.concat(dev.senders[t]);
+          }
+        });
+        // Pre-collect receivers too so we can resolve the NMOS device id even
+        // when the device only exposes receivers (and so we don't skip such
+        // devices entirely).
+        let allReceiversPreview:any[] = [];
+        flowTypeList.forEach((t)=>{
+          if(dev.receivers && Array.isArray(dev.receivers[t])){
+            allReceiversPreview = allReceiversPreview.concat(dev.receivers[t]);
+          }
+        });
+        if(allSenders.length === 0 && allReceiversPreview.length === 0){
+          return;
+        }
+
+        // Look up the NMOS node label to build a "Node - Device" combined label
+        let nmosDevId = "";
+        if(typeof dev.id === "string"){
+          if(dev.id.startsWith("nmos_")){
+            nmosDevId = dev.id.substring(5);
+          }else if(dev.id.startsWith("nmosgrp_")){
+            // Try senders first
+            for(let s of allSenders){
+              if(typeof s.id === "string" && s.id.startsWith("nmos_")){
+                let snd = nmosState.senders ? nmosState.senders[s.id.substring(5)] : null;
+                if(snd && snd.device_id){
+                  nmosDevId = snd.device_id;
+                  break;
+                }
+              }
+            }
+            // Fallback to receivers (for receiver-only devices)
+            if(!nmosDevId){
+              for(let r of allReceiversPreview){
+                if(typeof r.id === "string" && r.id.startsWith("nmos_")){
+                  let rcv = nmosState.receivers ? nmosState.receivers[r.id.substring(5)] : null;
+                  if(rcv && rcv.device_id){
+                    nmosDevId = rcv.device_id;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        let nodeLabel = "";
+        let nodeId = "";
+        try{
+          if(nmosDevId && nmosState.devices && nmosState.devices[nmosDevId]){
+            nodeId = nmosState.devices[nmosDevId].node_id || "";
+            let nd = nodeId && nmosState.nodes ? nmosState.nodes[nodeId] : null;
+            if(nd && nd.label){
+              nodeLabel = nd.label;
+            }
+          }
+        }catch(e){}
+
+        // PTP Grand-Master ID — taken directly from the NMOS node, not from SDP
+        let gmInfo = nodeId ? getGmidFromNode(nodeId) : { gmid:"", locked:false };
+
+        // Web link to the device (e.g. http://192.168.x.x/)
+        let deviceUrl = nodeId ? getDeviceUrlFromNode(nodeId) : "";
+
+        let deviceAlias = dev.alias || dev.name || "";
+        let deviceName = dev.name || deviceAlias;
+        // Suppress node prefix when it duplicates the device name (case-insensitive)
+        let sameLabel = !!nodeLabel && (
+            nodeLabel.toLowerCase() === deviceAlias.toLowerCase() ||
+            nodeLabel.toLowerCase() === deviceName.toLowerCase()
+        );
+        let combinedLabel = (nodeLabel && !sameLabel) ? (nodeLabel + " - " + deviceAlias) : deviceAlias;
+        let tooltipStr = (nodeLabel && !sameLabel)
+            ? ("Node: " + nodeLabel + " | Device: " + deviceName)
+            : deviceName;
+
+
+        // Build sender rows
+        let senderRows:SenderRow[] = [];
+        allSenders.forEach((s:any)=>{
+          let nmosId = (typeof s.id === "string" && s.id.startsWith("nmos_")) ? s.id.substring(5) : "";
+          let legs = nmosId ? getLegsFromManifest(nmosId) : [];
+
+          if(s.active){
+            legs.forEach((l)=>{
+              if(l.dstIp){
+                if(!ipCount[l.index]){ ipCount[l.index] = {}; }
+                ipCount[l.index][l.dstIp] = (ipCount[l.index][l.dstIp] || 0) + 1;
+              }
+            });
+          }
+
+          let row:SenderRow = {
+            id: s.id,
+            nmosId,
+            type: s.type,
+            name: s.name,
+            alias: s.alias || s.name,
+            active: !!s.active,
+            available: !!s.available,
+            manifestOk: !!s.manifestOk,
+            format: s.format || "",
+            codec: renderCodecs(s.capabilities && s.capabilities.mediaTypes ? s.capabilities.mediaTypes : []),
+            bitrate: s.bitrate,
+            legs
+          };
+
+          if(searchTokens.length > 0){
+            if(!tokenSearch({alias:row.alias, name:row.name}, searchTokens, ["alias","name"]) &&
+               !tokenSearch({alias:deviceAlias, name:dev.name||""}, searchTokens, ["alias","name"]) &&
+               !tokenSearch({alias:nodeLabel, name:nodeLabel}, searchTokens, ["alias","name"])){
+              return;
+            }
+          }
+          if(formatTokens.length > 0){
+            if(!tokenSearch({format:row.format, codec:row.codec}, formatTokens, ["format","codec"])){
+              return;
+            }
+          }
+          if(ipTokens.length > 0){
+            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ");
+            if(!tokenSearch(ipStr, ipTokens)){
+              return;
+            }
+          }
+          senderRows.push(row);
+        });
+
+        senderRows.sort((a,b)=>{
+          if(a.type === b.type){
+            return (a.alias||"").localeCompare(b.alias||"");
+          }
+          return (a.type||"").localeCompare(b.type||"");
+        });
+
+
+        // ----- Receivers for this device -----
+        let receiverRows:ReceiverRow[] = [];
+        allReceiversPreview.forEach((r:any)=>{
+          let connected = r.connectedFlow ? lookupConnectedSender(r.connectedFlow) : null;
+          let connectedSenderId = connected ? ("nmos_" + connected.nmosId) : "";
+          let connectedSenderLabel = connected ? connected.label : "";
+
+          // Look up the connected sender row from the pre-pass map. This works
+          // regardless of which device processing order — fixes the case where
+          // a receiver's sender lives on a device handled after this one.
+          let connectedSenderRow:SenderRow | null = (connectedSenderId && senderRowById[connectedSenderId]) ? senderRowById[connectedSenderId] : null;
+
+          // Legs come from the connected sender's own legs lookup. The
+          // sender row already cached them via getLegsFromManifest, so we
+          // can re-use that directly.
+          let legs:any[] = connectedSenderRow ? connectedSenderRow.legs : (connected ? getLegsFromManifest(connected.nmosId) : []);
+
+          // Codec is sourced from the *connected* sender's SDP (L16/L24/AM824 etc.).
+          // If nothing is currently being received, the codec field stays empty.
+          let codec = connected ? getCodecFromManifest(connected.nmosId) : "";
+
+          let row:ReceiverRow = {
+            id: r.id,
+            nmosId: (typeof r.id === "string" && r.id.startsWith("nmos_")) ? r.id.substring(5) : "",
+            type: r.type,
+            name: r.name,
+            alias: r.alias || r.name,
+            active: !!r.active,
+            available: !!r.available,
+            codec,
+            connectedSenderId,
+            connectedSenderLabel,
+            format: connectedSenderRow ? connectedSenderRow.format : "",
+            bitrate: connectedSenderRow ? connectedSenderRow.bitrate : null,
+            legs
+          };
+
+          if(searchTokens.length > 0){
+            if(!tokenSearch({alias:row.alias, name:row.name}, searchTokens, ["alias","name"]) &&
+               !tokenSearch({alias:deviceAlias, name:dev.name||""}, searchTokens, ["alias","name"]) &&
+               !tokenSearch({alias:nodeLabel, name:nodeLabel}, searchTokens, ["alias","name"])){
+              return;
+            }
+          }
+          if(formatTokens.length > 0){
+            if(!tokenSearch({format:row.format, codec:row.codec}, formatTokens, ["format","codec"])){
+              return;
+            }
+          }
+          if(ipTokens.length > 0){
+            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ");
+            if(!tokenSearch(ipStr, ipTokens)){
+              return;
+            }
+          }
+          receiverRows.push(row);
+        });
+
+        receiverRows.sort((a,b)=>{
+          if(a.type === b.type){
+            return (a.alias||"").localeCompare(b.alias||"");
+          }
+          return (a.type||"").localeCompare(b.type||"");
+        });
+
+        if(senderRows.length === 0 && receiverRows.length === 0){
+          return;
+        }
+
+        newList.push({
+          id: dev.id,
+          label: combinedLabel,
+          tooltip: tooltipStr,
+          alias: deviceAlias,
+          name: dev.name || "",
+          available: !!dev.available,
+          gmid: gmInfo.gmid,
+          gmidLocked: gmInfo.locked,
+          deviceUrl,
+          senders: senderRows,
+          receivers: receiverRows
+        });
+      });
+
+      // duplicates per leg
+      let newDups:{[legIndex:number]:Set<string>} = {};
+      Object.keys(ipCount).forEach((legKey:any)=>{
+        let leg = Number(legKey);
+        let bucket = new Set<string>();
+        Object.keys(ipCount[leg]).forEach((ip)=>{
+          if(ipCount[leg][ip] > 1){ bucket.add(ip); }
+        });
+        if(bucket.size > 0){ newDups[leg] = bucket; }
+      });
+
+      // sort by combined label
+      newList.sort((a,b)=>(a.label||"").localeCompare(b.label||""));
+
+      // Reassign — this is what makes Svelte re-render
+      deviceList = newList;
+      duplicateIpsByLeg = newDups;
+
+      countDevices = newList.length;
+      countSenders = 0;
+      countReceivers = 0;
+      newList.forEach((d)=>{
+        countSenders += d.senders.length;
+        countReceivers += d.receivers.length;
+      });
+    }
+
+
+    function saveFilter(){
+      try{
+        localStorage.setItem("nmos_details_filter", JSON.stringify(filter));
+      }catch(e){}
+    }
+
+    let filterTimeout:any = null;
+    function changeFilter(immediate=false){
+      if(immediate){
+        if(filterTimeout){clearTimeout(filterTimeout);filterTimeout=null;}
+        rebuild();
+        saveFilter();
+        return;
+      }
+      if(filterTimeout){clearTimeout(filterTimeout);}
+      filterTimeout = setTimeout(()=>{
+        rebuild();
+        saveFilter();
+      },200);
+    }
+
 
     onMount(async () => {
-      sync = ServerConnector.sync("crosspoint")
-          sync.subscribe((obj:any)=>{
-            sourceState = obj;
-             doFilter();
-      });
-      syncNmos = ServerConnector.sync("nmos")
-      syncNmos.subscribe((obj:any)=>{
-            nmosState = obj;
-            reRender();
-      });
       try{
         let f = localStorage.getItem("nmos_details_filter");
         if(f){
@@ -102,434 +716,234 @@
           if(tempFilter.version == filter.version){
             filter = tempFilter;
           }else{
-            console.log("Resetting detail filter localstorage.");
             saveFilter();
           }
         }
       }catch(e){}
+
+      sync = ServerConnector.sync("crosspoint")
+      sync.subscribe((obj:any)=>{
+        sourceState = obj;
+        rebuild();
+      });
+      syncNmos = ServerConnector.sync("nmos")
+      syncNmos.subscribe((obj:any)=>{
+        nmosState = obj;
+        rebuild();
+      });
+      syncSetup = ServerConnector.sync("setupConfig")
+      syncSetup.subscribe((obj:any)=>{
+        if(obj){
+          if(typeof obj.acceptableGmid === "string"){
+            acceptableGmid = obj.acceptableGmid;
+          }
+          if(Array.isArray(obj.vendorProfiles)){
+            vendorProfiles = obj.vendorProfiles;
+            // Rebuild device URLs since vendor matching changed
+            rebuild();
+            return;
+          }
+          // Re-render so device dots update without waiting for next rebuild().
+          deviceList = deviceList;
+        }
+      });
     });
+
     onDestroy(() => {
-      sync.unsubscribe();
-          ServerConnector.unsync("crosspoint")
-      syncNmos.unsubscribe();
-          ServerConnector.unsync("nmos")
+      try{sync && sync.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("crosspoint");}catch(e){}
+      try{syncNmos && syncNmos.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("nmos");}catch(e){}
+      try{syncSetup && syncSetup.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("setupConfig");}catch(e){}
     });
 
-      function saveFilter(){
-      localStorage.setItem("nmos_details_filter", JSON.stringify(filter));
-    }
 
-    let countAvailable = 0;
-    let countUnavailable = 0;
-    let countTotal = 0;
-    function doFilter(){
-        // TODO Filtering
-        countAvailable = 0;
-        countUnavailable = 0;
-        countTotal = 0;
-        searchExpandedDevices = [];
-
-        sourceState.devices.forEach((d)=>{
-          if(d.available){
-            countAvailable ++
-          }else{
-            countUnavailable ++
-          }
-          countTotal ++
-        })
-        list =  structuredClone(sourceState.devices);
-
-        if(filter.search != "" || filter.searchFormat != "" || filter.searchIp != "" ){
-
-          let searchTokens = getSearchTokens(filter.search);
-          let formatTokens = getSearchTokens(filter.searchFormat);
-          let ipTokens = getSearchTokens(filter.searchIp);
-          
-          list = list.filter((dev:any)=>{
-            let flowFound = false;
-            let devFound = false;
-            if(formatTokens.length == 0 && ipTokens.length == 0){
-              devFound = tokenSearch(dev, searchTokens, ["alias","name"]);
-            }
-            for(let type in dev.senders){
-              
-              // TODO mybe add original Name to search fields?
-              
-
-              dev.senders[type] = dev.senders[type].filter((send:any)=>{
-
-                let settings = getSenderSettings(send);
-                let ipSettings = "";
-                settings.forEach((s)=>{
-                  ipSettings += s.dstIp + " ";
-                  ipSettings += s.srcIp + " ";
-                });
-                if(ipSettings == ""){
-                  ipSettings="__noIP__"
-                }
-                
-                let ipFound = true;
-                let format = true;
-                let found = true;
-                if(ipTokens.length != 0){
-                  ipFound = tokenSearch(ipSettings, ipTokens);
-                }
-                if(searchTokens.length != 0){
-                  found = tokenSearch(send, searchTokens, ["alias","name"]);
-                }
-                if(formatTokens.length != 0){
-                  format = tokenSearch(send, formatTokens, ["format"]);
-                }
-                if( found && format && ipFound){
-                  flowFound = true;
-                }
-                return (found || devFound) && format && ipFound;
-              });
-
-              dev.receivers[type] = dev.receivers[type].filter((recv:any)=>{
-                
-                let found = tokenSearch(recv, searchTokens, ["alias","name"]);
-                let format = tokenSearch(recv, formatTokens, ["format"]);
-                if(ipTokens.length != 0){
-                  found = false; 
-                  format = false;
-                }
-                if(found && format){
-                  flowFound = true;
-                }
-                return (found || devFound) && format;
-              });
-            }
-
-            if(devFound){
-              return true;
-            }
-              
-            if(flowFound){
-              searchExpandedDevices.push(dev.id);
-              return true;
-            }
-            
-            return false
-          })
-        }
-        
-    }
-
-    function toggleExpandDevice(id:string){
-      let index = searchExpandedDevices.indexOf(id);
-      if(index == -1){
-
-        let saveindex = filter.expanded.devices.indexOf(id);
-      if(saveindex == -1){
-        filter.expanded.devices.push(id);
+    // ----- Expand / collapse: use array reassignment so Svelte detects the change -----
+    function toggleDevice(id:string){
+      let list = filter.expanded.devices || [];
+      if(list.includes(id)){
+        filter.expanded.devices = list.filter((d:string) => d !== id);
       }else{
-        filter.expanded.devices.splice(saveindex,1);
+        filter.expanded.devices = [...list, id];
       }
+      // Reassign filter itself too, to be safe with nested-object reactivity
+      filter = filter;
       saveFilter();
-        
+    }
+
+    function toggleSendersSection(id:string){
+      let list = filter.collapsedSenders || [];
+      if(list.includes(id)){
+        filter.collapsedSenders = list.filter((d:string) => d !== id);
       }else{
-        searchExpandedDevices.splice(index,1);
+        filter.collapsedSenders = [...list, id];
       }
-      
-      
-      list = [...list]
+      filter = filter;
+      saveFilter();
     }
-    function isDeviceExpanded(id:string){
-      if(searchExpandedDevices.includes(id)){
-        return true;
+    function toggleReceiversSection(id:string){
+      let list = filter.collapsedReceivers || [];
+      if(list.includes(id)){
+        filter.collapsedReceivers = list.filter((d:string) => d !== id);
+      }else{
+        filter.collapsedReceivers = [...list, id];
       }
-      if(filter.expanded.devices.includes(id)){
-        return true;
-      }
-      return false;
+      filter = filter;
+      saveFilter();
     }
 
 
-    function renderId(id:string){
-        if(id.startsWith("nmos_")){
-          let nmosId = id.substring(5);
-          let nmosVersion ="";
-          if(nmosState.senders && nmosState.senders[nmosId]){
-            nmosVersion = nmosState.senders[nmosId]._sourceVersion
-          }
-          if(nmosState.receivers && nmosState.receivers[nmosId]){
-            nmosVersion = nmosState.receivers[nmosId]._sourceVersion
-          }
-          if(nmosState.devices && nmosState.devices[nmosId]){
-            nmosVersion = nmosState.devices[nmosId]._sourceVersion
-          }
-          return "NMOS " +nmosVersion + " " + nmosId;
-        }
-        return id;
-      }
+    // ----- Toggle sender activation (same as Crosspoint page) -----
+    function toggleSenderActive(flow:SenderRow){
+      // Same endpoint logic as crosspoint.svelte: enable when currently inactive, disable when active.
+      let endpoint = flow.active ? "disableFlow" : "enableFlow";
+      ServerConnector.post(endpoint, { id: flow.id }).catch(()=>{});
+    }
 
-      function renderFlowNum( flow:any){
-        let num = "";
-        switch(flow.type){
-          case "video":
-            num += "v";
-            break;
-          case "audio":
-            num += "a";
-            break;
-          case "data":
-            num += "d";
-            break;
-            default:
-              num+="u";
-
-        }
-        //num += flow.num;
-        return num;
-      }
+    // ----- Toggle receiver activation -----
+    // For receivers we only toggle master_enable. If the receiver still has a
+    // sender_id staged from a previous connection, re-enabling will resume
+    // reception. Disabling stops the stream but keeps the subscription.
+    function toggleReceiverActive(recv:ReceiverRow){
+      let endpoint = recv.active ? "disableReceiver" : "enableReceiver";
+      ServerConnector.post(endpoint, { id: recv.id }).catch(()=>{});
+    }
 
 
-      function getSync(sender:any){
-        let sync = {
-          available:false,
-          source:"",
-          ptpdomain:0
-        };
-        if(sender.id.startsWith("nmos_")){
-          let nmosSenderId = sender.id.substring(5);
-          // TODO data from Manifest??????
-          //console.log(nmosState)
-          //console.log(nmosState.sendersManifestDetail[nmosSenderId])
-          //console.log(nmosState.sendersManifestDetail[nmosSenderId])
-          try{
-            if(nmosState.sendersManifestDetail[nmosSenderId].media[0].tsRefClocks[0].clksrc == "ptp"){
-              let s = nmosState.sendersManifestDetail[nmosSenderId].media[0].tsRefClocks[0].clksrcExt.split(":");
-              sync.source = s[1];
-              sync.ptpdomain = s[2];
-              sync.available = true;
-            }
-          }catch(e:any){
-            //console.log(e)
-          }
-        }
-          return sync;
-      }
+    // ----- Edit dst-IP / dst-Port (send to sender) -----
+    // Edit is explicit: user clicks the pencil for a specific leg, the row
+    // morphs into IP / Port inputs, then Save or Cancel.
+    let editingLeg:string = "";            // key: "<flowId>:<legIndex>"  ("" = none)
+    let legEditIp:string = "";
+    let legEditPort:string = "";
+    let legEditError:string = "";
 
-
-      function getSenderSettings(sender:any){
-        let mediaStrams:any[] = [];
-
-        if(sender.id.startsWith("nmos_")){
-          let nmosSenderId = sender.id.substring(5);
-          // TODO data from Manifest??????
-          //console.log(nmosState)
-          //console.log(nmosState.sendersManifestDetail[nmosSenderId])
-          //console.log(nmosState.sendersManifestDetail[nmosSenderId])
-          try{
-            nmosState.sendersManifestDetail[nmosSenderId].media.forEach((media:any)=>{
-              let m = {
-                srcIp : media.sourceFilter.srcList,
-                dstIp : media.sourceFilter.destAddress,
-                name: media.mid
-              }
-              mediaStrams.push(m);
-            })
-          }catch(e:any){
-            //console.log(e)
-          }
-          
-
-          
-
-
-        }
-
-        return mediaStrams;
-        
-      }
-
-      function renderBitrate(bitrate:number){
-        bitrate = Math.round(bitrate*1000)/1000
-        if(bitrate <= 1){
-          return "< 1 MBit/s"
-        }
-        return bitrate + " MBit/s"
-      }
-
-
-      function renderCodecs(list:string[]){
-        let codec:string[] = [];
-        list.forEach((c)=>{
-          if(mediaTypes.hasOwnProperty(c)){
-            codec.push((mediaTypes as any)[c]);
-          }else{
-            codec.push(c);
-          }
-        });
-        return codec.join(", ");
-      }
-
-      let labelModal;
-      let labelModalInput;
-      let labelModalId:string = "";
-      let labelModalName:string = "";
-      let labelModalAlias:string = "";
-      let labelModalValue:string = "";
-      function openLabelEditor(id:string, name:string, alias:string){
-        labelModalId = id;
-        labelModalName = name;
-        labelModalAlias = alias;
-        labelModalValue = alias;
-        labelModal.showModal();
-        labelModalInput.focus();
-        labelModalInput.select();
-      }
-      function changeLabelSend(){
-        ServerConnector.post("changealias",{id:labelModalId, alias:labelModalValue})
-        labelModal.close()
-      }
-      
-
-      let editorModal;
-      let activeEditorId:string = "";
-      let activeEditorType:string = "";
-      function openFlowEditor(flowId:string){
-        activeEditorId = flowId;
-        activeEditorType = "flow";
-        editorModal.showModal();
-      }
-
-      function openDeviceEditor(deviceId:string){
-        activeEditorId = deviceId;
-        activeEditorType = "device";
-        editorModal.showModal();
-      }
-
-      let filterTimeouet:any = null;
-      function changeFilter(immediate=false){
-        if(immediate){
-          if(filterTimeouet){
-            clearTimeout(filterTimeouet);
-          }
-          doFilter();
-          saveFilter();
+    function legKey(flowId:string, legIndex:number){
+      return flowId + ":" + legIndex;
+    }
+    function startLegEdit(flowId:string, legIndex:number, leg:any){
+      editingLeg = legKey(flowId, legIndex);
+      legEditIp = leg.dstIp || "";
+      legEditPort = (leg.dstPort === undefined || leg.dstPort === null) ? "" : (""+leg.dstPort);
+      legEditError = "";
+      // Focus the IP input shortly after render
+      setTimeout(()=>{
+        try{
+          let el = document.querySelector(".det-leg-input-ip-"+editingLeg.replace(/[:]/g,"_")) as HTMLInputElement;
+          if(el){ el.focus(); el.select(); }
+        }catch(e){}
+      }, 30);
+    }
+    function cancelLegEdit(){
+      editingLeg = "";
+      legEditIp = "";
+      legEditPort = "";
+      legEditError = "";
+    }
+    function commitLegEdit(flowId:string, legIndex:number){
+      // Validate port
+      let p:number|null = null;
+      if(legEditPort !== ""){
+        let parsed = parseInt(legEditPort);
+        if(isNaN(parsed) || parsed <= 0 || parsed > 65535){
+          legEditError = "Invalid Port (1-65535)";
           return;
         }
-        if(filterTimeouet){
-          clearTimeout(filterTimeouet);
-          filterTimeouet = null;
-        }
-        filterTimeouet = setTimeout(()=>{
-          doFilter();
-          saveFilter();
-        },200);
+        p = parsed;
       }
+      let payload:any = { index: legIndex };
+      if(legEditIp !== ""){ payload.multicast = legEditIp.trim(); }
+      if(p !== null){ payload.port = p; }
+      ServerConnector.post("setMulticast", {
+        id: flowId,
+        data: { legs:[ payload ] }
+      }).catch(()=>{});
+      cancelLegEdit();
+    }
+    function legEditKey(e:KeyboardEvent, flowId:string, legIndex:number){
+      if(e.keyCode === 13){ commitLegEdit(flowId, legIndex); }
+      if(e.keyCode === 27){ cancelLegEdit(); }
+    }
 
-
-      function toggelHiddenCol(id:string = ""){
-        if(id == ""){
-          filter.hiddenCols = [];
-          return;
-        }
-        if(filter.hiddenCols.includes(id)){
-          filter.hiddenCols = filter.hiddenCols.filter((c)=>{
-            if(c == id){
-              return false
+    /**
+     * Live check while the user is editing a leg's destination IP. Returns
+     * the conflicting active sender (any device, same leg index) or null.
+     * The currently edited sender itself is excluded.
+     */
+    function findActiveLegConflict(currentFlowId:string, legIndex:number, ip:string){
+      if(!ip || !ip.trim()){ return null; }
+      let needle = ip.trim();
+      for(let d of deviceList){
+        for(let s of d.senders){
+          if(!s.active){ continue; }
+          if(s.id === currentFlowId){ continue; }
+          for(let l of s.legs){
+            if(l.index === legIndex && l.dstIp === needle){
+              return s;
             }
-            return true
-          })
-        }else{
-          filter.hiddenCols.push(id);
+          }
         }
-        filter = {...filter}
-        saveFilter()
       }
+      return null;
+    }
 
-      let resizeDragPos = 0;
-      let resizeDragStartWidth = 0;
 
+    // ----- Alias / Setup modals -----
+    let labelModal:any;
+    let labelModalInput:any;
+    let labelModalId:string = "";
+    let labelModalName:string = "";
+    let labelModalAlias:string = "";
+    let labelModalValue:string = "";
+    function openLabelEditor(id:string, name:string, alias:string){
+      labelModalId = id;
+      labelModalName = name;
+      labelModalAlias = alias;
+      labelModalValue = alias;
+      labelModal.showModal();
+      labelModalInput.focus();
+      setTimeout(()=>{labelModalInput.select();});
+    }
+    function changeLabelSend(){
+      ServerConnector.post("changealias",{id:labelModalId, alias:labelModalValue});
+      labelModal.close();
+    }
 
-      function startResizeDrag(e:MouseEvent, id:string){
-        resizeDragPos = e.x;
-
-        if(!filter.widthCols.hasOwnProperty(id)){
-          filter.widthCols[id] = 0
+    // ----- SDP viewer modal -----
+    let sdpModal:any;
+    let sdpModalTitle:string = "";
+    let sdpModalContent:string = "";
+    function openSdpView(flow:SenderRow){
+      sdpModalTitle = flow.alias || flow.name || flow.id;
+      sdpModalContent = "";
+      try{
+        if(flow.nmosId && nmosState.sendersManifestDetail && nmosState.sendersManifestDetail[flow.nmosId]){
+          let raw = nmosState.sendersManifestDetail[flow.nmosId]._RAWSDP;
+          if(typeof raw === "string" && raw.length > 0){
+            sdpModalContent = raw;
+          }
         }
-        resizeDragStartWidth = filter.widthCols[id];
+      }catch(e){}
+      if(!sdpModalContent){
+        sdpModalContent = "No SDP file available for this sender.\n\n" +
+          "Possible reasons:\n" +
+          " - sender is inactive\n" +
+          " - manifest could not be loaded from the device\n" +
+          " - sender is not NMOS-based";
       }
-
-      function updateResizeDrag(e:MouseEvent, id:string){
-        if(e.x != 0){
-          filter.widthCols[id] = (e.x - resizeDragPos) + resizeDragStartWidth
-        }
-          
-
-      }
-
-      function endResizeDrag(e:MouseEvent, id:string){
-        saveFilter();
-        
-      }
-
-      function toggleSort(id:string){
-        if(filter.sortCols.includes(id+"__down")){
-          filter.sortCols = filter.sortCols.filter((e:string)=>{
-            if(e == id+"__down"){
-              return false
-            }
-            return true
-          })
-          filter.sortCols.unshift(id+"__up")
-
-        }else if(filter.sortCols.includes(id+"__up")){
-          filter.sortCols = filter.sortCols.filter((e:string)=>{
-            if(e == id+"__up"){
-              return false
-            }
-            return true
-          })
-        }else{
-          filter.sortCols.unshift(id+"__down")
-        }
-        doFilter();
-        saveFilter();
-      }
-
-
-
-
-
-      function deleteElement(devId = "", flowId = ""){
-        // TODO feedback....
-        // TODO add Info for Dynamic, they will be back in a minute
-        ServerConnector.post("crosspoint",{action:"delete", devId:devId, flowId:flowId}).then(()=>{}).catch(()=>{});
-      }
-
-
-      function moveDevice(devId = "", num:any = 0){
-        let newNum = Number.parseInt(""+num);
-        ServerConnector.post("crosspoint",{action:"movedevice", devId:devId, newNum:newNum}).then(()=>{}).catch(()=>{});
-      }
-
-      function moveFlow(devId = "", flow:any, num:any = 0){
-        let flowType = flow.type;
-        let newNum = Number.parseInt(""+num);
-        ServerConnector.post("crosspoint",{action:"moveflow", devId:devId, type:flowType, flowId:flow.id, newNum:newNum}).then(()=>{}).catch(()=>{});
-      }
-
-
-      function updateMulticast(flowId:string, index:number, multicast:string){
-        
-        ServerConnector.post("setMulticast",{ id:flowId, data:{
-          legs:[{index:index, multicast:multicast}]
-        }}).then(()=>{}).catch(()=>{});
-      }
-
-
-
-
+      sdpModal.showModal();
+    }
+    function copySdp(){
+      try{
+        navigator.clipboard.writeText(sdpModalContent);
+      }catch(e){}
+    }
 
   </script>
-  
 
-  <div class="content-container">
 
+  <div class="content-container details-page">
 
     <ul class="menu bg-base-200 menu-horizontal rounded-box filter-nav">
       <li>
@@ -540,315 +954,306 @@
       </li>
       <li>
         <label class="input input-ghost flex gap-2">
-          <input bind:value={filter.searchFormat} on:input={()=>changeFilter()} type="text" class="grow" placeholder="Search Format" />
+          <input bind:value={filter.searchFormat} on:input={()=>changeFilter()} type="text" class="grow" placeholder="Search Codec / Format" />
           <Icon src={RectangleGroup}></Icon>
         </label>
       </li>
-
       <li>
         <label class="input input-ghost flex gap-2">
           <input bind:value={filter.searchIp} on:input={()=>changeFilter()} type="text" class="grow" placeholder="Search IP" />
           <Icon src={RectangleGroup}></Icon>
         </label>
       </li>
-
-      <li>
-        <label class="label cursor-pointer gap-2">
-          <span class="label-text">RX</span> 
-          <input on:input={()=>changeFilter()} bind:checked={filter.showRx} type="checkbox" class="toggle" />
-        </label>
-      </li>
-      <li>
-        <label class="label cursor-pointer gap-2">
-          <span class="label-text">TX</span> 
-          <input on:input={()=>changeFilter()} bind:checked={filter.showTx} type="checkbox" class="toggle" />
-        </label>
-      </li>
-
       <li class="nav-spacer"></li>
-      <li style="flex-wrap:nowrap; flex-direction:row;">
-        <span class="text-info " use:OverlayMenuService.tooltip data-tooltip="Total">{countTotal}</span><span>/</span>
-        <span class="text-success " use:OverlayMenuService.tooltip data-tooltip="Available">{countAvailable}</span><span>/</span>
-        <span class="text-error" use:OverlayMenuService.tooltip data-tooltip="Unavailable">{countUnavailable}</span>
+      <li class="det-counters">
+        <span><strong>{countDevices}</strong>&nbsp;Dev</span>
+        <span class="det-counter-sep">·</span>
+        <span><strong>{countSenders}</strong>&nbsp;TX</span>
+        <span class="det-counter-sep">·</span>
+        <span><strong>{countReceivers}</strong>&nbsp;RX</span>
       </li>
     </ul>
 
-    
+
     <ScrollArea autoHide={false}>
-  <table class="data-table">
-
-    <thead>
-        <tr>
-          <td class="data-table-fixed-col" style="min-width:56px;"></td>
-            {#each tableCols as col}
-                {#if !filter.hiddenCols.includes(col.id)}
-                    <td class="{(col.fixed ? "data-table-fixed-col":"")}" style="{ filter.widthCols.hasOwnProperty(col.id) ? "min-width:"+filter.widthCols[col.id]+"px;":""} {col.fixedOffset ? "left:"+col.fixedOffset+"px;":""} {col.width ? "min-width:"+col.width+"px;":""}">
-                      <div class="table-cell">
-                        <div class="table-content">{col.name}</div>
-                        <div class="table-functions">
-                      {#if col.sortable}
-                      {#if filter.sortCols.includes(col.id + "__down")}
-                        <button class="btn btn-circle btn-ghost" on:click={()=>{toggleSort(col.id)}}>
-                          <Icon class="text-info" src={BarsArrowDown}></Icon>
-                        </button>
-                      {:else if filter.sortCols.includes(col.id + "__up")}
-                        <button class="btn btn-circle btn-ghost" on:click={()=>{toggleSort(col.id)}}>
-                          <Icon class="text-info" src={BarsArrowUp}></Icon>
-                        </button>
-                      {:else}
-                      <button class="btn btn-circle btn-ghost" on:click={()=>{toggleSort(col.id)}}>
-                        <Icon class="" src={BarsArrowDown}></Icon>
-                      </button>
-                      {/if}
-                      {/if}
-
-                        </div>
-                      </div>
-                      {#if col.resize}
-                        <div class="resize-handler" draggable={true}
-                          on:dragstart={(e)=>{startResizeDrag(e,col.id)}}
-                          on:drag={(e)=>{updateResizeDrag(e,col.id)}}
-                          on:dragend={(e)=>{endResizeDrag(e,col.id)}}
-                        ></div>
-                      {/if}
-                    </td>
-                {/if}
-            {/each}
-            <td> </td>
-        </tr>
-    </thead>
-    <tbody>
-        {#each list as dev}
-            <tr on:dblclick={()=>{toggleExpandDevice(dev.id)}} class={"det-device"}>
-                <td on:click={()=>{toggleExpandDevice(dev.id)}} class="data-table-fixed-col" style="min-width:56px;"><span class={"data-table-expand "+ (isDeviceExpanded(dev.id) ? "data-table-expand-active":"")}><Icon src={ChevronRight}></Icon></span></td>
-                {#each tableCols as col}
-                    {#if !filter.hiddenCols.includes(col.id)}
-                    <td class="{(col.fixed ? "data-table-fixed-col":"")}" style="{col.fixedOffset ? "left:"+col.fixedOffset+"px;":""} {col.width ? "min-width:"+col.width+"px;":""}">
-
-                            {#if col.id == "num"}
-                              <InlineEditor width="6" value={dev.num} on:update={(e)=>{moveDevice(dev.id, e.detail)}}></InlineEditor>
-                            {/if}
-
-                            {#if col.id == "available"}
-                            <div class="badge badge-{ dev.available ? "success" : "error"} badge-sm"></div>
-                            {/if}
-
-                            {#if col.id == "name"}
-                                    {#if dev.name == dev.alias}
-                                      <span>{dev.alias}</span>
-                                    {:else}
-                                      <span data-tooltip-position="center,bottom" use:OverlayMenuService.tooltip data-tooltip="{dev.name}">{dev.alias}</span>
-                                    {/if}
-                                    <button on:click={()=>{openLabelEditor(dev.id,dev.name,dev.alias)}} class="btn btn-round btn-hover">
-                                      <Icon src={Pencil}></Icon>
-                                    </button>
-                                    {/if}
-
-                            {#if col.id == "info"}
-                            {renderId(dev.id)}
-                            {/if}
-
-                        </td>
-                    {/if}
+    <table class="data-table details-tree">
+      <colgroup>
+        <col style="width:48px;"/>
+        <col style="min-width:340px;"/>
+        <col style="min-width:90px;"/>
+        <col style="min-width:160px;"/>
+        <col style="min-width:160px;"/>
+        <col style="min-width:140px;"/>
+        <col style="min-width:300px;"/>
+        <col style="min-width:160px;"/>
+        <col style="min-width:90px;"/>
+      </colgroup>
+      <tbody>
+        {#each deviceList as dev (dev.id)}
+          {@const isExpanded = filter.expanded.devices.includes(dev.id)}
+          <tr class="det-device" on:dblclick={()=>toggleDevice(dev.id)}>
+            <td on:click={()=>toggleDevice(dev.id)}>
+              <span class={"data-table-expand "+ (isExpanded ? "data-table-expand-active":"")}><Icon src={ChevronRight}></Icon></span>
+            </td>
+            <td on:click={()=>toggleDevice(dev.id)} class="det-device-label" colspan="8">
+              <div class="det-device-label-inner">
+                {#each [deviceDotClass(dev)] as dotClass}
+                  <div class="badge badge-{dotClass} badge-sm"
+                       use:OverlayMenuService.tooltip
+                       data-tooltip="{
+                         dotClass === "error"   ? "Device unavailable" :
+                         dotClass === "success" ? (acceptableGmid ? "PTP locked to accepted Grand-Master" : "Device available") :
+                         (dev.gmid ? "PTP locked to "+dev.gmid+" — does not match accepted GMID" : "No PTP lock detected")
+                       }"></div>
                 {/each}
-                <td class="data-table-action-buttons">
-                  <button class="btn btn-circle" on:click={()=>{openDeviceEditor(dev.id)}}>
-                    <Icon src={Cog}></Icon>
-                  </button>
+                <div class="det-device-label-text">
+                  <div class="det-device-name-row">
+                    <span use:OverlayMenuService.tooltip data-tooltip="{dev.tooltip}"><strong>{dev.label}</strong></span>
+                    <button on:click|stopPropagation={()=>openLabelEditor(dev.id, dev.name, dev.alias)} class="btn btn-round det-device-edit"
+                            use:OverlayMenuService.tooltip data-tooltip="Change alias">
+                      <Icon src={Pencil}></Icon>
+                    </button>
+                    {#if dev.deviceUrl}
+                      <a href={dev.deviceUrl} target="_blank" rel="noopener noreferrer"
+                         class="det-device-link"
+                         on:click|stopPropagation
+                         use:OverlayMenuService.tooltip data-tooltip="Open device web UI: {dev.deviceUrl}">
+                        <Icon src={ArrowTopRightOnSquare}></Icon>
+                      </a>
+                    {/if}
+                  </div>
+                  {#if dev.gmid}
+                    <span class="det-device-gmid {dev.gmidLocked ? "" : "det-device-gmid-warn"}"
+                          use:OverlayMenuService.tooltip
+                          data-tooltip="{dev.gmidLocked ? "PTP Grand-Master ID this node is locked to" : "PTP clock present but not locked!"}">
+                      Locked to GMID {dev.gmid}{dev.gmidLocked ? "" : " (unlocked)"}
+                    </span>
+                  {/if}
+                </div>
+                <span class="det-device-counts">{dev.senders.length} TX · {dev.receivers.length} RX</span>
+              </div>
+            </td>
+          </tr>
 
-                  <button class="btn btn-circle" on:click={()=>{deleteElement(dev.id)}}>
-                    <Icon src={Trash}></Icon>
+          {#if isExpanded}
+
+            {#if dev.senders.length > 0}
+              {@const sendersExpanded = !filter.collapsedSenders.includes(dev.id)}
+              <tr class="det-section det-section-senders" on:click={()=>toggleSendersSection(dev.id)}>
+                <td>
+                  <span class={"data-table-expand "+ (sendersExpanded ? "data-table-expand-active":"")}><Icon src={ChevronRight}></Icon></span>
+                </td>
+                <td><span class="det-section-title">SENDERS</span> <span class="det-section-count">({dev.senders.length})</span></td>
+                <td>Type</td>
+                <td>Codec</td>
+                <td>Format</td>
+                <td>Bitrate</td>
+                <td>Destination IP : Port</td>
+                <td>Source IP</td>
+                <td>Manifest</td>
+              </tr>
+            {/if}
+
+            {#if dev.senders.length > 0 && !filter.collapsedSenders.includes(dev.id)}
+            {#each dev.senders as flow (flow.id)}
+              <tr class={"det-flow det-flow-tx det-flow-"+flow.type + (flow.active ? " is-active" : " is-inactive")}>
+                <td></td>
+                <td style="padding-left:32px;">
+                  {#if flow.name === flow.alias}
+                    <span>{flow.alias}</span>
+                  {:else}
+                    <span use:OverlayMenuService.tooltip data-tooltip="{flow.name}">{flow.alias}</span>
+                  {/if}
+                  <button on:click={()=>openLabelEditor(flow.id, flow.name, flow.alias)} class="btn btn-round btn-hover">
+                    <Icon src={Pencil}></Icon>
                   </button>
                 </td>
-            </tr>
-            {#if isDeviceExpanded(dev.id)}
-              {#if filter.showTx }
-                {#each [...dev.senders.video, ...dev.senders.audio, ...dev.senders.data]  as flow}
-                    <tr class={"data-table-expanded det-flow det-flow-tx det-flow-"+flow.type}>
-                        <td class="data-table-fixed-col"></td>
-                        {#each tableCols as col}
-                            {#if !filter.hiddenCols.includes(col.id)}
-                                <td class="{(col.fixed ? "data-table-fixed-col":"")}" style="{col.fixedOffset ? "left:"+col.fixedOffset+"px;":""} {col.width ? "min-width:"+col.width+"px;":""}">
-
-                                    {#if col.id == "num"}
-                                      <InlineEditor width="6" label={dev.num + "." + renderFlowNum(flow) } value={flow.num} on:update={(e)=>{moveFlow(dev.id, flow, e.detail)}}></InlineEditor>
-                                    {/if}
-
-                                    {#if col.id == "available"}
-                                    <div class="badge badge-{ flow.available ? (flow.manifestOk && flow.active ? "success" : "warning") : "error"} badge-sm"></div>
-                                    {/if}
-
-                                    {#if col.id == "name"}
-                                    {#if flow.name == flow.alias}
-                                      <span>{flow.alias}</span>
-                                    {:else}
-                                      <span data-tooltip-position="center,bottom" use:OverlayMenuService.tooltip data-tooltip="{flow.name}">{flow.alias}</span>
-                                    {/if}
-                                    <button on:click={()=>{openLabelEditor(flow.id,flow.name,flow.alias)}} class="btn btn-round btn-hover">
-                                      <Icon src={Pencil}></Icon>
-                                    </button>
-                                    {/if}
-
-                                    {#if col.id == "codec"}
-                                    {renderCodecs(flow.capabilities.mediaTypes)}
-                                    {/if}
-
-
-                                    {#if col.id == "format"}
-                                    {flow.format}
-                                    {/if}
-
-                                    {#if col.id == "bitrate"}
-                                    <span>Est.: {renderBitrate(flow.bitrate)}</span>
-                                    
-                                    {/if}
-
-                                    {#if col.id == "type"}
-                                    {#if flow.type == "video"}
-                                    <span class="icon-large-video"><Icon src={VideoCamera}></Icon></span>
-                                      {:else if flow.type == "audio"}
-                                      <span class="icon-large-audio"><Icon src={Microphone}></Icon></span>
-                                      {:else}
-                                      <span class="icon-large-data"><Icon src={ArrowRightStartOnRectangle}></Icon></span>
-                                      {/if}
-                                      TX 
-                                      {flow.type == "data" ? "Anc":"" }
-                                    {/if}
-
-                                    {#if col.id == "info"}
-                                      <span>
-                                        {renderId(flow.id)}
-                                      </span>
-                                      {#if flow.active && !flow.manifestOk}
-                                        <span class="text-error">No manifest loaded</span>
-                                      {/if}
-
-                                      {#if !flow.active}
-                                        <span class="text-error">Not active</span>
-                                      {/if}
-
-                                    {/if}
-
-                                    {#if col.id == "sync"}
-                                      {#each [getSync(flow)] as sync}
-                                      {#if sync.available}
-                                        <span>Source: {sync.source}</span>
-                                        <span>Domain: {sync.ptpdomain}</span>
-                                      {/if}
-                                      {/each}
-                                    {/if}
-
-
-                                    {#if col.id == "flow"}
-                                      {#each getSenderSettings(flow) as settings, index}
-                                        <div>
-                                          <!--<span>{settings.name} : </span>-->
-                                          <InlineEditor width="10" label="Dst: " value={settings.dstIp} on:update={(e)=>{updateMulticast(flow.id, index, e.detail)}}></InlineEditor>
-                                          
-                                          <span>Src: {settings.srcIp}</span>
-                                        </div>
-                                      {/each}
-                                    {/if}
-
-                                </td>
-                            {/if}
-                        {/each}
-                        <td>
-                          <button class="btn btn-circle" on:click={()=>{openFlowEditor(flow.id)}}>
-                            <Icon src={Cog}></Icon>
-                          </button>
-
-                          <button class="btn btn-circle" on:click={()=>{deleteElement(dev.id, flow.id)}}>
-                            <Icon src={Trash}></Icon>
-                          </button>
-                        </td>
-                    </tr>
-                {/each}
-              {/if}
-              {#if filter.showRx }
-                {#each [...dev.receivers.video, ...dev.receivers.audio, ...dev.receivers.data] as flow}
-                  <tr class={"data-table-expanded det-flow det-flow-rx det-flow-"+flow.type}>
-                    <td class="data-table-fixed-col"></td>
-                        {#each tableCols as col}
-                            {#if !filter.hiddenCols.includes(col.id)}
-                            <td class="{(col.fixed ? "data-table-fixed-col":"")}" style="{col.fixedOffset ? "left:"+col.fixedOffset+"px;":""} {col.width ? "min-width:"+col.width+"px;":""}">
-
-                                    {#if col.id == "num"}
-                                      <InlineEditor width="6" label={dev.num + "." + renderFlowNum(flow) } value={flow.num} on:update={(e)=>{moveFlow(dev.id, flow, e.detail)}}></InlineEditor>
-                                    {/if}
-
-                                    {#if col.id == "available"}
-                                    <div class="badge badge-{ flow.available ? "success" : "error"} badge-sm"></div>
-                                    {/if}
-
-
-                                    {#if col.id == "name"}
-                                    {#if flow.name == flow.alias}
-                                      <span>{flow.alias}</span>
-                                    {:else}
-                                      <span data-tooltip-position="center,bottom" use:OverlayMenuService.tooltip data-tooltip="{flow.name}">{flow.alias}</span>
-                                    {/if}
-                                    <button on:click={()=>{openLabelEditor(flow.id,flow.name,flow.alias)}} class="btn btn-round btn-hover">
-                                      <Icon src={Pencil}></Icon>
-                                    </button>
-                                    {/if}
-
-                                    {#if col.id == "codec"}
-                                    {renderCodecs(flow.capabilities.mediaTypes)}
-                                    {/if}
-
-                                    {#if col.id == "type"}
-                                    {#if flow.type == "video"}
-                                    <span class="icon-large-video"><Icon src={Tv}></Icon></span>
-                                      {:else if flow.type == "audio"}
-                                      <span class="icon-large-audio"><Icon src={SpeakerWave}></Icon></span>
-                                      {:else}
-                                      <span class="icon-large-data"><Icon src={ArrowLeftEndOnRectangle}></Icon></span>
-                                      {/if}
-                                      RX
-                                      {flow.type == "data" ? "Anc":"" }
-                                    {/if}
-
-                                    {#if col.id == "info"}
-                                    {renderId(flow.id)}
-                                    {/if}
-
-                                </td>
-                            {/if}
-                        {/each}
-                        <td>
-                          <button class="btn btn-circle">
+                <td>
+                  <span class={"cp-type det-toggle-active cp-type-"+flow.type + (flow.active ? " active" : "")}
+                        on:click={()=>toggleSenderActive(flow)}
+                        use:OverlayMenuService.tooltip
+                        data-tooltip="{flow.type === "data" ? "ANC" : flow.type.toUpperCase()} {flow.active ? "active – click to disable":"inactive – click to enable"}">
+                    <Icon src={getFlowTypeIcon(flow.type)}></Icon>
+                  </span>
+                </td>
+                <td>{flow.codec}</td>
+                <td>{flow.format}</td>
+                <td>
+                  {#if flow.active}
+                    <span>{renderBitrate(flow.bitrate)}</span>
+                  {:else}
+                    <span class="text-warning">inactive</span>
+                  {/if}
+                </td>
+                <td>
+                  {#if flow.legs.length === 0}
+                    <span class="text-info">—</span>
+                  {:else}
+                    {#each flow.legs as leg}
+                      {@const isDup = flow.active && duplicateIpsByLeg[leg.index] && duplicateIpsByLeg[leg.index].has(leg.dstIp)}
+                      {@const lKey = legKey(flow.id, leg.index)}
+                      {@const isEditing = editingLeg === lKey}
+                      <div class="det-leg {isDup ? "det-leg-duplicate" : ""}">
+                        <span class="det-leg-label">Leg {leg.index+1}:</span>
+                        {#if isEditing}
+                          {@const liveConflict = findActiveLegConflict(flow.id, leg.index, legEditIp)}
+                          <input type="text" class="det-leg-input det-leg-input-ip-{lKey.replace(/[:]/g,"_")} {liveConflict ? "det-leg-input-warn" : ""}"
+                                 bind:value={legEditIp}
+                                 on:keydown={(e)=>legEditKey(e, flow.id, leg.index)}
+                                 placeholder="239.x.x.x" size="14" />
+                          <span class="det-leg-colon">:</span>
+                          <input type="number" class="det-leg-input det-leg-input-port"
+                                 bind:value={legEditPort}
+                                 on:keydown={(e)=>legEditKey(e, flow.id, leg.index)}
+                                 placeholder="5004" min="1" max="65535" />
+                          <button class="btn btn-xs btn-success det-leg-btn" on:click={()=>commitLegEdit(flow.id, leg.index)}>Save</button>
+                          <button class="btn btn-xs btn-ghost det-leg-btn" on:click={cancelLegEdit}>Cancel</button>
+                          {#if legEditError}
+                            <span class="text-error det-leg-error">{legEditError}</span>
+                          {/if}
+                          {#if liveConflict && !legEditError}
+                            <span class="text-warning det-leg-warning"
+                                  use:OverlayMenuService.tooltip
+                                  data-tooltip="Multicast {legEditIp} is already used on Leg {leg.index+1} by another active sender.">
+                              ⚠ Already used by {liveConflict.alias}
+                            </span>
+                          {/if}
+                        {:else}
+                          <span class="det-leg-value">{leg.dstIp || "—"}<span class="det-leg-colon">:</span>{leg.dstPort || "—"}</span>
+                          <button class="btn btn-round btn-hover" on:click={()=>startLegEdit(flow.id, leg.index, leg)}
+                                  use:OverlayMenuService.tooltip data-tooltip="Edit Multicast / Port">
                             <Icon src={Pencil}></Icon>
                           </button>
-
-                          <button class="btn btn-circle" on:click={()=>{deleteElement(dev.id, flow.id)}}>
-                            <Icon src={Trash}></Icon>
-                          </button>
-                        </td>
-                    </tr>
+                          {#if isDup}
+                            <span class="text-error det-dup-hint" use:OverlayMenuService.tooltip data-tooltip="Multicast IP used by another active sender on the same leg!">DUP</span>
+                          {/if}
+                        {/if}
+                      </div>
+                    {/each}
+                  {/if}
+                </td>
+                <td>
+                  {#each flow.legs as leg}
+                    <div class="det-leg">
+                      <span>{leg.srcIp || "—"}</span>
+                    </div>
                   {/each}
-                {/if}
+                </td>
+                <td class="data-table-action-buttons">
+                  <button class="btn" on:click={()=>openSdpView(flow)}
+                          use:OverlayMenuService.tooltip data-tooltip="Show SDP file">
+                    <Icon src={DocumentText}></Icon>
+                    <span class="det-action-label">SDP</span>
+                  </button>
+                </td>
+              </tr>
+            {/each}
             {/if}
+
+
+            {#if dev.receivers.length > 0}
+              {@const receiversExpanded = !filter.collapsedReceivers.includes(dev.id)}
+              <tr class="det-section det-section-receivers" on:click={()=>toggleReceiversSection(dev.id)}>
+                <td>
+                  <span class={"data-table-expand "+ (receiversExpanded ? "data-table-expand-active":"")}><Icon src={ChevronRight}></Icon></span>
+                </td>
+                <td><span class="det-section-title">RECEIVERS</span> <span class="det-section-count">({dev.receivers.length})</span></td>
+                <td>Type</td>
+                <td>Codec</td>
+                <td>Format</td>
+                <td>Bitrate</td>
+                <td>Destination IP : Port</td>
+                <td>Source IP</td>
+                <td></td>
+              </tr>
+            {/if}
+
+            {#if dev.receivers.length > 0 && !filter.collapsedReceivers.includes(dev.id)}
+            {#each dev.receivers as recv (recv.id)}
+              <tr class={"det-flow det-flow-rx det-flow-"+recv.type + (recv.active ? " is-active" : " is-inactive")}>
+                <td></td>
+                <td style="padding-left:32px;">
+                  {#if recv.name === recv.alias}
+                    <span>{recv.alias}</span>
+                  {:else}
+                    <span use:OverlayMenuService.tooltip data-tooltip="{recv.name}">{recv.alias}</span>
+                  {/if}
+                  <button on:click={()=>openLabelEditor(recv.id, recv.name, recv.alias)} class="btn btn-round btn-hover">
+                    <Icon src={Pencil}></Icon>
+                  </button>
+                  {#if recv.connectedSenderLabel}
+                    <span class="det-recv-source" use:OverlayMenuService.tooltip data-tooltip="Connected sender">← {recv.connectedSenderLabel}</span>
+                  {/if}
+                </td>
+                <td>
+                  <span class={"cp-type det-toggle-active cp-type-"+recv.type + (recv.active ? " active" : "")}
+                        on:click={()=>toggleReceiverActive(recv)}
+                        use:OverlayMenuService.tooltip
+                        data-tooltip="{recv.type === "data" ? "ANC" : recv.type.toUpperCase()} {recv.active ? "active – click to disable" : "inactive – click to enable"}">
+                    <Icon src={getFlowTypeIcon(recv.type)}></Icon>
+                  </span>
+                </td>
+                <td>{recv.codec}</td>
+                <td>{recv.format}</td>
+                <td>
+                  {#if recv.active}
+                    <span>{renderBitrate(recv.bitrate)}</span>
+                  {:else}
+                    <span class="text-warning">inactive</span>
+                  {/if}
+                </td>
+                <td>
+                  {#if recv.legs.length === 0}
+                    <span class="text-info">—</span>
+                  {:else}
+                    {#each recv.legs as leg}
+                      <div class="det-leg det-leg-readonly">
+                        <span class="det-leg-label">Leg {leg.index+1}:</span>
+                        <span>{leg.dstIp || "—"}{leg.dstPort ? ":"+leg.dstPort : ""}</span>
+                      </div>
+                    {/each}
+                  {/if}
+                </td>
+                <td>
+                  {#each recv.legs as leg}
+                    <div class="det-leg">
+                      <span>{leg.srcIp || "—"}</span>
+                    </div>
+                  {/each}
+                </td>
+                <td></td>
+              </tr>
+            {/each}
+            {/if}
+
+          {/if}
         {/each}
-    </tbody>
 
-  </table>
-</ScrollArea>
-
-    
+        {#if deviceList.length === 0}
+          <tr>
+            <td colspan="9" style="text-align:center; padding:24px;">
+              <span class="text-info">No Devices available.</span>
+            </td>
+          </tr>
+        {/if}
+      </tbody>
+    </table>
+    </ScrollArea>
   </div>
 
-  <dialog bind:this={editorModal} class="modal">
-    <div class="modal-box">
-      {#if activeEditorType == "flow"}
-      <SetupFlow flowId={activeEditorId}></SetupFlow>
-      {/if}
 
-      {#if activeEditorType == "device"}
-      <SetupDevice deviceId={activeEditorId}></SetupDevice>
-      {/if}
-
+  <dialog bind:this={sdpModal} class="modal">
+    <div class="modal-box det-sdp-modal">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+      </form>
+      <h3 class="font-bold text-lg">SDP – {sdpModalTitle}</h3>
+      <pre class="det-sdp-content">{sdpModalContent}</pre>
       <div class="modal-action">
+        <button on:click={copySdp} class="btn">Copy</button>
+        <form method="dialog">
+          <button class="btn">Close</button>
+        </form>
       </div>
     </div>
   </dialog>
@@ -865,12 +1270,10 @@
       <input on:keypress={(e)=>{if(e.keyCode == 13) changeLabelSend()}} bind:this={labelModalInput} bind:value={labelModalValue} type="text" placeholder="Type here" class="input input-bordered w-full max-w-xs" />
       <div class="modal-action">
         <form method="dialog">
-          <!-- if there is a button in form, it will close the modal -->
-          <button on:click={()=>{labelModalValue = ""; changeLabelSend()}} class="btn" >Remove</button>
-          <button on:click={()=>{changeLabelSend()}} class="btn" >Save</button>
+          <button on:click={()=>{labelModalValue = ""; changeLabelSend()}} class="btn">Remove</button>
+          <button on:click={()=>{changeLabelSend()}} class="btn">Save</button>
           <button class="btn">Close</button>
         </form>
       </div>
     </div>
   </dialog>
-  

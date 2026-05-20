@@ -31,7 +31,6 @@
       showHidden: false,
       searchReceivers:"",
       searchSenders:"",
-      showAudioChannels:false,
       expanded: { senders :[], receivers :[]}
     };
 
@@ -802,15 +801,8 @@
 
       <li>
         <label class="label cursor-pointer gap-2">
-          <span class="label-text">Show hidden</span> 
+          <span class="label-text">Show hidden</span>
           <input on:input={()=>changeFilter()} bind:checked={filter.showHidden} type="checkbox" class="toggle" />
-        </label>
-      </li>
-
-      <li>
-        <label class="label cursor-pointer gap-2">
-          <span class="label-text">Show Audio Channels</span> 
-          <input on:input={()=>changeFilter()} bind:checked={filter.showAudioChannels} type="checkbox" class="toggle" />
         </label>
       </li>
     </ul>
@@ -880,7 +872,7 @@
                                   on:mouseleave={()=>clearDeviceConnectionPreview()} ></span></div></td>
                       {#if isSenderExpanded(sourceDev.id)}
                         {#each flowTypes as type}
-                          {#if !(filter.showAudioChannels && type == "audio") && !(!filter.showAudioChannels && type == "audiochannel") }
+                          {#if type !== "audiochannel" }
                             {#each sourceDev.senders[type] as sourceFlow}
                               <td class="cp-connect-device"><div><span 
                                     on:click={()=>connect( sourceDev, sourceFlow, dev, null)}
@@ -922,7 +914,7 @@
                               on:mouseleave={()=>clearDeviceConnectionPreview()} ></span></div></td>
                       {#if isSenderExpanded(sourceDev.id)}
                         {#each flowTypes as type}
-                          {#if !(filter.showAudioChannels && type == "audio") && !(!filter.showAudioChannels && type == "audiochannel") }
+                          {#if type !== "audiochannel" }
                             {#each sourceDev.senders[type] as sourceFlow}
                               {#if receiverCapable(flow, sourceFlow) }
                               <td class="cp-connect-flow"><div><span class="{ getConnectClass(sourceDev, sourceFlow, dev, flow)}" 

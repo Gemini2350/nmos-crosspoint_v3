@@ -2,8 +2,8 @@ FROM node:20 AS dev
 
 COPY ./ui /nmos-crosspoint/ui
 COPY ./server /nmos-crosspoint/server
-ENV PATH /nmos-crosspoint/server/node_modules/.bin:$PATH
-ENV PATH /app/node_modules/.bin:$PATH
+ENV PATH=/nmos-crosspoint/server/node_modules/.bin:$PATH
+ENV PATH=/app/node_modules/.bin:$PATH
 
 WORKDIR /nmos-crosspoint/ui
 RUN npm install
@@ -14,4 +14,4 @@ RUN npm install -g typescript@latest
 RUN npm install -g tsc-watch@latest
 RUN npm install
 
-CMD cd /nmos-crosspoint/server && npm run dev & cd /nmos-crosspoint/ui && npm run dev
+CMD ["sh", "-c", "cd /nmos-crosspoint/server && npm run dev & cd /nmos-crosspoint/ui && npm run dev"]

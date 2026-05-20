@@ -3,3 +3,313 @@
         display: inline;
     }
 }
+
+
+.setup-page {
+    overflow-y: auto;
+    padding: 20px;
+
+    .setup-card {
+        max-width: 720px;
+        margin: 0 auto;
+        background-color: theme('colors.base-200');
+        border-radius: 12px;
+        padding: 28px 32px;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.18);
+    }
+
+    .setup-title {
+        font-size: 1.6rem;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    .setup-subtitle {
+        color: theme('colors.slate.400');
+        margin-bottom: 20px;
+        code {
+            background-color: theme('colors.base-300');
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+    }
+
+    .setup-alert {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 16px;
+        svg { width: 20px; height: 20px; }
+    }
+
+    .setup-section {
+        border-top: 1px solid theme('colors.base-300');
+        padding-top: 18px;
+        margin-top: 18px;
+
+        h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .setup-section-hint {
+            color: theme('colors.slate.400');
+            font-size: 0.85rem;
+            margin-bottom: 12px;
+            line-height: 1.45;
+        }
+    }
+
+    .setup-form {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+    }
+    .setup-field {
+        flex: 1 1 280px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+
+        &.setup-field-narrow {
+            flex: 0 0 140px;
+        }
+
+        .setup-label {
+            font-size: 0.8rem;
+            color: theme('colors.slate.400');
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        input {
+            font-family: 'Roboto Mono', monospace;
+        }
+    }
+
+    .setup-actions {
+        margin-top: 24px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+
+    // Inline status dots used inside descriptive text
+    .setup-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin: 0 2px;
+        vertical-align: middle;
+
+        &.setup-dot-success { background-color: theme('colors.success'); }
+        &.setup-dot-warning { background-color: theme('colors.warning'); }
+    }
+
+
+    // Multicast Auto-Allocation range editors
+    .setup-range-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        input { flex: 1 1 220px; }
+        .setup-range-stat {
+            font-size: 0.75rem;
+            color: theme('colors.slate.400');
+            font-family: 'Roboto Mono', monospace;
+            white-space: nowrap;
+        }
+    }
+
+
+    // Lease Inventory
+    .lease-inventory {
+        margin-top: 18px;
+        border-top: 1px solid theme('colors.base-300');
+        padding-top: 10px;
+
+        summary {
+            cursor: pointer;
+            color: theme('colors.slate.300');
+            font-size: 0.9rem;
+            user-select: none;
+            margin-bottom: 10px;
+            font-weight: 600;
+            &:hover { color: theme('colors.slate.100'); }
+        }
+        .lease-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+
+            .input-sm, .select-sm {
+                font-size: 0.85rem;
+                min-height: 30px;
+                height: 30px;
+                padding: 2px 8px;
+            }
+            .input-sm { min-width: 240px; }
+            .select-sm { min-width: 140px; }
+            .lease-count {
+                font-size: 0.8rem;
+                color: theme('colors.slate.400');
+                margin-left: auto;
+            }
+        }
+        .lease-table-wrap {
+            overflow-x: auto;
+            max-height: 460px;
+            overflow-y: auto;
+            border: 1px solid theme('colors.base-300');
+            border-radius: 6px;
+        }
+        .lease-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.82rem;
+
+            thead th {
+                position: sticky;
+                top: 0;
+                background-color: theme('colors.base-300');
+                z-index: 1;
+                text-align: left;
+                padding: 6px 10px;
+                color: theme('colors.slate.300');
+                font-weight: 600;
+                font-size: 0.7rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                border-bottom: 1px solid theme('colors.base-300');
+            }
+            td {
+                padding: 5px 10px;
+                border-bottom: 1px solid theme('colors.base-300');
+                white-space: nowrap;
+            }
+            tbody tr:hover { background-color: theme('colors.base-200'); }
+
+            .vendor-mono { font-family: 'Roboto Mono', monospace; }
+            .lease-date  {
+                font-size: 0.75rem;
+                color: theme('colors.slate.400');
+            }
+            .lease-channels {
+                margin-left: 6px;
+                font-size: 0.7rem;
+                color: theme('colors.slate.400');
+            }
+        }
+
+        .lease-cat-badge {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+
+            &.lease-cat-video {
+                background-color: rgba(34,197,94,0.15);
+                color: theme('colors.green.400');
+            }
+            &.lease-cat-audioLow {
+                background-color: rgba(245,158,11,0.15);
+                color: theme('colors.amber.400');
+            }
+            &.lease-cat-audioHigh {
+                background-color: rgba(245,158,11,0.25);
+                color: theme('colors.amber.300');
+            }
+        }
+    }
+
+
+    // Vendor-profile editor table
+    .vendor-table-wrap {
+        overflow-x: auto;
+    }
+    .vendor-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+
+        thead th {
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: theme('colors.slate.400');
+            padding: 6px 6px;
+            border-bottom: 1px solid theme('colors.base-300');
+        }
+        td {
+            padding: 4px 4px;
+            vertical-align: middle;
+        }
+        .input-sm, .select-sm {
+            font-size: 0.85rem;
+            min-height: 28px;
+            height: 28px;
+            padding: 2px 8px;
+            width: 100%;
+        }
+        .vendor-mono {
+            font-family: 'Roboto Mono', monospace;
+        }
+        .vendor-port {
+            max-width: 6em;
+        }
+    }
+    .vendor-empty {
+        text-align: center;
+        color: theme('colors.slate.500');
+        padding: 10px 0 !important;
+        font-size: 0.85rem;
+    }
+    .vendor-actions-row {
+        margin-top: 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .vendor-detected {
+        margin-top: 18px;
+        border-top: 1px solid theme('colors.base-300');
+        padding-top: 10px;
+
+        summary {
+            cursor: pointer;
+            color: theme('colors.slate.400');
+            font-size: 0.85rem;
+            user-select: none;
+            margin-bottom: 6px;
+            &:hover { color: theme('colors.slate.200'); }
+        }
+        .vendor-detected-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+
+            th, td {
+                padding: 4px 8px;
+                text-align: left;
+            }
+            th {
+                color: theme('colors.slate.500');
+                font-weight: 500;
+                text-transform: uppercase;
+                font-size: 0.7rem;
+                border-bottom: 1px solid theme('colors.base-300');
+            }
+            tbody tr:nth-child(even){
+                background-color: theme('colors.base-300');
+            }
+        }
+    }
+}

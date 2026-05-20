@@ -29,9 +29,7 @@
     "daisyui": "^4.6.1",
     "happy-svelte-scrollbar": "^1.1.0",
     "heroicons": "^2.1.1",
-    "install": "^0.13.0",
     "js-sha256": "^0.11.0",
-    "npm": "^10.4.0",
     "perfect-scrollbar": "^1.5.5",
     "postcss": "^8.4.33",
     "rfc6902": "^5.1.1",
@@ -40,5 +38,10 @@
     "svelte-routing": "^2.11.0",
     "svrollbar": "^0.12.0",
     "tailwindcss": "^3.4.1"
+  },
+  "overrides": {
+    "rimraf": "^6.0.1",
+    "glob": "^11.0.0",
+    "inflight": "npm:lru-cache@^10.4.3"
   }
 }
