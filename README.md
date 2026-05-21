@@ -6,9 +6,9 @@ This tool is intended as a simple Orchestration layer for NMOS and ST2110 based 
 
 This tool is tested against a lot of devices and now stable and performant with more than 2000 Flows.
 
-![preview1.jpg](preview1.jpg)
+![preview1.jpg](preview1.png)
 
-![preview2.jpg](preview2.jpg)
+![preview2.jpg](preview2.png)
 ## Features
 
 - List of all NMOS Devices and Flows in the Network
