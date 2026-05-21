@@ -16,11 +16,11 @@ import { WebsocketClient } from "./lib/SyncServer/websocketClient";
 
 import { WebsocketSyncServer } from "./lib/SyncServer/websocketSyncServer";
 import { CrosspointAbstraction } from "./lib/crosspointAbstraction";
-import { Topology } from "./lib/topology";
 import { MediaDevices } from "./lib/mediaDevices";
 import { SyncObject } from "./lib/SyncServer/syncObject";
 import { parseSettings } from "./lib/parseSettings";
 import { MulticastLeaseManager } from "./lib/multicastLeaseManager";
+import { DnsPushService } from "./lib/dnsPushService";
 
 
 
@@ -111,6 +111,8 @@ const mediaDevices = new MediaDevices(settings);
 const crosspoint = new CrosspointAbstraction(settings);
 const nmosConnector = new NmosRegistryConnector(settings);
 const multicastLeaseManager = new MulticastLeaseManager(settings);
+const dnsPushService = new DnsPushService();
+try { dnsPushService.setSettings(settings.dnsPush); } catch (e) {}
 
 function getMulticastLeaseSnapshot() {
     return {
@@ -126,6 +128,25 @@ multicastLeaseManager.setOnChange(() => {
     } catch (e) {}
 });
 
+// Make the allocator collision-aware against live NMOS senders: when picking
+// a fresh pair, the manager will also skip any IP currently advertised in any
+// sender's IS-05 active transport_params (including senders without a lease).
+multicastLeaseManager.setExternalIpsProvider((excludeSenderId: string) => {
+    try {
+        if (NmosRegistryConnector.instance) {
+            return NmosRegistryConnector.instance.getActiveSenderIps(excludeSenderId);
+        }
+    } catch (e) {}
+    return new Set<string>();
+});
+
+// No periodic sweep — the NMOS registry's WebSocket subscription on /senders
+// already pushes us an update whenever a sender's IS-04 resource (incl. its
+// subscription.active flag) changes, which is what we use to trigger the
+// per-sender reconcile. The only place we still invoke sweepAllSenders is
+// once on the user toggling Auto-Allocation ON, so any pre-existing senders
+// that haven't had a websocket update since then get their lease.
+
 
 
 
@@ -135,14 +156,6 @@ server.addSyncObject("nmos","global",nmosConnector.syncNmos);
 server.addSyncObject("nmosConnectionState","global",nmosConnector.syncConnectionState);
 
 server.addSyncObject("crosspoint","global",crosspoint.syncCrosspoint);
-
-
-let topology = null;
-if(modDisabled.includes["topology"]){
-    SyncLog.info("server", "disabling module topology");
-}else{
-    topology = new Topology();
-}
 
 
 const uiConfigSync: SyncObject = new SyncObject("uiconfig", uiConfig);
@@ -170,30 +183,162 @@ function getSetupConfigState() {
             vendorProfiles = settings.vendorProfiles.map((v:any) => ({...v}));
         }
     }catch(e){}
-    let multicastRanges = {
-        audioLow:  (settings.multicastRanges && typeof settings.multicastRanges.audioLow  === "string") ? settings.multicastRanges.audioLow  : "",
-        audioHigh: (settings.multicastRanges && typeof settings.multicastRanges.audioHigh === "string") ? settings.multicastRanges.audioHigh : "",
-        video:     (settings.multicastRanges && typeof settings.multicastRanges.video     === "string") ? settings.multicastRanges.video     : "",
-    };
+    let multicastRange:string = (typeof settings.multicastRange === "string") ? settings.multicastRange : "";
     let autoMulticast = {
-        enabled: !!(settings.autoMulticast && settings.autoMulticast.enabled)
+        enabled: !!(settings.autoMulticast && settings.autoMulticast.enabled),
+        // `!== false` default no longer fits — `false` is now the default,
+        // so the UI gets exactly what's persisted.
+        reconnectReceiversOnSenderChange: !!settings.reconnectReceiversOnSenderChange
     };
-    let multicastStats = (MulticastLeaseManager.instance ? MulticastLeaseManager.instance.getStats() : { audioLow:{used:0,total:0}, audioHigh:{used:0,total:0}, video:{used:0,total:0} });
+    let autoActivateInactiveSender = !!settings.autoActivateInactiveSender;
+    let multicastStats = (MulticastLeaseManager.instance
+        ? MulticastLeaseManager.instance.getStats()
+        : { pool:{used:0,total:0}, audioLow:{used:0,total:0}, audioHigh:{used:0,total:0}, video:{used:0,total:0} });
+
+    // DNS Push settings — the API key is never sent back to the client.
+    // `apiKeySet` lets the UI show a placeholder so the user knows a key is
+    // configured without leaking the actual value.
+    let dnsPushCfg:any = (settings.dnsPush && typeof settings.dnsPush === "object") ? settings.dnsPush : {};
+    let dnsPush = {
+        enabled:     !!dnsPushCfg.enabled,
+        serverIp:    (typeof dnsPushCfg.serverIp === "string")   ? dnsPushCfg.serverIp : "",
+        serverPort:  (typeof dnsPushCfg.serverPort === "number") ? dnsPushCfg.serverPort : 443,
+        protocol:    dnsPushCfg.protocol === "http" ? "http" : "https",
+        apiKey:      "",
+        apiKeySet:   !!(typeof dnsPushCfg.apiKey === "string" && dnsPushCfg.apiKey.length > 0),
+        domain:      (typeof dnsPushCfg.domain === "string" && dnsPushCfg.domain) ? dnsPushCfg.domain : "local",
+        insecureTLS: dnsPushCfg.insecureTLS !== false,
+    };
+
+    // Auth snapshot — just the configured username(s) so the UI can show
+    // "current login" in the change-credentials form. The password is NEVER
+    // sent out; the client only knows whether one is set.
+    let authUsers:string[] = [];
+    try{
+        if(users && users.users && typeof users.users === "object"){
+            authUsers = Object.keys(users.users);
+        }
+    }catch(e){}
 
     return {
         registry,
         acceptableGmid: (typeof settings.acceptableGmid === "string") ? settings.acceptableGmid : "",
         vendorProfiles,
-        multicastRanges,
+        multicastRange,
         autoMulticast,
+        autoActivateInactiveSender,
         multicastStats,
+        dnsPush,
+        auth: { users: authUsers },
         restartRequired: false
     };
 }
 const setupConfigSync: SyncObject = new SyncObject("setupConfig", getSetupConfigState());
 server.addSyncObject("setupConfig","public",setupConfigSync);
 
+
+/**
+ * Walk every NMOS node and pair it with the display name we want to push
+ * to DNS. If any crosspoint device that belongs to this node has been
+ * given a user alias, that alias wins; otherwise we use the node label.
+ *
+ * Returns an array of `{nodeId, displayName, ip}` ready for
+ * DnsPushService.scheduleNodePush / syncAll.
+ */
+function collectDnsPushNodes(): { nodeId:string, displayName:string, ip:string }[] {
+    let out: { nodeId:string, displayName:string, ip:string }[] = [];
+    try{
+        let nc = NmosRegistryConnector.instance;
+        if(!nc) return out;
+        // The NmosRegistryConnector keeps the authoritative state in a private
+        // field; the SyncObject's `state` is just a publishable copy of the
+        // same object. Cast through `any` to read it without changing the
+        // class's public surface.
+        let nmos:any = (nc as any).nmosState;
+        if(!nmos || !nmos.nodes) return out;
+
+        // Build a map nodeId → preferred alias (first crosspoint device whose
+        // alias was customised by the user). Handles both nmos_<deviceId>
+        // direct devices and nmosgrp_<hash> grouphint groups.
+        let aliasByNode: { [nodeId:string]: string } = {};
+        try{
+            // crosspointState is updated on every worker tick.
+            let xpDevices = (crosspoint.crosspointState && Array.isArray(crosspoint.crosspointState.devices))
+                          ? crosspoint.crosspointState.devices : [];
+            if(Array.isArray(xpDevices)){
+                for(let xd of xpDevices){
+                    if(!xd || typeof xd.id !== "string") continue;
+                    let alias = (typeof xd.alias === "string") ? xd.alias : "";
+                    let name  = (typeof xd.name  === "string") ? xd.name  : "";
+                    if(!alias || alias === name) continue;  // not user-customised
+
+                    let xdNodeId = "";
+                    if(xd.id.startsWith("nmos_")){
+                        let devId = xd.id.slice(5);
+                        let dev:any = nmos.devices?.[devId];
+                        if(dev && dev.node_id) xdNodeId = dev.node_id;
+                    }else if(xd.id.startsWith("nmosgrp_")){
+                        for(let type of Object.keys(xd.senders || {})){
+                            for(let s of (xd.senders[type] || [])){
+                                if(!s || typeof s.id !== "string") continue;
+                                if(!s.id.startsWith("nmos_")) continue;
+                                let sender:any = nmos.senders?.[s.id.slice(5)];
+                                if(sender && sender.device_id){
+                                    let dev:any = nmos.devices?.[sender.device_id];
+                                    if(dev && dev.node_id){ xdNodeId = dev.node_id; }
+                                    break;
+                                }
+                            }
+                            if(xdNodeId) break;
+                        }
+                    }
+
+                    if(xdNodeId && !aliasByNode[xdNodeId]){
+                        aliasByNode[xdNodeId] = alias;
+                    }
+                }
+            }
+        }catch(e){}
+
+        for(let nodeId in nmos.nodes){
+            let n:any = nmos.nodes[nodeId];
+            if(!n) continue;
+            let ip = "";
+            try{
+                if(typeof n.href === "string" && n.href){
+                    ip = new URL(n.href).hostname;
+                }
+            }catch(e){}
+            if(!ip) continue;
+            let displayName = aliasByNode[nodeId] || n.label || "";
+            if(!displayName) continue;
+            out.push({ nodeId, displayName, ip });
+        }
+    }catch(e){}
+    return out;
+}
+
 server.addSyncObject("multicastLeases","global",multicastLeasesSync);
+
+// Release a single multicast lease from the Setup page inventory. The
+// allocated pair goes back into the pool; the next call to ensureLease
+// for that sender (e.g. when reconcile fires again) will allocate a fresh
+// pair if auto-allocation is enabled.
+server.addRoute("POST", "releaseLease","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            let sid = (postData && typeof postData.senderId === "string") ? postData.senderId.trim() : "";
+            if(!sid){
+                reject({message:"missing senderId"});
+                return;
+            }
+            multicastLeaseManager.releaseLeases([sid]);
+            resolve({message:200, data:{ released: sid }});
+        }catch(e:any){
+            reject({message: (e && e.message) ? e.message : "releaseLease failed"});
+        }
+    });
+});
 
 server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:string[], postData: any) => {
     return new Promise((resolve, reject) => {
@@ -216,19 +361,45 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 if(typeof postData.acceptableGmid === "string"){
                     next.acceptableGmid = postData.acceptableGmid.trim().toUpperCase();
                 }
-                if(postData.multicastRanges && typeof postData.multicastRanges === "object"){
+                if(typeof postData.multicastRange === "string"){
                     let cidrRe = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
-                    for(let cat of ["audioLow","audioHigh","video"]){
-                        let v = postData.multicastRanges[cat];
-                        if(typeof v === "string" && cidrRe.test(v.trim())){
-                            next.multicastRanges[cat] = v.trim();
-                        }
+                    let v = postData.multicastRange.trim();
+                    if(cidrRe.test(v)){
+                        next.multicastRange = v;
                     }
                 }
                 if(postData.autoMulticast && typeof postData.autoMulticast === "object"){
                     if(typeof postData.autoMulticast.enabled === "boolean"){
                         next.autoMulticast.enabled = postData.autoMulticast.enabled;
                     }
+                    // Accept the new name; tolerate the old one for backwards compat.
+                    if(typeof postData.autoMulticast.reconnectReceiversOnSenderChange === "boolean"){
+                        next.autoMulticast.reconnectReceiversOnSenderChange = postData.autoMulticast.reconnectReceiversOnSenderChange;
+                    }else if(typeof postData.autoMulticast.reconnectReceiversOnMulticastChange === "boolean"){
+                        next.autoMulticast.reconnectReceiversOnSenderChange = postData.autoMulticast.reconnectReceiversOnMulticastChange;
+                    }
+                }
+                if(typeof postData.autoActivateInactiveSender === "boolean"){
+                    next.autoActivateInactiveSender = postData.autoActivateInactiveSender;
+                }
+                if(postData.dnsPush && typeof postData.dnsPush === "object"){
+                    let d = postData.dnsPush;
+                    if(typeof d.enabled === "boolean"){ next.dnsPush.enabled = d.enabled; }
+                    if(typeof d.serverIp === "string"){ next.dnsPush.serverIp = d.serverIp.trim(); }
+                    if(d.serverPort !== undefined){
+                        let p = parseInt(""+d.serverPort);
+                        if(!isNaN(p) && p > 0 && p < 65536){ next.dnsPush.serverPort = p; }
+                    }
+                    if(d.protocol === "http" || d.protocol === "https"){ next.dnsPush.protocol = d.protocol; }
+                    // Empty/undefined apiKey means "keep the existing one" —
+                    // we never send the real value out, so the UI couldn't
+                    // round-trip it on save. Any non-empty string replaces it.
+                    if(typeof d.apiKey === "string" && d.apiKey.length > 0){
+                        next.dnsPush.apiKey = d.apiKey;
+                        next.dnsPush.apiKeySet = true;
+                    }
+                    if(typeof d.domain === "string" && d.domain.trim()){ next.dnsPush.domain = d.domain.trim(); }
+                    if(typeof d.insecureTLS === "boolean"){ next.dnsPush.insecureTLS = d.insecureTLS; }
                 }
                 if(Array.isArray(postData.vendorProfiles)){
                     next.vendorProfiles = postData.vendorProfiles
@@ -270,13 +441,82 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             }
             settings.acceptableGmid = next.acceptableGmid;
             settings.vendorProfiles = next.vendorProfiles;
-            settings.multicastRanges = { ...settings.multicastRanges, ...next.multicastRanges };
+            if(typeof next.multicastRange === "string" && next.multicastRange){
+                settings.multicastRange = next.multicastRange;
+            }
+            // Older installs may still have the obsolete per-category map on
+            // disk — purge it on every save so future settings.json writes
+            // stay clean.
+            if(settings.hasOwnProperty("multicastRanges")){
+                delete settings.multicastRanges;
+            }
+            let autoMulticastWasEnabled = !!(settings.autoMulticast && settings.autoMulticast.enabled);
             settings.autoMulticast = { enabled: !!next.autoMulticast.enabled };
+            settings.reconnectReceiversOnSenderChange = !!next.autoMulticast.reconnectReceiversOnSenderChange;
+            settings.autoActivateInactiveSender = !!next.autoActivateInactiveSender;
+            // Strip the obsolete in-memory field too so the next settings.json
+            // write doesn't carry it forward.
+            if(settings.hasOwnProperty("reconnectReceiversOnMulticastChange")){
+                delete settings.reconnectReceiversOnMulticastChange;
+            }
             try{
                 if(MulticastLeaseManager.instance){
                     MulticastLeaseManager.instance.setSettings(settings);
                 }
             }catch(e){}
+
+            // ----- DNS Push settings -----
+            // Preserve the existing API key if the form sent us an empty one.
+            let dnsPushWasEnabled = !!(settings.dnsPush && settings.dnsPush.enabled);
+            let prevApiKey = (settings.dnsPush && typeof settings.dnsPush.apiKey === "string") ? settings.dnsPush.apiKey : "";
+            let newApiKey = next.dnsPush.apiKey || prevApiKey;
+            settings.dnsPush = {
+                enabled:     !!next.dnsPush.enabled,
+                serverIp:    next.dnsPush.serverIp,
+                serverPort:  next.dnsPush.serverPort,
+                protocol:    next.dnsPush.protocol,
+                apiKey:      newApiKey,
+                domain:      next.dnsPush.domain,
+                insecureTLS: !!next.dnsPush.insecureTLS,
+            };
+            try{
+                if(DnsPushService.instance){
+                    DnsPushService.instance.setSettings(settings.dnsPush);
+                }
+            }catch(e){}
+            // If the user just turned Auto-Allocation ON, kick off a one-off
+            // pass over all known senders. The UI passes `adoptOnEnable`:
+            //   true  → keep each sender's current IP as its lease (no PATCH,
+            //           no stream interruption);
+            //   false → force everyone onto a fresh pool address (disruptive).
+            if(!autoMulticastWasEnabled && settings.autoMulticast.enabled){
+                try{
+                    if(NmosRegistryConnector.instance){
+                        let adopt = !!(postData && postData.autoMulticast && postData.autoMulticast.adoptOnEnable === true);
+                        if(adopt){
+                            NmosRegistryConnector.instance.adoptCurrentSenderIPs();
+                        }else{
+                            NmosRegistryConnector.instance.sweepAllSenders();
+                        }
+                    }
+                }catch(e){}
+            }
+
+            // If DNS Push was just enabled (or any field changed while
+            // enabled), push every currently known NMOS node so the user
+            // doesn't have to wait for a node-update event to see entries
+            // appear.
+            try{
+                if(settings.dnsPush.enabled && DnsPushService.instance){
+                    let nodes = collectDnsPushNodes();
+                    if(nodes.length > 0){
+                        DnsPushService.instance.syncAll(nodes).catch(()=>{});
+                    }
+                }
+            }catch(e){}
+            // Silence unused-warning — kept for potential future use (e.g.
+            // logging "DNS Push enabled" only on the off→on transition).
+            void dnsPushWasEnabled;
 
             // Persist to settings.json
             try{
@@ -295,6 +535,16 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 }
             }catch(e){}
 
+            // Scrub the DNS Push password from the response — the version of
+            // `next` we built above carries the cleartext password the user
+            // just typed, which must never make it back over the wire. The
+            // canonical "what the UI is allowed to see" shape comes from
+            // getSetupConfigState() (password is always "" there).
+            try{
+                let safeDnsPush = getSetupConfigState().dnsPush;
+                next.dnsPush = safeDnsPush;
+            }catch(e){}
+
             // Publish new state. We can hot-apply the acceptableGmid (cosmetic),
             // but a registry change needs a restart to actually re-open subscriptions.
             next.restartRequired = firstChanged;
@@ -309,6 +559,98 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
 
 
 
+
+
+// ----- Change admin credentials -----
+// The auth model stores `sha256(plaintextPassword)` in users.json (see
+// `users.json` and websocketClient.processAuth). The client only ever
+// knows that hash too — never the plaintext password as stored on disk.
+// So this route accepts:
+//   currentUsername     — the user being modified (must equal client.user)
+//   currentPasswordHash — sha256(currentPlaintext) computed in the browser
+//   newUsername         — optional rename; if "" or unchanged, no rename
+//   newPasswordHash     — sha256(newPlaintext); if "" the password is kept
+// We refuse if the caller isn't logged in (`__noAuth`), or if they try to
+// edit a different user than they're authenticated as. After the rename
+// the user will be auto-logged-out — their stored hash no longer matches.
+server.addRoute("POST", "changeCredentials","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            if(!client || !client.user || client.user === "__noAuth"){
+                reject({message:"Not authenticated."});
+                return;
+            }
+            let curUser = (postData && typeof postData.currentUsername === "string") ? postData.currentUsername.trim() : "";
+            let curHash = (postData && typeof postData.currentPasswordHash === "string") ? postData.currentPasswordHash.trim().toLowerCase() : "";
+            let newUser = (postData && typeof postData.newUsername === "string") ? postData.newUsername.trim() : "";
+            let newHash = (postData && typeof postData.newPasswordHash === "string") ? postData.newPasswordHash.trim().toLowerCase() : "";
+
+            if(!curUser){ reject({message:"Current username is required."}); return; }
+            if(curUser !== client.user){
+                reject({message:"You can only change the credentials of your own account."});
+                return;
+            }
+            if(!users || !users.users || typeof users.users !== "object" || !users.users[curUser]){
+                reject({message:"User not found."});
+                return;
+            }
+            let stored = users.users[curUser];
+            let storedPass = (typeof stored.password === "string") ? stored.password.toLowerCase() : "";
+            if(!storedPass || storedPass !== curHash){
+                reject({message:"Current password is wrong."});
+                return;
+            }
+            // Validate the optional new username
+            if(newUser && newUser !== curUser){
+                if(!/^[A-Za-z0-9_.-]{1,64}$/.test(newUser)){
+                    reject({message:"New username must be 1-64 characters: letters, digits, _ . -"});
+                    return;
+                }
+                if(users.users.hasOwnProperty(newUser)){
+                    reject({message:"That username already exists."});
+                    return;
+                }
+            }
+            if(newHash){
+                if(!/^[a-f0-9]{64}$/.test(newHash)){
+                    reject({message:"New password hash malformed."});
+                    return;
+                }
+            }
+            // Apply: rename (preserves groups), then optionally update password.
+            let finalUser = (newUser && newUser !== curUser) ? newUser : curUser;
+            if(finalUser !== curUser){
+                users.users[finalUser] = { ...stored };
+                delete users.users[curUser];
+            }
+            if(newHash){
+                users.users[finalUser].password = newHash;
+            }
+            // Persist users.json (atomic-ish — write temp then rename).
+            try{
+                let tmp = "./config/users.json.tmp";
+                fs.writeFileSync(tmp, JSON.stringify(users, null, 4));
+                fs.renameSync(tmp, "./config/users.json");
+                SyncLog.log("info", "Settings", "Updated ./config/users.json (credentials change for "+curUser+(finalUser!==curUser?" → "+finalUser:"")+").");
+            }catch(e:any){
+                SyncLog.log("error", "Settings", "Failed to write ./config/users.json: " + e.message);
+                reject({message:"Could not write users.json: " + e.message});
+                return;
+            }
+            // Hot-reload the in-memory auth table so the next auth attempt
+            // (after the client re-logs-in) is checked against the new data.
+            try{ server.relaodAuthData(users); }catch(e){}
+
+            // Refresh the setupConfig SyncObject so the username field
+            // updates everywhere immediately.
+            try{ setupConfigSync.setState(getSetupConfigState()); }catch(e){}
+
+            resolve({message:200, data:{ ok:true, username: finalUser, passwordChanged: !!newHash }});
+        }catch(e:any){
+            reject({message: "changeCredentials failed: " + (e?.message || e)});
+        }
+    });
+});
 
 
 // ----- Multicast lease export / import -----

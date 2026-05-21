@@ -38,8 +38,55 @@
     let searchExpandedSenders:string[] = [];
   
     let sync:Subject<any> ;
+    let syncNmos:Subject<any>;
+    let nmosState:any = { nodes:{}, devices:{}, senders:{}, receivers:{} };
 
     let flowTypes = ["video", "audio", "data", "mqtt", "websocket", "audiochannel", "unknown"];
+
+
+    // Build a "Node - Device" label. When the NMOS node label and the device
+    // alias/name are the same (case-insensitive), the prefix is dropped so it
+    // doesn't read like "Anubis - Anubis". Matches the logic on the Details page.
+    function deviceDisplayLabel(dev:any){
+      let baseAlias = dev?.alias || dev?.name || "";
+      let baseName  = dev?.name || baseAlias;
+      try{
+        let nmosDevId = "";
+        if(typeof dev?.id === "string"){
+          if(dev.id.startsWith("nmos_")){
+            nmosDevId = dev.id.substring(5);
+          }else if(dev.id.startsWith("nmosgrp_")){
+            // Look up via any underlying sender/receiver of the group
+            let pickFrom = (groupArr:string[]) => {
+              for(let fid of groupArr){
+                if(typeof fid === "string" && fid.startsWith("nmos_")){
+                  let nmosSenderId = fid.substring(5);
+                  let nmosSender = nmosState.senders?.[nmosSenderId] ?? nmosState.receivers?.[nmosSenderId];
+                  if(nmosSender?.device_id) return nmosSender.device_id;
+                }
+              }
+              return "";
+            };
+            nmosDevId = pickFrom(dev.senderIds || []) || pickFrom(dev.receiverIds || []);
+          }
+        }
+        if(!nmosDevId) return baseAlias;
+        let nd:any = null;
+        try{
+          let nodeId = nmosState.devices?.[nmosDevId]?.node_id;
+          if(nodeId) nd = nmosState.nodes?.[nodeId];
+        }catch(e){}
+        if(!nd || !nd.label) return baseAlias;
+        let nodeLabel = ("" + nd.label).trim();
+        let same = !!nodeLabel && (
+          nodeLabel.toLowerCase() === (baseAlias||"").toLowerCase() ||
+          nodeLabel.toLowerCase() === (baseName||"").toLowerCase()
+        );
+        return same ? baseAlias : (nodeLabel + " - " + baseAlias);
+      }catch(e){
+        return baseAlias;
+      }
+    }
 
 
     function getFlowTypeIcon(type:any, source=true){
@@ -100,6 +147,15 @@
       sync.subscribe((obj:any)=>{
         sourceState = obj;
         doFilter();
+      });
+      syncNmos = ServerConnector.sync("nmos");
+      syncNmos.subscribe((obj:any)=>{
+        if(obj){
+          nmosState = obj;
+          // Re-render the headers/rows so combined node-device labels refresh.
+          senders   = [...senders];
+          receivers = [...receivers];
+        }
       });
     });
 
@@ -339,6 +395,8 @@
     onDestroy(() => {
       sync.unsubscribe();
           ServerConnector.unsync("crosspoint")
+      try{syncNmos && syncNmos.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("nmos");}catch(e){}
       });
 
  
@@ -820,7 +878,7 @@
                     {#each senders as dev}
                       <th class="cp-device" class:expanded={isSenderExpanded(dev.id)} on:click={()=>toggleExpandSender(dev.id)}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
-                        --><span class="cp-label {(dev.hidden?"hidden":"")}">{dev.alias}<!--
+                        --><span class="cp-label {(dev.hidden?"hidden":"")}">{deviceDisplayLabel(dev)}<!--
                         --><span class="cp-edit">
                           <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                           <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
@@ -856,7 +914,7 @@
                 <tr class="cp-device" class:expanded={isReceiverExpanded(dev.id)}>
                   <td class="cp-line-stick" on:click={()=>toggleExpandReceiver(dev.id)}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
-                    --><span class="cp-label {(dev.hidden?"hidden":"")}">{dev.alias}<!--
+                    --><span class="cp-label {(dev.hidden?"hidden":"")}">{deviceDisplayLabel(dev)}<!--
                         --><span class="cp-edit">
                           <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                           <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>

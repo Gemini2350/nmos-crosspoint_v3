@@ -1,0 +1,8 @@
+server/node_modules/
+server/dist/*
+server/config/*
+server/config_backups/*
+server/state/*
+server/public/*
+server/log/*
+_tempFiles/*

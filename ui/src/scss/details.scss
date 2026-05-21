@@ -5,6 +5,31 @@ $det-color-data:  theme('colors.blue.500');
 
 .details-page {
 
+    // Fixed table layout so column widths come purely from <colgroup> and
+    // cannot shift when an inner row (Forget button, edit form, …) grows.
+    .details-tree {
+        table-layout: fixed;
+        width: 100%;
+
+        // Apply overflow/ellipsis only to cells that actually carry long text.
+        // The chevron column is fixed at 40px and only holds an icon — the
+        // global td padding (16px each side) + 24px chevron overflows by 16px,
+        // which used to trigger ellipsis and render as ".." (the `…` glyph in
+        // the current font) just right of the chevron.
+        td:not(:first-child) {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        td:first-child {
+            overflow: visible;
+        }
+        // Cells that contain the inline edit form or a sticky inner column
+        // need to allow inner wrap/overflow.
+        tr.det-flow td {
+            white-space: nowrap;
+        }
+    }
+
     // No fixed thead anymore – sticky group/section rows take over the role
     // of the column header. Heights here match the CSS top offsets below.
     $det-device-row-height: 56px;
@@ -23,6 +48,20 @@ $det-color-data:  theme('colors.blue.500');
             padding-top: 12px;
             padding-bottom: 12px;
         }
+
+        // Coloured status dot to the left of the device label — encodes the
+        // online / PTP-lock state. The expand chevron stays neutral.
+        .det-device-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex: 0 0 10px;
+            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+        }
+        .det-device-dot-success { background-color: theme('colors.success'); }
+        .det-device-dot-warning { background-color: theme('colors.warning'); }
+        .det-device-dot-error   { background-color: theme('colors.error');   }
 
         // The td itself stays as a regular table-cell so position:sticky
         // works reliably. The flex layout sits inside a wrapper div.
@@ -50,14 +89,20 @@ $det-color-data:  theme('colors.blue.500');
             gap: 6px;
         }
         .det-device-edit {
-            // Pencil sits directly next to the name, always visible (not just on hover)
+            // Pencil sits directly next to the name, always visible (not just
+            // on hover). Sized small enough so it never overruns the GMID
+            // mono-text line below.
             visibility: visible !important;
             position: static !important;
-            padding: 2px !important;
-            min-height: 0;
-            opacity: 0.6;
+            padding: 1px !important;
+            margin: 0 !important;
+            min-height: 0 !important;
+            height: 16px !important;
+            width: 16px !important;
+            line-height: 1 !important;
+            opacity: 0.55;
             &:hover { opacity: 1; }
-            svg { width: 14px; height: 14px; }
+            svg { width: 11px !important; height: 11px !important; }
         }
         .det-device-link {
             display: inline-flex;
@@ -93,6 +138,37 @@ $det-color-data:  theme('colors.blue.500');
             color: theme('colors.slate.400');
             font-size: 0.8rem;
         }
+        // Forget button: appears on the right edge only when the device is offline.
+        .det-device-forget {
+            margin-left: 8px;
+            min-height: 28px;
+            height: 28px;
+            padding: 0 10px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            border: 1px solid theme('colors.red.700');
+            background-color: rgba(220, 38, 38, 0.12);
+            color: theme('colors.red.400');
+
+            &:hover {
+                background-color: rgba(220, 38, 38, 0.25);
+                color: theme('colors.red.300');
+            }
+        }
+    }
+
+
+    // Forget confirmation dialog content
+    .det-forget-text {
+        margin-top: 4px;
+    }
+    .det-forget-list {
+        margin: 10px 0;
+        padding-left: 22px;
+        list-style: disc;
+        color: theme('colors.slate.300');
+        font-size: 0.9rem;
+        line-height: 1.5;
     }
 
     // Section header inside an expanded device ("SENDERS" / "RECEIVERS")
@@ -146,15 +222,79 @@ $det-color-data:  theme('colors.blue.500');
         }
     }
 
-    // Receiver-side: small note showing the connected sender
+    // Receiver-side: small note showing the connected sender. Renders on
+    // its own line below the receiver name so the name column can stay slim.
     tr.det-flow-rx {
         .det-recv-source {
-            margin-left: 8px;
+            display: block;
+            margin-top: 2px;
+            margin-left: 0;
             color: theme('colors.slate.400');
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             font-style: italic;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
     }
+    // Flex row for the name + pencil button, keeps them on one line.
+    .det-flow-name {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        .det-flow-name-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+    }
+
+    // Status dot for individual sender/receiver — only shown when the flow
+    // is no longer present in the NMOS registry (orphan / unavailable).
+    // Smaller than the device-level dot so the row stays compact.
+    .det-flow-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex: 0 0 8px;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+    }
+    .det-flow-dot-error   { background-color: theme('colors.error');   }
+
+    // Forget button for an individual sender/receiver row — only shown when
+    // unavailable. Smaller than the device-level Forget so it fits in the
+    // narrow name column without pushing other columns around.
+    .det-flow-forget {
+        margin-left: 6px;
+        min-height: 22px;
+        height: 22px;
+        padding: 0 8px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        line-height: 1;
+        border: 1px solid theme('colors.red.700');
+        background-color: rgba(220, 38, 38, 0.12);
+        color: theme('colors.red.400');
+
+        &:hover {
+            background-color: rgba(220, 38, 38, 0.25);
+            color: theme('colors.red.300');
+        }
+    }
+
+    // Visually mute an unavailable flow row so the user can scan offline
+    // items at a glance without the row looking active.
+    tr.det-flow.is-unavailable {
+        td {
+            opacity: 0.7;
+        }
+    }
+
+    // The leg-edit pencil is now always visible (no longer hover-only) and
+    // sits inline between the "Leg N:" label and the IP. Used to be absolute-
+    // positioned via .btn-hover, which stacked the pencils of multiple legs
+    // at the same cell corner — so clicking the visible one always edited the
+    // last leg.
 
     // Sender row (second level) — same look as crosspoint type pill
     tr.det-flow {
@@ -229,6 +369,23 @@ $det-color-data:  theme('colors.blue.500');
                 color: theme('colors.slate.400');
                 font-size: 0.75rem;
                 min-width: 44px;
+            }
+            // Edit pencil sits inline, right of the "Leg N:" label and before
+            // the IP value. Always visible so each leg has its own clearly
+            // targetable affordance — previously they were absolute-positioned
+            // and overlapped.
+            .det-leg-edit {
+                visibility: visible !important;
+                position: static !important;
+                opacity: 0.55;
+                padding: 1px !important;
+                margin: 0 2px 0 0 !important;
+                min-height: 0 !important;
+                height: 16px !important;
+                width: 16px !important;
+                line-height: 1 !important;
+                svg { width: 11px !important; height: 11px !important; }
+                &:hover { opacity: 1; }
             }
             .det-leg-colon {
                 color: theme('colors.slate.400');
@@ -311,27 +468,7 @@ html[data-theme="light"] {
     }
 }
 
-// Compact counter pill in the details filter bar (top-right)
-.det-counters {
-    display: inline-flex !important;
-    flex-direction: row !important;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.85rem;
-    white-space: nowrap;
-
-    color: theme('colors.slate.400');
-    cursor: default !important;
-    pointer-events: none;
-
-    .det-counter-sep {
-        color: theme('colors.slate.500');
-    }
-    strong {
-        font-weight: 600;
-        color: theme('colors.slate.300');
-    }
-}
+// (.det-counters removed — counter moved to the global widget in App.svelte)
 
 
 // SDP viewer modal

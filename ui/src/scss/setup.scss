@@ -58,6 +58,17 @@
             margin-bottom: 12px;
             line-height: 1.45;
         }
+        .setup-section-bullets {
+            color: theme('colors.slate.400');
+            font-size: 0.85rem;
+            line-height: 1.55;
+            list-style: disc;
+            padding-left: 22px;
+            margin: 0 0 12px 0;
+
+            em { font-style: italic; color: theme('colors.slate.300'); }
+            strong { color: theme('colors.slate.300'); }
+        }
     }
 
     .setup-form {
@@ -104,6 +115,38 @@
 
         &.setup-dot-success { background-color: theme('colors.success'); }
         &.setup-dot-warning { background-color: theme('colors.warning'); }
+    }
+
+
+    // "Adopt vs Reallocate" choice modal — two large buttons stacked vertically.
+    // Sized generously so the user reads the description before clicking.
+    .auto-mc-choice {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        margin-top: 18px;
+    }
+    .auto-mc-btn {
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        text-align: left !important;
+        padding: 20px 24px !important;
+        height: auto !important;
+        min-height: 0 !important;
+        white-space: normal !important;
+        line-height: 1.5 !important;
+
+        .auto-mc-title {
+            font-weight: 700;
+            font-size: 1.1rem;
+            margin-bottom: 8px;
+        }
+        .auto-mc-hint {
+            font-size: 0.9rem;
+            opacity: 0.9;
+            font-weight: 400;
+        }
     }
 
 
@@ -203,6 +246,44 @@
             }
         }
 
+        .lease-release-btn {
+            opacity: 0.5;
+            padding: 2px 4px;
+            min-height: 0;
+            height: auto;
+            color: theme('colors.red.400');
+            svg { width: 14px; height: 14px; }
+            &:hover {
+                opacity: 1;
+                background-color: rgba(220, 38, 38, 0.15);
+            }
+        }
+
+        // Live state badge per lease (Active / Inactive / Missing).
+        // Sourced from `nmosState.senders[id].subscription.active` at render time.
+        .lease-status-badge {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+
+            &.lease-status-active {
+                background-color: rgba(34,197,94,0.18);
+                color: theme('colors.green.400');
+            }
+            &.lease-status-inactive {
+                background-color: rgba(245,158,11,0.18);
+                color: theme('colors.amber.400');
+            }
+            &.lease-status-missing {
+                background-color: rgba(220,38,38,0.18);
+                color: theme('colors.red.400');
+            }
+        }
+
         .lease-cat-badge {
             display: inline-block;
             padding: 1px 8px;
@@ -263,6 +344,10 @@
         }
         .vendor-port {
             max-width: 6em;
+        }
+        .vendor-proto {
+            min-width: 5.5em;   // enough room so "https" doesn't truncate
+            width: 5.5em;
         }
     }
     .vendor-empty {

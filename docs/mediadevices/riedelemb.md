@@ -1,2 +1,0 @@
-# Mediadevice - Riedel Embrionix based
-

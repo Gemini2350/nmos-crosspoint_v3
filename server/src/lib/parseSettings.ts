@@ -33,45 +33,37 @@ export function parseSettings(settings:any){
     }
 
 
-    // multicastRanges — single CIDR per category.
-    //   audioLow:  audio with channels <= 2
-    //   audioHigh: audio with channels > 2
-    //   video:     any video stream
-    // Pairs of (odd IP, odd+1) are allocated within each range so the same
-    // sender always uses primary (odd) for Leg 1 and secondary (odd+1) for
-    // Leg 2 — the +1 stays reserved even for single-leg senders.
-    let defaultRanges:any = {
-        audioLow:  "239.130.0.0/16",
-        audioHigh: "239.131.0.0/16",
-        video:     "239.120.0.0/16"
-    };
+    // multicastRange — ONE shared CIDR pool used for every sender, regardless
+    // of media type. Pairs of (odd IP, odd+1) are allocated within the range
+    // so the same sender always uses primary (odd) for Leg 1 and secondary
+    // (odd+1) for Leg 2 — the +1 stays reserved even for single-leg senders.
+    //
+    // Migration: older configs split the pool into three category-specific
+    // ranges (audioLow / audioHigh / video). We collapse those into the
+    // single field by picking the first valid one we find (preferring video).
+    let defaultRange:string = "239.30.0.0/16";
     let cidrRe = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
-    let oldR:any = (settings.multicastRanges && typeof settings.multicastRanges === "object") ? settings.multicastRanges : {};
-    let newR:any = {};
-    for(let key of ["audioLow","audioHigh","video"] as const){
-        let candidate:any = oldR[key];
-        // accept string (new format) or { primary, secondary } (old format)
-        if(typeof candidate === "string" && cidrRe.test(candidate)){
-            newR[key] = candidate;
-        }else if(candidate && typeof candidate === "object" && typeof candidate.primary === "string" && cidrRe.test(candidate.primary)){
-            newR[key] = candidate.primary;
+    let migrated:string = "";
+    if(typeof settings.multicastRange === "string" && cidrRe.test(settings.multicastRange.trim())){
+        migrated = settings.multicastRange.trim();
+    }else{
+        let oldR:any = (settings.multicastRanges && typeof settings.multicastRanges === "object") ? settings.multicastRanges : {};
+        // Try the most-spacious slot first (video typically had the biggest pool).
+        for(let key of ["video","audioLow","audioHigh","audio","other"] as const){
+            let candidate:any = oldR[key];
+            if(typeof candidate === "string" && cidrRe.test(candidate)){
+                migrated = candidate; break;
+            }
+            if(candidate && typeof candidate === "object" && typeof candidate.primary === "string" && cidrRe.test(candidate.primary)){
+                migrated = candidate.primary; break;
+            }
         }
     }
-    // Migrate from previous mode that used video/audio/other keys
-    if(!newR.video && typeof oldR.video === "object" && oldR.video.primary){
-        if(cidrRe.test(oldR.video.primary)) newR.video = oldR.video.primary;
+    settings.multicastRange = migrated || defaultRange;
+    // Drop the obsolete per-category map so settings.json stays clean.
+    if(settings.hasOwnProperty("multicastRanges")){
+        delete settings.multicastRanges;
     }
-    if(!newR.audioLow && typeof oldR.audio === "object" && oldR.audio.primary){
-        if(cidrRe.test(oldR.audio.primary)) newR.audioLow = oldR.audio.primary;
-    }
-    if(!newR.audioHigh && typeof oldR.audio === "object" && oldR.audio.primary){
-        if(cidrRe.test(oldR.audio.primary)) newR.audioHigh = oldR.audio.primary;
-    }
-    settings.multicastRanges = {
-        audioLow:  newR.audioLow  || defaultRanges.audioLow,
-        audioHigh: newR.audioHigh || defaultRanges.audioHigh,
-        video:     newR.video     || defaultRanges.video,
-    };
 
 
     if(!settings.hasOwnProperty("firstDynamicNumber")){
@@ -96,6 +88,37 @@ export function parseSettings(settings:any){
     }
 
 
+    // When true, every time a sender's SDP changes (destination IP/port, channel
+    // count, video format, colorimetry, …) we re-execute the connection of every
+    // receiver currently listening to that sender, so they pick up the new
+    // manifest. Defaults to FALSE — many devices renegotiate fine on their
+    // own and the extra PATCH storm can briefly interrupt unrelated streams.
+    // The "Reallocate from pool" sweep ignores this flag and always reconnects.
+    //
+    // Migrated from the older `reconnectReceiversOnMulticastChange` name.
+    if(typeof settings.reconnectReceiversOnSenderChange !== "boolean"){
+        if(typeof settings.reconnectReceiversOnMulticastChange === "boolean"){
+            settings.reconnectReceiversOnSenderChange = settings.reconnectReceiversOnMulticastChange;
+        }else{
+            settings.reconnectReceiversOnSenderChange = false;
+        }
+    }
+    // Drop the obsolete field so settings.json stays clean after the next save.
+    if(settings.hasOwnProperty("reconnectReceiversOnMulticastChange")){
+        delete settings.reconnectReceiversOnMulticastChange;
+    }
+
+
+    // When the Crosspoint UI requests a connection whose source sender is
+    // currently inactive (master_enable=false), should we automatically
+    // PATCH it active first? Defaults to FALSE: many control rooms gate
+    // sender activation through a separate workflow and don't want a stray
+    // click on the Crosspoint matrix to push a signal on the wire.
+    if(typeof settings.autoActivateInactiveSender !== "boolean"){
+        settings.autoActivateInactiveSender = false;
+    }
+
+
     // Vendor profiles — define how to build the "open device web UI" link
     // for each manufacturer. A device is matched against profiles in order;
     // the first profile whose labels list contains a substring of the node's
@@ -114,7 +137,11 @@ export function parseSettings(settings:any){
         { id:"aja",          name:"AJA",              labels:"AJA",               protocol:"http",  port:80,  path:"/" },
         { id:"imagine",      name:"Imagine",          labels:"Imagine",           protocol:"http",  port:80,  path:"/" },
         { id:"sony",         name:"Sony",             labels:"Sony",              protocol:"http",  port:80,  path:"/" },
-        { id:"grassvalley",  name:"Grass Valley",     labels:"Grass Valley",      protocol:"http",  port:80,  path:"/" }
+        { id:"grassvalley",  name:"Grass Valley",     labels:"Grass Valley",      protocol:"http",  port:80,  path:"/" },
+        { id:"blackmagic",   name:"Blackmagic",       labels:"Blackmagic",        protocol:"http",  port:80,  path:"/admin" },
+        { id:"merging",      name:"Merging",          labels:"Anubis, Hapi, Horus", protocol:"http", port:80, path:"/advanced" },
+        { id:"directout",    name:"DirectOut",        labels:"ExBox",             protocol:"http",  port:80,  path:"/" },
+        { id:"qsc",          name:"QSC",              labels:"Core",              protocol:"http",  port:80,  path:"/" }
     ];
     if(!Array.isArray(settings.vendorProfiles)){
         settings.vendorProfiles = defaultVendorProfiles;
@@ -145,6 +172,43 @@ export function parseSettings(settings:any){
                     path
                 };
             });
+    }
+
+
+    // ----- DNS Push (pfSense REST API) -----
+    // When enabled, NMOS node labels (or user aliases) are pushed as DNS
+    // host_overrides on the pfSense DNS forwarder via the pfrest API.
+    //
+    // Auth: API Key sent as the `X-API-Key` header.
+    //   See https://pfrest.org/AUTHENTICATION_AND_AUTHORIZATION/#api-key
+    //
+    // Endpoints used:
+    //   GET /api/v2/services/dns_forwarder/host_overrides   – list current entries
+    //   POST  …/host_override                              – create new
+    //   PATCH …/host_override                              – update existing
+    //   DELETE …/host_override?id=N                        – remove
+    //   POST  …/host_overrides/apply                       – apply pending changes
+    let defaultDns:any = {
+        enabled: false,
+        serverIp: "",
+        serverPort: 443,
+        protocol: "https",
+        apiKey: "",
+        domain: "local",
+        insecureTLS: true,
+    };
+    if(!settings.dnsPush || typeof settings.dnsPush !== "object"){
+        settings.dnsPush = defaultDns;
+    }else{
+        settings.dnsPush = {
+            enabled:     !!settings.dnsPush.enabled,
+            serverIp:    (typeof settings.dnsPush.serverIp    === "string") ? settings.dnsPush.serverIp.trim() : "",
+            serverPort:  (typeof settings.dnsPush.serverPort  === "number" && settings.dnsPush.serverPort  > 0 && settings.dnsPush.serverPort  < 65536) ? settings.dnsPush.serverPort : 443,
+            protocol:    settings.dnsPush.protocol === "http" ? "http" : "https",
+            apiKey:      (typeof settings.dnsPush.apiKey      === "string") ? settings.dnsPush.apiKey : "",
+            domain:      (typeof settings.dnsPush.domain      === "string" && settings.dnsPush.domain) ? settings.dnsPush.domain.trim() : "local",
+            insecureTLS: settings.dnsPush.insecureTLS !== false,
+        };
     }
 
 

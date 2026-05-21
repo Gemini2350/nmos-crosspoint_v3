@@ -28,6 +28,46 @@
         display:flex;
         flex-direction: column;
 
+        // Global availability counter — sits at the top of the right-hand
+        // nav so the current Dev / TX / RX online-vs-total numbers are
+        // always visible. Three coloured rows; colour reflects how complete
+        // the inventory is right now.
+        .nav-counter {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 0.6rem 0.55rem 0.4rem 0.55rem;
+            padding: 8px 6px;
+            background-color: theme('colors.base-300');
+            border-radius: 8px;
+            font-size: 0.7rem;
+            line-height: 1.1;
+            cursor: default;
+        }
+        .nav-counter-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 4px;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: 'Roboto Mono', monospace;
+        }
+        .nav-counter-label {
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            opacity: 0.75;
+        }
+        .nav-counter-value {
+            font-weight: 700;
+        }
+        // Colour states — green = all present, amber = some missing,
+        // red = none online, neutral = nothing known yet.
+        .nav-counter-row-success { color: theme('colors.success'); }
+        .nav-counter-row-warn    { color: theme('colors.warning'); }
+        .nav-counter-row-error   { color: theme('colors.error');   }
+        .nav-counter-row-neutral { color: theme('colors.slate.400'); }
+
         ul {
             flex-grow:2;
             flex-shrink: 0;

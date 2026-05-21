@@ -9,7 +9,7 @@
   
     let sync:Subject<any> ;
 
-      let object ="topology"
+      let object ="crosspoint"
   
     onMount(async () => {
       sync = ServerConnector.sync(object)
@@ -60,11 +60,6 @@
       </button>
       </li>
 
-      <li>
-        <button on:click={()=>changeObject("topology")}>
-          Topology
-      </button>
-      </li>
       <li>
         <button on:click={()=>changeObject("nmos")}>
           NMOS

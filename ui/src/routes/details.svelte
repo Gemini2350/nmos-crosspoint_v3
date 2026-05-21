@@ -128,9 +128,8 @@
     // We track legs separately because primary and secondary network legs are
     // independent failover paths — using the same multicast on both is fine.
     let duplicateIpsByLeg:{[legIndex:number]:Set<string>} = {};
-    let countDevices = 0;
-    let countSenders = 0;
-    let countReceivers = 0;
+    // (Per-page counter removed — moved to the global widget at the top of
+    // the right-hand nav so the Dev/TX/RX numbers are visible everywhere.)
 
     // Acceptable PTP GMID — comes from the Setup page via the `setupConfig` sync.
     // Used to colour the device status dot green (match) vs. yellow (mismatch).
@@ -212,13 +211,11 @@
         return "—";
       }
       if(v < 1){
-        return "< 1 MBit/s";
+        return "< 1 Mbit/s";
       }
-      let pre = "";
-      if(hint === "max"){pre = "max ";}
-      else if(hint === "ok"){pre = "ca. ";}
-      // toFixed(1) so 1000 prints as "1000.0" — keeps the column visually consistent
-      return pre + v.toFixed(1) + " MBit/s";
+      // toFixed(1) so 1000 prints as "1000.0" — keeps the column visually consistent.
+      // No "ca." / "max " prefix anymore — the hint is available via tooltip if needed.
+      return v.toFixed(1) + " Mbit/s";
     }
 
     // Build per-leg display info. IS-05 `/active` is the authoritative source
@@ -239,11 +236,12 @@
               srcIp: tp && tp.source_ip ? (""+tp.source_ip) : ""
             });
           });
-          return legs;
+          // Always sort ascending below — drop through, no early return.
         }
       }catch(e){}
 
-      // Fallback: parse the SDP manifest
+      // Fallback: parse the SDP manifest (only if IS-05 didn't yield anything)
+      if(legs.length === 0)
       try{
         let manifest = nmosState.sendersManifestDetail ? nmosState.sendersManifestDetail[nmosSenderId] : null;
         if(manifest && Array.isArray(manifest.media) && manifest.media.length > 0){
@@ -268,6 +266,10 @@
         }
       }catch(e){}
 
+      // Always render legs in ascending index order. Some devices return the
+      // IS-05 transport_params or SDP media entries in a non-natural order,
+      // which made the edit form appear with Leg 2 above Leg 1.
+      legs.sort((a, b) => a.index - b.index);
       return legs;
     }
 
@@ -676,13 +678,6 @@
       deviceList = newList;
       duplicateIpsByLeg = newDups;
 
-      countDevices = newList.length;
-      countSenders = 0;
-      countReceivers = 0;
-      newList.forEach((d)=>{
-        countSenders += d.senders.length;
-        countReceivers += d.receivers.length;
-      });
     }
 
 
@@ -852,8 +847,14 @@
         }
         p = parsed;
       }
-      let payload:any = { index: legIndex };
-      if(legEditIp !== ""){ payload.multicast = legEditIp.trim(); }
+      // Always include the multicast field so the server can distinguish
+      // "user cleared the IP, please reset to the reserved lease address"
+      // (multicast === "") from "user only changed the port" (multicast field
+      // missing — not used here, kept for future protocol compatibility).
+      let payload:any = {
+        index: legIndex,
+        multicast: legEditIp.trim()
+      };
       if(p !== null){ payload.port = p; }
       ServerConnector.post("setMulticast", {
         id: flowId,
@@ -886,6 +887,42 @@
         }
       }
       return null;
+    }
+
+
+    // ----- Forget device (only for offline devices) -----
+    let forgetModal:any;
+    let forgetDevice:DeviceRow | null = null;
+    function openForgetDialog(dev:DeviceRow){
+      forgetDevice = dev;
+      if(forgetModal){ forgetModal.showModal(); }
+    }
+    function confirmForget(){
+      if(!forgetDevice){ return; }
+      let devId = forgetDevice.id;
+      ServerConnector.post("crosspoint", { action:"delete", devId: devId, flowId:"" })
+        .catch(()=>{});
+      forgetDevice = null;
+      if(forgetModal){ forgetModal.close(); }
+    }
+    function cancelForget(){
+      forgetDevice = null;
+      if(forgetModal){ forgetModal.close(); }
+    }
+
+    // ----- Forget individual sender / receiver (only for unavailable flows) -----
+    // Per user request the confirmation dialog is skipped — the Forget button
+    // only ever appears for offline flows anyway (the rendered button is
+    // gated behind `!flow.available` / `!recv.available`), so an extra click
+    // to confirm "yes, remove this thing that's not there anymore" was
+    // pure friction. The server still releases the multicast lease for
+    // sender deletes (see crosspointAbstraction.crosspointApi).
+    // `kind` is kept in the signature for log/future use even though we no
+    // longer pop a kind-specific modal.
+    function openForgetFlowDialog(devId:string, _kind:"sender"|"receiver", row:SenderRow | ReceiverRow){
+      if(!devId || !row || !row.id){ return; }
+      ServerConnector.post("crosspoint", { action:"delete", devId: devId, flowId: row.id })
+        .catch(()=>{});
     }
 
 
@@ -965,49 +1002,46 @@
         </label>
       </li>
       <li class="nav-spacer"></li>
-      <li class="det-counters">
-        <span><strong>{countDevices}</strong>&nbsp;Dev</span>
-        <span class="det-counter-sep">·</span>
-        <span><strong>{countSenders}</strong>&nbsp;TX</span>
-        <span class="det-counter-sep">·</span>
-        <span><strong>{countReceivers}</strong>&nbsp;RX</span>
-      </li>
     </ul>
 
 
     <ScrollArea autoHide={false}>
     <table class="data-table details-tree">
+      <!-- Fixed column widths so opening the edit-form / Forget button etc.
+           doesn't make columns jiggle. Hint cells use overflow:hidden + ellipsis
+           in CSS (.det-flow td) for content that doesn't fit. -->
       <colgroup>
-        <col style="width:48px;"/>
-        <col style="min-width:340px;"/>
-        <col style="min-width:90px;"/>
-        <col style="min-width:160px;"/>
-        <col style="min-width:160px;"/>
-        <col style="min-width:140px;"/>
-        <col style="min-width:300px;"/>
-        <col style="min-width:160px;"/>
-        <col style="min-width:90px;"/>
+        <col style="width:40px;"/>
+        <col style="width:220px;"/>
+        <col style="width:60px;"/>
+        <col style="width:130px;"/>
+        <col style="width:160px;"/>
+        <col style="width:100px;"/>
+        <col style="width:280px;"/>
+        <col style="width:130px;"/>
+        <col style="width:80px;"/>
       </colgroup>
       <tbody>
         {#each deviceList as dev (dev.id)}
           {@const isExpanded = filter.expanded.devices.includes(dev.id)}
+          {@const dotClass = deviceDotClass(dev)}
           <tr class="det-device" on:dblclick={()=>toggleDevice(dev.id)}>
             <td on:click={()=>toggleDevice(dev.id)}>
-              <span class={"data-table-expand "+ (isExpanded ? "data-table-expand-active":"")}><Icon src={ChevronRight}></Icon></span>
+              <span class={"data-table-expand" + (isExpanded ? " data-table-expand-active" : "")}>
+                <Icon src={ChevronRight}></Icon>
+              </span>
             </td>
             <td on:click={()=>toggleDevice(dev.id)} class="det-device-label" colspan="8">
               <div class="det-device-label-inner">
-                {#each [deviceDotClass(dev)] as dotClass}
-                  <div class="badge badge-{dotClass} badge-sm"
-                       use:OverlayMenuService.tooltip
-                       data-tooltip="{
-                         dotClass === "error"   ? "Device unavailable" :
-                         dotClass === "success" ? (acceptableGmid ? "PTP locked to accepted Grand-Master" : "Device available") :
-                         (dev.gmid ? "PTP locked to "+dev.gmid+" — does not match accepted GMID" : "No PTP lock detected")
-                       }"></div>
-                {/each}
                 <div class="det-device-label-text">
                   <div class="det-device-name-row">
+                    <span class={"det-device-dot det-device-dot-" + dotClass}
+                          use:OverlayMenuService.tooltip
+                          data-tooltip="{
+                            dotClass === "error"   ? "Device unavailable" :
+                            dotClass === "success" ? (acceptableGmid ? "PTP locked to accepted Grand-Master" : "Device available") :
+                            (dev.gmid ? "PTP locked to "+dev.gmid+" — does not match accepted GMID" : "No PTP lock detected")
+                          }"></span>
                     <span use:OverlayMenuService.tooltip data-tooltip="{dev.tooltip}"><strong>{dev.label}</strong></span>
                     <button on:click|stopPropagation={()=>openLabelEditor(dev.id, dev.name, dev.alias)} class="btn btn-round det-device-edit"
                             use:OverlayMenuService.tooltip data-tooltip="Change alias">
@@ -1031,6 +1065,14 @@
                   {/if}
                 </div>
                 <span class="det-device-counts">{dev.senders.length} TX · {dev.receivers.length} RX</span>
+                {#if !dev.available}
+                  <button class="btn btn-sm det-device-forget"
+                          on:click|stopPropagation={()=>openForgetDialog(dev)}
+                          use:OverlayMenuService.tooltip
+                          data-tooltip="Remove this offline device — releases its multicast leases and clears cached state.">
+                    Forget
+                  </button>
+                {/if}
               </div>
             </td>
           </tr>
@@ -1056,17 +1098,32 @@
 
             {#if dev.senders.length > 0 && !filter.collapsedSenders.includes(dev.id)}
             {#each dev.senders as flow (flow.id)}
-              <tr class={"det-flow det-flow-tx det-flow-"+flow.type + (flow.active ? " is-active" : " is-inactive")}>
+              <tr class={"det-flow det-flow-tx det-flow-"+flow.type + (flow.active ? " is-active" : " is-inactive") + (flow.available ? "" : " is-unavailable")}>
                 <td></td>
                 <td style="padding-left:32px;">
-                  {#if flow.name === flow.alias}
-                    <span>{flow.alias}</span>
-                  {:else}
-                    <span use:OverlayMenuService.tooltip data-tooltip="{flow.name}">{flow.alias}</span>
-                  {/if}
-                  <button on:click={()=>openLabelEditor(flow.id, flow.name, flow.alias)} class="btn btn-round btn-hover">
-                    <Icon src={Pencil}></Icon>
-                  </button>
+                  <div class="det-flow-name">
+                    {#if !flow.available}
+                      <span class="det-flow-dot det-flow-dot-error"
+                            use:OverlayMenuService.tooltip
+                            data-tooltip="Sender no longer present in the NMOS registry"></span>
+                    {/if}
+                    {#if flow.name === flow.alias}
+                      <span class="det-flow-name-text">{flow.alias}</span>
+                    {:else}
+                      <span class="det-flow-name-text" use:OverlayMenuService.tooltip data-tooltip="{flow.name}">{flow.alias}</span>
+                    {/if}
+                    <button on:click={()=>openLabelEditor(flow.id, flow.name, flow.alias)} class="btn btn-round btn-hover">
+                      <Icon src={Pencil}></Icon>
+                    </button>
+                    {#if !flow.available}
+                      <button class="btn btn-sm det-flow-forget"
+                              on:click|stopPropagation={()=>openForgetFlowDialog(dev.id, "sender", flow)}
+                              use:OverlayMenuService.tooltip
+                              data-tooltip="Remove this orphan sender — releases its multicast lease and clears the cached state.">
+                        Forget
+                      </button>
+                    {/if}
+                  </div>
                 </td>
                 <td>
                   <span class={"cp-type det-toggle-active cp-type-"+flow.type + (flow.active ? " active" : "")}
@@ -1094,9 +1151,9 @@
                       {@const lKey = legKey(flow.id, leg.index)}
                       {@const isEditing = editingLeg === lKey}
                       <div class="det-leg {isDup ? "det-leg-duplicate" : ""}">
-                        <span class="det-leg-label">Leg {leg.index+1}:</span>
                         {#if isEditing}
                           {@const liveConflict = findActiveLegConflict(flow.id, leg.index, legEditIp)}
+                          <span class="det-leg-label">Leg {leg.index+1}:</span>
                           <input type="text" class="det-leg-input det-leg-input-ip-{lKey.replace(/[:]/g,"_")} {liveConflict ? "det-leg-input-warn" : ""}"
                                  bind:value={legEditIp}
                                  on:keydown={(e)=>legEditKey(e, flow.id, leg.index)}
@@ -1119,11 +1176,12 @@
                             </span>
                           {/if}
                         {:else}
-                          <span class="det-leg-value">{leg.dstIp || "—"}<span class="det-leg-colon">:</span>{leg.dstPort || "—"}</span>
-                          <button class="btn btn-round btn-hover" on:click={()=>startLegEdit(flow.id, leg.index, leg)}
+                          <span class="det-leg-label">Leg {leg.index+1}:</span>
+                          <button class="btn btn-round det-leg-edit" on:click={()=>startLegEdit(flow.id, leg.index, leg)}
                                   use:OverlayMenuService.tooltip data-tooltip="Edit Multicast / Port">
                             <Icon src={Pencil}></Icon>
                           </button>
+                          <span class="det-leg-value">{leg.dstIp || "—"}<span class="det-leg-colon">:</span>{leg.dstPort || "—"}</span>
                           {#if isDup}
                             <span class="text-error det-dup-hint" use:OverlayMenuService.tooltip data-tooltip="Multicast IP used by another active sender on the same leg!">DUP</span>
                           {/if}
@@ -1170,19 +1228,34 @@
 
             {#if dev.receivers.length > 0 && !filter.collapsedReceivers.includes(dev.id)}
             {#each dev.receivers as recv (recv.id)}
-              <tr class={"det-flow det-flow-rx det-flow-"+recv.type + (recv.active ? " is-active" : " is-inactive")}>
+              <tr class={"det-flow det-flow-rx det-flow-"+recv.type + (recv.active ? " is-active" : " is-inactive") + (recv.available ? "" : " is-unavailable")}>
                 <td></td>
                 <td style="padding-left:32px;">
-                  {#if recv.name === recv.alias}
-                    <span>{recv.alias}</span>
-                  {:else}
-                    <span use:OverlayMenuService.tooltip data-tooltip="{recv.name}">{recv.alias}</span>
-                  {/if}
-                  <button on:click={()=>openLabelEditor(recv.id, recv.name, recv.alias)} class="btn btn-round btn-hover">
-                    <Icon src={Pencil}></Icon>
-                  </button>
+                  <div class="det-flow-name">
+                    {#if !recv.available}
+                      <span class="det-flow-dot det-flow-dot-error"
+                            use:OverlayMenuService.tooltip
+                            data-tooltip="Receiver no longer present in the NMOS registry"></span>
+                    {/if}
+                    {#if recv.name === recv.alias}
+                      <span class="det-flow-name-text">{recv.alias}</span>
+                    {:else}
+                      <span class="det-flow-name-text" use:OverlayMenuService.tooltip data-tooltip="{recv.name}">{recv.alias}</span>
+                    {/if}
+                    <button on:click={()=>openLabelEditor(recv.id, recv.name, recv.alias)} class="btn btn-round btn-hover">
+                      <Icon src={Pencil}></Icon>
+                    </button>
+                    {#if !recv.available}
+                      <button class="btn btn-sm det-flow-forget"
+                              on:click|stopPropagation={()=>openForgetFlowDialog(dev.id, "receiver", recv)}
+                              use:OverlayMenuService.tooltip
+                              data-tooltip="Remove this orphan receiver — clears the cached state.">
+                        Forget
+                      </button>
+                    {/if}
+                  </div>
                   {#if recv.connectedSenderLabel}
-                    <span class="det-recv-source" use:OverlayMenuService.tooltip data-tooltip="Connected sender">← {recv.connectedSenderLabel}</span>
+                    <div class="det-recv-source" use:OverlayMenuService.tooltip data-tooltip="Connected sender">← {recv.connectedSenderLabel}</div>
                   {/if}
                 </td>
                 <td>
@@ -1254,6 +1327,30 @@
         <form method="dialog">
           <button class="btn">Close</button>
         </form>
+      </div>
+    </div>
+  </dialog>
+
+
+  <dialog bind:this={forgetModal} class="modal">
+    <div class="modal-box">
+      <form method="dialog">
+        <button on:click={cancelForget} class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+      </form>
+      <h3 class="font-bold text-lg">Forget device?</h3>
+      {#if forgetDevice}
+        <p class="det-forget-text">
+          <strong>{forgetDevice.label}</strong> is offline. Forgetting will:
+        </p>
+        <ul class="det-forget-list">
+          <li>release its multicast leases ({forgetDevice.senders.length} TX) back into the pool</li>
+          <li>remove the cached crosspoint state (aliases, sort numbers, …)</li>
+          <li>if the device comes back online later, it will be treated as a fresh device</li>
+        </ul>
+      {/if}
+      <div class="modal-action">
+        <button on:click={cancelForget} class="btn">Cancel</button>
+        <button on:click={confirmForget} class="btn btn-error">Forget</button>
       </div>
     </div>
   </dialog>

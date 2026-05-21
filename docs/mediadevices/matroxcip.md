@@ -1,3 +1,0 @@
-# Mediadevice - Matrox CIP
-
-## Config

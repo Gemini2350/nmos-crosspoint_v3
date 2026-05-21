@@ -2,6 +2,7 @@
     import ServerConnector from "../lib/ServerConnector/ServerConnectorService";
     import type { Subject } from "rxjs";
     import { onDestroy, onMount } from "svelte";
+    import sha256 from "js-sha256";
 
     import { Icon, ExclamationTriangle, CheckCircle, Plus, Trash } from "svelte-hero-icons";
 
@@ -15,19 +16,28 @@
       port: number;
       path: string;
     }
-    interface MulticastRanges {
-      audioLow: string;
-      audioHigh: string;
-      video: string;
-    }
     interface LeaseStat { used: number; total: number }
+    interface DnsPush {
+      enabled: boolean;
+      serverIp: string;
+      serverPort: number;
+      protocol: "http" | "https";
+      apiKey: string;       // server NEVER returns the real value
+      apiKeySet: boolean;   // server flag: an API key is configured
+      domain: string;
+      insecureTLS: boolean;
+    }
     interface SetupConfig {
       registry: { ip:string, port:number };
       acceptableGmid: string;
       vendorProfiles: VendorProfile[];
-      multicastRanges: MulticastRanges;
-      autoMulticast: { enabled: boolean };
-      multicastStats: { audioLow: LeaseStat, audioHigh: LeaseStat, video: LeaseStat };
+      multicastRange: string;
+      autoMulticast: { enabled: boolean, reconnectReceiversOnSenderChange?: boolean };
+      autoActivateInactiveSender: boolean;
+      // pool = the single-range counter; per-cat fields kept for back-compat
+      multicastStats: { pool?: LeaseStat, audioLow?: LeaseStat, audioHigh?: LeaseStat, video?: LeaseStat };
+      dnsPush: DnsPush;
+      auth: { users: string[] };
       restartRequired: boolean;
     }
 
@@ -35,9 +45,12 @@
       registry: { ip: "", port: 80 },
       acceptableGmid: "",
       vendorProfiles: [],
-      multicastRanges: { audioLow: "", audioHigh: "", video: "" },
-      autoMulticast: { enabled: false },
-      multicastStats: { audioLow:{used:0,total:0}, audioHigh:{used:0,total:0}, video:{used:0,total:0} },
+      multicastRange: "",
+      autoMulticast: { enabled: false, reconnectReceiversOnSenderChange: false },
+      autoActivateInactiveSender: false,
+      multicastStats: { pool:{used:0,total:0} },
+      dnsPush: { enabled:false, serverIp:"", serverPort:443, protocol:"https", apiKey:"", apiKeySet:false, domain:"local", insecureTLS:true },
+      auth: { users: [] },
       restartRequired: false
     };
 
@@ -47,12 +60,59 @@
     let formGmid:string = "";
     let formProfiles:VendorProfile[] = [];
     let formAutoMulticastEnabled:boolean = false;
-    let formRangeAudioLow:string  = "";
-    let formRangeAudioHigh:string = "";
-    let formRangeVideo:string     = "";
+    let formReconnectReceivers:boolean = false;
+    let formAutoActivateSender:boolean = false;
+    let formMulticastRange:string = "";
 
-    // Live preview of detected devices for the vendor table
-    let detectedDevices:Array<{ id:string, label:string, match:string }> = [];
+    // Credentials form (independent of the main Save flow — saved via its own
+    // route). The sha256 hashes are computed at submit time so the plaintext
+    // never round-trips through the dirty/save buffer.
+    let formCredCurrentUser:string = "";
+    let formCredCurrentPass:string = "";
+    let formCredNewUser:string     = "";
+    let formCredNewPass:string     = "";
+    let formCredNewPass2:string    = "";
+    let credSaving:boolean = false;
+    let credError:string   = "";
+    let credSuccess:string = "";
+
+    // DNS Push form state
+    let formDnsEnabled:boolean    = false;
+    let formDnsServerIp:string    = "";
+    let formDnsServerPort:string  = "443";
+    let formDnsProtocol:"http"|"https" = "https";
+    let formDnsApiKey:string      = "";
+    let formDnsApiKeySet:boolean  = false;
+    let formDnsDomain:string      = "local";
+    let formDnsInsecureTLS:boolean = true;
+
+    // Live preview of detected devices for the vendor table — includes the
+    // resulting Web-UI link so the operator can verify the profile's
+    // protocol/port/path produce the URL they actually expect.
+    let detectedDevices:Array<{ id:string, label:string, match:string, url:string }> = [];
+
+    function buildDeviceUrl(profile:VendorProfile | null, hrefStr:string):string {
+      try{
+        if(!hrefStr){ return ""; }
+        let u = new URL(hrefStr);
+        let host = u.hostname;
+        if(profile){
+          let proto = (profile.protocol === "https") ? "https" : "http";
+          let port = parseInt(""+profile.port);
+          if(isNaN(port) || port <= 0 || port > 65535){
+            port = (proto === "https") ? 443 : 80;
+          }
+          let path = (typeof profile.path === "string" && profile.path) ? profile.path : "/";
+          if(!path.startsWith("/")){ path = "/" + path; }
+          let portSuffix = ((proto === "http" && port === 80) || (proto === "https" && port === 443))
+              ? "" : (":" + port);
+          return proto + "://" + host + portSuffix + path;
+        }
+        // No profile matched — fall back to whatever the NMOS node advertises.
+        return u.protocol + "//" + u.host + "/";
+      }catch(e){}
+      return "";
+    }
 
     let dirty = false;
     let saving = false;
@@ -81,10 +141,29 @@
             formGmid = obj.acceptableGmid || "";
             formProfiles = Array.isArray(obj.vendorProfiles) ? obj.vendorProfiles.map((p:any) => ({...p})) : [];
             formAutoMulticastEnabled = !!(obj.autoMulticast && obj.autoMulticast.enabled);
-            if(obj.multicastRanges){
-              formRangeAudioLow  = obj.multicastRanges.audioLow  || "";
-              formRangeAudioHigh = obj.multicastRanges.audioHigh || "";
-              formRangeVideo     = obj.multicastRanges.video     || "";
+            // `reconnectReceiversOnSenderChange` default is now FALSE, so we
+            // take the stored value as-is (no "!== false" magic).
+            formReconnectReceivers   = !!(obj.autoMulticast && (
+              obj.autoMulticast.reconnectReceiversOnSenderChange ??
+              obj.autoMulticast.reconnectReceiversOnMulticastChange
+            ));
+            formAutoActivateSender   = !!obj.autoActivateInactiveSender;
+            formMulticastRange       = (typeof obj.multicastRange === "string") ? obj.multicastRange : "";
+            // Pre-fill the credentials form with the first configured user
+            // so the operator doesn't have to type their own username.
+            if(obj.auth && Array.isArray(obj.auth.users) && obj.auth.users.length > 0){
+              formCredCurrentUser = obj.auth.users[0];
+              if(!formCredNewUser){ formCredNewUser = obj.auth.users[0]; }
+            }
+            if(obj.dnsPush){
+              formDnsEnabled     = !!obj.dnsPush.enabled;
+              formDnsServerIp    = obj.dnsPush.serverIp || "";
+              formDnsServerPort  = ""+(obj.dnsPush.serverPort || 443);
+              formDnsProtocol    = obj.dnsPush.protocol === "http" ? "http" : "https";
+              formDnsApiKey      = "";   // never round-trip the secret
+              formDnsApiKeySet   = !!obj.dnsPush.apiKeySet;
+              formDnsDomain      = obj.dnsPush.domain || "local";
+              formDnsInsecureTLS = obj.dnsPush.insecureTLS !== false;
             }
           }
           recomputeDetected();
@@ -125,22 +204,33 @@
       formGmid = serverState.acceptableGmid || "";
       formProfiles = Array.isArray(serverState.vendorProfiles) ? serverState.vendorProfiles.map((p:any)=>({...p})) : [];
       formAutoMulticastEnabled = !!(serverState.autoMulticast && serverState.autoMulticast.enabled);
-      formRangeAudioLow  = serverState.multicastRanges?.audioLow  || "";
-      formRangeAudioHigh = serverState.multicastRanges?.audioHigh || "";
-      formRangeVideo     = serverState.multicastRanges?.video     || "";
+      formReconnectReceivers   = !!(serverState.autoMulticast && (
+        (serverState.autoMulticast as any).reconnectReceiversOnSenderChange ??
+        (serverState.autoMulticast as any).reconnectReceiversOnMulticastChange
+      ));
+      formAutoActivateSender   = !!serverState.autoActivateInactiveSender;
+      formMulticastRange       = serverState.multicastRange || "";
+      if(serverState.dnsPush){
+        formDnsEnabled     = !!serverState.dnsPush.enabled;
+        formDnsServerIp    = serverState.dnsPush.serverIp || "";
+        formDnsServerPort  = ""+(serverState.dnsPush.serverPort || 443);
+        formDnsProtocol    = serverState.dnsPush.protocol === "http" ? "http" : "https";
+        formDnsApiKey      = "";
+        formDnsApiKeySet   = !!serverState.dnsPush.apiKeySet;
+        formDnsDomain      = serverState.dnsPush.domain || "local";
+        formDnsInsecureTLS = serverState.dnsPush.insecureTLS !== false;
+      }
       dirty = false;
       saveError = "";
       recomputeDetected();
     }
 
     function save(){
-      saving = true;
       saveError = "";
 
       let port = parseInt(formPort);
       if(isNaN(port) || port <= 0 || port > 65535){
-        saveError = "Port muss zwischen 1 und 65535 liegen.";
-        saving = false;
+        saveError = "Port must be between 1 and 65535.";
         return;
       }
 
@@ -148,34 +238,69 @@
       for(let p of formProfiles){
         let pp = parseInt(""+p.port);
         if(isNaN(pp) || pp <= 0 || pp > 65535){
-          saveError = "Vendor \""+(p.name||p.id)+"\": Port muss zwischen 1 und 65535 liegen.";
-          saving = false;
+          saveError = "Vendor \""+(p.name||p.id)+"\": Port must be between 1 and 65535.";
           return;
         }
       }
 
-      // Multicast ranges — basic CIDR sanity check
+      // Multicast range — basic CIDR sanity check (single shared pool now)
       let cidrRe = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
-      for(let [label, val] of [["Audio Low", formRangeAudioLow], ["Audio High", formRangeAudioHigh], ["Video", formRangeVideo]] as [string,string][]){
-        if(val && !cidrRe.test(val.trim())){
-          saveError = "Multicast Range „"+label+"\" muss CIDR-Notation sein, z.B. 239.120.0.0/16";
-          saving = false;
-          return;
-        }
+      if(formMulticastRange && !cidrRe.test(formMulticastRange.trim())){
+        saveError = "Multicast Range must use CIDR notation, e.g. 239.30.0.0/16";
+        return;
       }
 
-      let payload = {
+      // DNS Push validation
+      let dnsPort = parseInt(formDnsServerPort);
+      if(isNaN(dnsPort) || dnsPort <= 0 || dnsPort > 65535){
+        saveError = "DNS Push: Port must be between 1 and 65535.";
+        return;
+      }
+      if(formDnsEnabled){
+        if(!formDnsServerIp.trim()){ saveError = "DNS Push: Server address is required when enabled."; return; }
+        if(!formDnsApiKeySet && !formDnsApiKey){ saveError = "DNS Push: API Key is required when enabled."; return; }
+        if(!formDnsDomain.trim()){ saveError = "DNS Push: Domain (hostname suffix) is required."; return; }
+      }
+
+      let payload:any = {
         registry: { ip: formIp.trim(), port: port },
         acceptableGmid: formGmid.trim(),
         vendorProfiles: formProfiles,
-        multicastRanges: {
-          audioLow:  formRangeAudioLow.trim(),
-          audioHigh: formRangeAudioHigh.trim(),
-          video:     formRangeVideo.trim()
+        multicastRange: formMulticastRange.trim(),
+        autoMulticast: {
+          enabled: formAutoMulticastEnabled,
+          reconnectReceiversOnSenderChange: formReconnectReceivers
         },
-        autoMulticast: { enabled: formAutoMulticastEnabled }
+        autoActivateInactiveSender: formAutoActivateSender,
+        dnsPush: {
+          enabled:     formDnsEnabled,
+          serverIp:    formDnsServerIp.trim(),
+          serverPort:  dnsPort,
+          protocol:    formDnsProtocol,
+          // Empty string means "keep the existing key" on the server.
+          apiKey:      formDnsApiKey,
+          domain:      formDnsDomain.trim(),
+          insecureTLS: formDnsInsecureTLS
+        }
       };
 
+      // If the user is switching Auto-Allocation ON for the first time
+      // (it was off before), ask what should happen with currently online
+      // senders: adopt their existing IPs, or force fresh pool addresses.
+      let wasEnabled = !!(serverState.autoMulticast && serverState.autoMulticast.enabled);
+      let nowEnabled = !!formAutoMulticastEnabled;
+      if(!wasEnabled && nowEnabled){
+        pendingPayload = payload;
+        if(autoMulticastModal){ autoMulticastModal.showModal(); }
+        return;
+      }
+
+      doSave(payload);
+    }
+
+    function doSave(payload:any){
+      saving = true;
+      saveError = "";
       ServerConnector.post("setupConfig", payload).then((resp:any)=>{
         saving = false;
         dirty = false;
@@ -186,8 +311,71 @@
         setTimeout(()=>{ savedFlash = false; }, 2500);
       }).catch((e:any)=>{
         saving = false;
-        saveError = (e && e.message) ? e.message : "Speichern fehlgeschlagen.";
+        saveError = (e && e.message) ? e.message : "Save failed.";
       });
+    }
+
+
+    // ----- Credentials change (independent of the main Save) -----
+    // Hashes plaintext locally (sha256), then posts to /changeCredentials.
+    // The server validates the current hash against ./config/users.json,
+    // renames the user / updates the password as requested, persists,
+    // hot-reloads the auth table, and returns the new username.
+    function saveCredentials(){
+      credError = ""; credSuccess = "";
+      if(!formCredCurrentUser.trim()){ credError = "Current username is required."; return; }
+      if(!formCredCurrentPass){       credError = "Current password is required."; return; }
+      let newUser = formCredNewUser.trim();
+      let wantPass = !!formCredNewPass || !!formCredNewPass2;
+      if(wantPass){
+        if(formCredNewPass !== formCredNewPass2){ credError = "New passwords do not match."; return; }
+        if(formCredNewPass.length < 4){ credError = "New password must be at least 4 characters."; return; }
+      }
+      if(!newUser && !wantPass){ credError = "Nothing to change — set a new username or a new password."; return; }
+
+      let payload:any = {
+        currentUsername:     formCredCurrentUser.trim(),
+        currentPasswordHash: sha256.sha256(formCredCurrentPass),
+        newUsername:         newUser,
+        newPasswordHash:     wantPass ? sha256.sha256(formCredNewPass) : ""
+      };
+      credSaving = true;
+      ServerConnector.post("changeCredentials", payload).then((resp:any)=>{
+        credSaving = false;
+        credSuccess = "Saved. You will need to log in again with the new credentials.";
+        // Wipe the entered passwords from memory.
+        formCredCurrentPass = "";
+        formCredNewPass     = "";
+        formCredNewPass2    = "";
+        if(resp?.data?.username){
+          formCredCurrentUser = resp.data.username;
+          formCredNewUser     = resp.data.username;
+        }
+        setTimeout(()=>{ credSuccess = ""; }, 6000);
+      }).catch((e:any)=>{
+        credSaving = false;
+        credError = (e && e.message) ? e.message : "Could not change credentials.";
+      });
+    }
+
+
+    // ----- Auto-Allocation: Adopt-vs-Reallocate choice -----
+    let autoMulticastModal:any;
+    let pendingPayload:any = null;
+    function autoMcChoose(adopt:boolean){
+      if(!pendingPayload){ return; }
+      pendingPayload.autoMulticast.adoptOnEnable = adopt;
+      let p = pendingPayload;
+      pendingPayload = null;
+      if(autoMulticastModal){ autoMulticastModal.close(); }
+      doSave(p);
+    }
+    function autoMcCancel(){
+      pendingPayload = null;
+      if(autoMulticastModal){ autoMulticastModal.close(); }
+      // Revert the toggle so the form reflects the actual server state
+      formAutoMulticastEnabled = !!(serverState.autoMulticast && serverState.autoMulticast.enabled);
+      saving = false;
     }
 
 
@@ -227,21 +415,24 @@
     function recomputeDetected(){
       try{
         let nodes = nmosState && nmosState.nodes ? nmosState.nodes : {};
-        let arr:Array<{ id:string, label:string, match:string }> = [];
+        let arr:Array<{ id:string, label:string, match:string, url:string }> = [];
         for(let nodeId in nodes){
           let n = nodes[nodeId];
           if(!n){ continue; }
           let label = n.label || nodeId;
           let description = n.description || "";
 
+          let matched:VendorProfile | null = null;
           let matchName = "";
           for(let p of formProfiles){
             if(matchProfile(p, label, description)){
+              matched = p;
               matchName = p.name || p.id;
               break;
             }
           }
-          arr.push({ id: nodeId, label, match: matchName });
+          let url = buildDeviceUrl(matched, n.href || "");
+          arr.push({ id: nodeId, label, match: matchName, url });
         }
         arr.sort((a,b)=>(a.label||"").localeCompare(b.label||""));
         detectedDevices = arr;
@@ -264,13 +455,20 @@
       secondaryIp: string;
       port: number;
       createdAt: string;
+      // Live state from NMOS, looked up on every recompute.
+      // "active":   sender is in the NMOS registry and master_enable=true
+      // "inactive": sender is in the NMOS registry but master_enable=false
+      // "missing":  sender ID isn't present in the NMOS registry at all
+      liveStatus: "active" | "inactive" | "missing";
     }
     let leaseRows:LeaseRow[] = [];
-    $: {
+    // Recompute whenever leases, filter, or NMOS state change.
+    $: leaseRows = recomputeLeaseRows(leaseSnapshot, inventoryFilter, inventoryCategoryFilter, nmosState);
+    function recomputeLeaseRows(snap:any, filterStr:string, catFilterStr:string, nmos:any):LeaseRow[]{
       let arr:LeaseRow[] = [];
-      let raw = leaseSnapshot && leaseSnapshot.leases ? leaseSnapshot.leases : {};
-      let needle = (inventoryFilter || "").toLowerCase();
-      let catFilter = inventoryCategoryFilter || "";
+      let raw = snap && snap.leases ? snap.leases : {};
+      let needle = (filterStr || "").toLowerCase();
+      let catFilter = catFilterStr || "";
       for(let id in raw){
         let l = raw[id];
         if(!l) continue;
@@ -279,6 +477,14 @@
           let hay = ((l.deviceLabel||"") + " " + id + " " + (l.primaryIp||"") + " " + (l.secondaryIp||"")).toLowerCase();
           if(!hay.includes(needle)) continue;
         }
+        // Look up the live state in the NMOS sender table (keyed by raw UUID).
+        let liveStatus:"active"|"inactive"|"missing" = "missing";
+        try{
+          let nmosSender = nmos?.senders?.[id];
+          if(nmosSender){
+            liveStatus = (nmosSender.subscription && nmosSender.subscription.active) ? "active" : "inactive";
+          }
+        }catch(e){}
         arr.push({
           senderId: id,
           deviceLabel: l.deviceLabel || "",
@@ -287,7 +493,8 @@
           primaryIp: l.primaryIp || "",
           secondaryIp: l.secondaryIp || "",
           port: l.port || 0,
-          createdAt: l.createdAt || ""
+          createdAt: l.createdAt || "",
+          liveStatus
         });
       }
       arr.sort((a,b) => {
@@ -295,7 +502,7 @@
         // sort by uint32 of primary IP within a category
         return ipCompare(a.primaryIp, b.primaryIp);
       });
-      leaseRows = arr;
+      return arr;
     }
     function ipCompare(a:string, b:string){
       let pa = a.split(".").map(x=>parseInt(x));
@@ -321,6 +528,34 @@
     function fmtDate(iso:string){
       if(!iso) return "";
       try { return new Date(iso).toLocaleString(); } catch { return iso; }
+    }
+
+
+    // ----- Release a single lease from the inventory -----
+    let releaseModal:any;
+    let releaseTarget:LeaseRow | null = null;
+    let releaseError:string = "";
+    function askReleaseLease(row:LeaseRow){
+      releaseTarget = row;
+      releaseError = "";
+      if(releaseModal){ releaseModal.showModal(); }
+    }
+    function cancelReleaseLease(){
+      releaseTarget = null;
+      releaseError = "";
+      if(releaseModal){ releaseModal.close(); }
+    }
+    function confirmReleaseLease(){
+      if(!releaseTarget) return;
+      let sid = releaseTarget.senderId;
+      ServerConnector.post("releaseLease", { senderId: sid })
+        .then(()=>{
+          releaseTarget = null;
+          if(releaseModal){ releaseModal.close(); }
+        })
+        .catch((e:any)=>{
+          releaseError = (e && e.message) ? e.message : "Release failed.";
+        });
     }
 
 
@@ -452,14 +687,14 @@
     {#if serverState.restartRequired}
       <div class="alert alert-warning setup-alert">
         <Icon src={ExclamationTriangle} />
-        <span>Registry-Verbindung neu aufbauen: Server-Restart erforderlich, damit die neue IP/Port aktiv wird.</span>
+        <span>Registry change pending — restart the server for the new IP/port to take effect.</span>
       </div>
     {/if}
 
     {#if savedFlash}
       <div class="alert alert-success setup-alert">
         <Icon src={CheckCircle} />
-        <span>Gespeichert in settings.json.</span>
+        <span>Saved to settings.json.</span>
       </div>
     {/if}
 
@@ -473,7 +708,7 @@
 
     <section class="setup-section">
       <h3>NMOS Registry</h3>
-      <p class="setup-section-hint">Adresse der NMOS-Registry, die der Server beim Start kontaktiert.</p>
+      <p class="setup-section-hint">Address of the NMOS registry the server contacts at startup.</p>
 
       <div class="setup-form">
         <label class="setup-field">
@@ -493,10 +728,10 @@
     <section class="setup-section">
       <h3>Acceptable PTP GMID</h3>
       <p class="setup-section-hint">
-        Erwartete PTP Grand-Master ID. Devices, deren Node-Clock auf diese GMID gelocked sind,
-        bekommen in der Details-Seite einen <span class="setup-dot setup-dot-success"></span>
-        grünen, alle anderen einen <span class="setup-dot setup-dot-warning"></span> gelben Status-Punkt.
-        Leer lassen, um den Vergleich zu deaktivieren.
+        Expected PTP Grand-Master ID. Devices whose node clock is locked to this GMID
+        get a <span class="setup-dot setup-dot-success"></span> green status dot on the
+        Details page, all others get a <span class="setup-dot setup-dot-warning"></span> yellow one.
+        Leave empty to disable the comparison.
       </p>
 
       <div class="setup-form">
@@ -510,44 +745,79 @@
 
 
     <section class="setup-section">
-      <h3>Multicast Auto-Allocation</h3>
+      <h3>Receiver Auto-Reconnect</h3>
       <p class="setup-section-hint">
-        Wenn aktiviert vergibt der Server pro Sender ein Paar aufeinanderfolgender Multicast-Adressen
-        (ungerade für Leg 1, gerade = ungerade + 1 für Leg 2). Die Lease bleibt für immer reserviert –
-        auch wenn der Sender offline ist. Erst wenn das Device manuell gelöscht wird, werden die
-        Adressen wieder freigegeben.
+        Whenever a sender's SDP changes — destination IP / port (reconcile, manual edit,
+        lease release) <em>or</em> any other field like channel count, video format,
+        colorimetry — re-execute the connection of every receiver currently subscribed to
+        it so they pick up the new manifest. Recommended ON for production. The one-shot
+        „Reallocate from pool" sweep in <em>Multicast DHCP</em> ignores this setting and
+        always reconnects.
       </p>
 
       <div class="setup-form">
         <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Enable Auto-Allocation</span>
+          <span class="label-text">Auto-reconnect receivers on sender SDP change</span>
+          <input type="checkbox" class="toggle" bind:checked={formReconnectReceivers} on:change={markDirty} />
+        </label>
+      </div>
+    </section>
+
+
+    <section class="setup-section">
+      <h3>Crosspoint: Auto-Activate Sender</h3>
+      <p class="setup-section-hint">
+        When a connection is made on the Crosspoint page whose source sender is
+        currently <em>inactive</em> (master_enable&nbsp;=&nbsp;false), automatically
+        PATCH that sender active first, wait for it to (re)publish its SDP,
+        and only then patch the receiver. Off by default — many control rooms
+        gate sender activation through a separate workflow and don't want a
+        stray click on the matrix to push a signal on the wire.
+      </p>
+
+      <div class="setup-form">
+        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
+          <span class="label-text">Auto-activate inactive sender on Crosspoint connect</span>
+          <input type="checkbox" class="toggle" bind:checked={formAutoActivateSender} on:change={markDirty} />
+        </label>
+      </div>
+    </section>
+
+
+    <section class="setup-section">
+      <h3>Multicast DHCP</h3>
+      <p class="setup-section-hint">
+        When enabled, the server reserves a pair of consecutive multicast addresses per sender
+        (odd for Leg 1, even = odd + 1 for Leg 2). The reservation is kept for the lifetime of the
+        device — even if the sender goes offline — and is only released when the device is
+        explicitly <em>Forget</em>en on the Details page or its lease is deleted in the inventory below.
+      </p>
+      <p class="setup-section-hint">
+        <strong>An address is (re-)assigned in two cases:</strong>
+      </p>
+      <ul class="setup-section-bullets">
+        <li>when a sender becomes <em>active</em> (its NMOS subscription transitions to active) and has no lease yet;</li>
+        <li>when the destination IP of an <em>active</em> sender is cleared — the field on the Details page is emptied or its lease is released here.</li>
+      </ul>
+      <p class="setup-section-hint">
+        Manual overrides on the Details page are respected: typing a different IP marks it as the
+        effective address; clearing the field reverts to the reserved address.
+      </p>
+
+      <div class="setup-form">
+        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
+          <span class="label-text">Enable Multicast DHCP</span>
           <input type="checkbox" class="toggle" bind:checked={formAutoMulticastEnabled} on:change={markDirty} />
         </label>
       </div>
 
       <div class="setup-form" style="margin-top:14px;">
         <label class="setup-field">
-          <span class="setup-label">Audio Low Range (≤2 Channels)</span>
+          <span class="setup-label">Multicast Range (single pool for all senders)</span>
           <div class="setup-range-row">
-            <input type="text" class="input input-bordered vendor-mono" placeholder="239.130.0.0/16"
-                   bind:value={formRangeAudioLow} on:input={markDirty} />
-            <span class="setup-range-stat">{serverState.multicastStats.audioLow.used} / {serverState.multicastStats.audioLow.total} pairs used</span>
-          </div>
-        </label>
-        <label class="setup-field">
-          <span class="setup-label">Audio High Range (&gt;2 Channels)</span>
-          <div class="setup-range-row">
-            <input type="text" class="input input-bordered vendor-mono" placeholder="239.131.0.0/16"
-                   bind:value={formRangeAudioHigh} on:input={markDirty} />
-            <span class="setup-range-stat">{serverState.multicastStats.audioHigh.used} / {serverState.multicastStats.audioHigh.total} pairs used</span>
-          </div>
-        </label>
-        <label class="setup-field">
-          <span class="setup-label">Video Range</span>
-          <div class="setup-range-row">
-            <input type="text" class="input input-bordered vendor-mono" placeholder="239.120.0.0/16"
-                   bind:value={formRangeVideo} on:input={markDirty} />
-            <span class="setup-range-stat">{serverState.multicastStats.video.used} / {serverState.multicastStats.video.total} pairs used</span>
+            <input type="text" class="input input-bordered vendor-mono" placeholder="239.30.0.0/16"
+                   bind:value={formMulticastRange} on:input={markDirty} />
+            <span class="setup-range-stat">{leaseSnapshot.stats?.pool?.used ?? 0} / {leaseSnapshot.stats?.pool?.total ?? 0} pairs used</span>
           </div>
         </label>
       </div>
@@ -585,6 +855,7 @@
           <table class="lease-table">
             <thead>
               <tr>
+                <th>Status</th>
                 <th>Category</th>
                 <th>Device</th>
                 <th>Sender ID</th>
@@ -592,11 +863,22 @@
                 <th>Leg 2 (secondary)</th>
                 <th>Port</th>
                 <th>Allocated</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {#each leaseRows as r (r.senderId)}
                 <tr>
+                  <td>
+                    <span class="lease-status-badge lease-status-{r.liveStatus}"
+                          title="{r.liveStatus === 'active' ? 'Sender is registered and currently transmitting' :
+                                  r.liveStatus === 'inactive' ? 'Sender is registered but master_enable is false' :
+                                                                'Sender is no longer present in the NMOS registry'}">
+                      {r.liveStatus === 'active'   ? 'Active'   :
+                       r.liveStatus === 'inactive' ? 'Inactive' :
+                                                     'Missing'}
+                    </span>
+                  </td>
                   <td>
                     <span class="lease-cat-badge lease-cat-{r.category}">{categoryLabel(r.category)}</span>
                     {#if r.channels > 0 && r.category !== "video"}
@@ -609,13 +891,20 @@
                   <td class="vendor-mono">{r.secondaryIp || "—"}</td>
                   <td class="vendor-mono">{r.port || "—"}</td>
                   <td><span class="lease-date">{fmtDate(r.createdAt)}</span></td>
+                  <td>
+                    <button class="btn btn-ghost btn-xs lease-release-btn"
+                            on:click={()=>askReleaseLease(r)}
+                            aria-label="Release lease" title="Release lease">
+                      <Icon src={Trash} />
+                    </button>
+                  </td>
                 </tr>
               {/each}
               {#if leaseRows.length === 0}
-                <tr><td colspan="7" class="vendor-empty">
+                <tr><td colspan="9" class="vendor-empty">
                   {Object.keys(leaseSnapshot.leases || {}).length === 0
-                    ? "Noch keine Leases vergeben."
-                    : "Keine Treffer für den aktuellen Filter."}
+                    ? "No leases allocated yet."
+                    : "No leases match the current filter."}
                 </td></tr>
               {/if}
             </tbody>
@@ -628,10 +917,10 @@
     <section class="setup-section">
       <h3>Vendor Profiles</h3>
       <p class="setup-section-hint">
-        Wie das „Open device web UI"-Symbol auf der Details-Seite gebaut wird, hängt vom Hersteller ab.
-        Profile werden in Reihenfolge geprüft, das <strong>erste</strong> passende gewinnt.
-        Ein Profil matcht, wenn einer der Label-Einträge als Substring im Node-Label oder
-        in der Description vorkommt. Mehrere Labels durch <code>,</code> trennen.
+        How the „Open device web UI" link on the Details page is built depends on the vendor.
+        Profiles are checked top-to-bottom, the <strong>first</strong> match wins.
+        A profile matches when one of its label entries appears as a substring in the node label
+        or description. Separate multiple labels with <code>,</code>.
       </p>
 
       <div class="vendor-table-wrap">
@@ -659,7 +948,7 @@
                          bind:value={p.labels} on:input={markDirty} />
                 </td>
                 <td>
-                  <select class="select select-bordered select-sm" bind:value={p.protocol} on:change={markDirty}>
+                  <select class="select select-bordered select-sm vendor-proto" bind:value={p.protocol} on:change={markDirty}>
                     <option value="http">http</option>
                     <option value="https">https</option>
                   </select>
@@ -684,7 +973,7 @@
               </tr>
             {/each}
             {#if formProfiles.length === 0}
-              <tr><td colspan="6" class="vendor-empty">Keine Vendor-Profile definiert.</td></tr>
+              <tr><td colspan="6" class="vendor-empty">No vendor profiles defined.</td></tr>
             {/if}
           </tbody>
         </table>
@@ -715,21 +1004,158 @@
         <summary>Detected devices ({detectedDevices.length})</summary>
         <table class="vendor-detected-table">
           <thead>
-            <tr><th>Label</th><th>Matches profile</th></tr>
+            <tr><th>Label</th><th>Matches profile</th><th>Web-UI link</th></tr>
           </thead>
           <tbody>
             {#each detectedDevices as d (d.id)}
               <tr>
                 <td>{d.label}</td>
                 <td>{d.match || "—"}</td>
+                <td class="vendor-mono">
+                  {#if d.url}
+                    <a href={d.url} target="_blank" rel="noopener noreferrer">{d.url}</a>
+                  {:else}
+                    —
+                  {/if}
+                </td>
               </tr>
             {/each}
             {#if detectedDevices.length === 0}
-              <tr><td colspan="2" class="vendor-empty">Keine Nodes von NMOS-Registry empfangen.</td></tr>
+              <tr><td colspan="3" class="vendor-empty">No nodes received from the NMOS registry.</td></tr>
             {/if}
           </tbody>
         </table>
       </details>
+    </section>
+
+
+    <section class="setup-section">
+      <h3>Push Names to DNS</h3>
+      <p class="setup-section-hint">
+        Publishes each NMOS node as a host_override on the pfSense
+        <strong>DNS Resolver</strong> (Unbound) via the
+        <a href="https://pfrest.org/api-docs/" target="_blank" rel="noopener">pfRest</a> API.
+        After every batch <code>/api/v2/services/dns_resolver/apply</code> is called so
+        changes go live immediately.
+      </p>
+      <p class="setup-section-hint">
+        The hostname is the node label (or the device alias if you set one on the
+        Crosspoint / Details page); the IP comes from the node's <code>href</code>.
+        Entries are tagged <code>NMOS-Crosspoint:&lt;nodeId&gt;</code> in their description so
+        the service only ever touches the entries it owns — manually-configured
+        overrides are left untouched. Deleting a device with the Forget button also
+        removes its DNS entry.
+      </p>
+
+      <div class="setup-form">
+        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
+          <span class="label-text">Enable DNS Push</span>
+          <input type="checkbox" class="toggle" bind:checked={formDnsEnabled} on:change={markDirty} />
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:8px;">
+        <label class="setup-field">
+          <span class="setup-label">DNS Server IP / Host</span>
+          <input type="text" class="input input-bordered" placeholder="10.0.0.1"
+                 bind:value={formDnsServerIp} on:input={markDirty} />
+        </label>
+        <label class="setup-field setup-field-narrow">
+          <span class="setup-label">Port</span>
+          <input type="number" class="input input-bordered" min="1" max="65535"
+                 bind:value={formDnsServerPort} on:input={markDirty} />
+        </label>
+        <label class="setup-field setup-field-narrow">
+          <span class="setup-label">Protocol</span>
+          <select class="select select-bordered" bind:value={formDnsProtocol} on:change={markDirty}>
+            <option value="https">https</option>
+            <option value="http">http</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:8px;">
+        <label class="setup-field">
+          <span class="setup-label">API Key</span>
+          <input type="password" class="input input-bordered"
+                 placeholder={formDnsApiKeySet ? "•••••••• (stored — leave blank to keep)" : "Paste the pfRest API key"}
+                 autocomplete="new-password"
+                 bind:value={formDnsApiKey} on:input={markDirty} />
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:8px;">
+        <label class="setup-field">
+          <span class="setup-label">Domain (hostname suffix)</span>
+          <input type="text" class="input input-bordered" placeholder="local"
+                 bind:value={formDnsDomain} on:input={markDirty} />
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:8px;">
+        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
+          <span class="label-text">Allow self-signed / invalid TLS certificate</span>
+          <input type="checkbox" class="toggle" bind:checked={formDnsInsecureTLS} on:change={markDirty} />
+        </label>
+      </div>
+    </section>
+
+
+    <section class="setup-section">
+      <h3>Change Login &amp; Password</h3>
+      <p class="setup-section-hint">
+        Updates the admin user stored in <code>./config/users.json</code>.
+        You can only edit your own account, and you must know the current
+        password. After a change, the server will ask you to log in again
+        with the new credentials.
+      </p>
+
+      <div class="setup-form">
+        <label class="setup-field">
+          <span class="setup-label">Current username</span>
+          <input type="text" class="input input-bordered"
+                 bind:value={formCredCurrentUser} autocomplete="username" />
+        </label>
+        <label class="setup-field">
+          <span class="setup-label">Current password</span>
+          <input type="password" class="input input-bordered" autocomplete="current-password"
+                 bind:value={formCredCurrentPass} />
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:8px;">
+        <label class="setup-field">
+          <span class="setup-label">New username</span>
+          <input type="text" class="input input-bordered" autocomplete="username"
+                 bind:value={formCredNewUser} />
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:8px;">
+        <label class="setup-field">
+          <span class="setup-label">New password</span>
+          <input type="password" class="input input-bordered" autocomplete="new-password"
+                 placeholder="(leave blank to keep current)"
+                 bind:value={formCredNewPass} />
+        </label>
+        <label class="setup-field">
+          <span class="setup-label">Repeat new password</span>
+          <input type="password" class="input input-bordered" autocomplete="new-password"
+                 bind:value={formCredNewPass2} />
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:14px; align-items:center;">
+        <button class="btn btn-primary" on:click={saveCredentials} disabled={credSaving}>
+          {#if credSaving}Saving…{:else}Update credentials{/if}
+        </button>
+        {#if credSuccess}
+          <span class="text-success">{credSuccess}</span>
+        {/if}
+        {#if credError}
+          <span class="text-error">{credError}</span>
+        {/if}
+      </div>
     </section>
 
 
@@ -742,4 +1168,56 @@
   </div>
 </div>
 
+
+<dialog bind:this={autoMulticastModal} class="modal">
+  <div class="modal-box" style="max-width: 640px;">
+    <h3 class="font-bold text-lg">Enable Multicast DHCP</h3>
+    <p style="margin-top:8px;">
+      Multicast DHCP will now manage multicast addresses for every new active sender.
+      What should happen with senders that are <strong>currently active</strong>?
+    </p>
+    <div class="auto-mc-choice">
+      <button class="btn btn-primary auto-mc-btn" on:click={()=>autoMcChoose(true)}>
+        <span class="auto-mc-title">Keep current IPs</span>
+        <span class="auto-mc-hint">Adopt each sender's existing destination IP as its lease. No PATCH is sent, no stream is interrupted. Recommended for live systems.</span>
+      </button>
+      <button class="btn auto-mc-btn" on:click={()=>autoMcChoose(false)}>
+        <span class="auto-mc-title">Reallocate from pool</span>
+        <span class="auto-mc-hint">Force every active sender onto a fresh pool address and re-execute every existing receiver subscription so they follow the new IPs. Brief stream interruption per sender while the PATCH lands.</span>
+      </button>
+    </div>
+    <div class="modal-action">
+      <button on:click={autoMcCancel} class="btn btn-ghost">Cancel</button>
+    </div>
+  </div>
+</dialog>
+
+
+<dialog bind:this={releaseModal} class="modal">
+  <div class="modal-box">
+    <form method="dialog">
+      <button on:click={cancelReleaseLease} class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+    </form>
+    <h3 class="font-bold text-lg">Release multicast lease?</h3>
+    {#if releaseTarget}
+      <p style="margin-top:6px;">
+        <strong>{releaseTarget.deviceLabel || releaseTarget.senderId}</strong> —
+        <span class="vendor-mono">{releaseTarget.primaryIp} / {releaseTarget.secondaryIp}</span>
+        ({categoryLabel(releaseTarget.category)})
+      </p>
+      <p style="margin-top:10px; color: var(--fallback-bc, oklch(var(--bc) / 0.7));">
+        The allocated pair will return to the pool. If the sender is still
+        online and Multicast DHCP is enabled, it will receive a fresh pair
+        on the next reconcile cycle.
+      </p>
+    {/if}
+    {#if releaseError}
+      <p class="text-error" style="margin-top:8px;">{releaseError}</p>
+    {/if}
+    <div class="modal-action">
+      <button on:click={cancelReleaseLease} class="btn">Cancel</button>
+      <button on:click={confirmReleaseLease} class="btn btn-error">Release</button>
+    </div>
+  </div>
+</dialog>
 

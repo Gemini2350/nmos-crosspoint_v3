@@ -1332,16 +1332,17 @@ class CrosspointUpdateThread{
     }
 
     getRandomMulticastAddress(index:number,type:string){
-        let mode = "primary"
-        if(index == 0){
-            mode = "primary"
-        }else if(index = 2){
-            mode = "secondary"
-        }else{
-            return "";
-        }
+        // Legacy random allocator — kept for the rare "given multicast clashes
+        // with a live device" fallback path. We now use the single shared
+        // pool (`settings.multicastRange`) for all senders; `type` and
+        // `index`/`mode` no longer change which range we draw from.
+        void type;
+        void index;
         try{
-            let range = this.settings.multicastRanges[type][mode];
+            let range = (this.settings && typeof this.settings.multicastRange === "string")
+                ? this.settings.multicastRange
+                : "";
+            if(!range){ return ""; }
             let ip = range.split("/")[0].split(".");
             let mask = Number.parseInt(range.split("/")[1]);
 

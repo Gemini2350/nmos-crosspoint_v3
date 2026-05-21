@@ -3,6 +3,7 @@ import { LoggedError, SyncLog } from "./syncLog";
 import { error } from "console";
 import { NmosRegistryConnector } from "./nmosConnector";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
+import { DnsPushService } from "./dnsPushService";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -111,17 +112,31 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             if(id.startsWith("nmos_")){
                 let nmosId = id.slice(5);
 
-                // Record the manual edit in the Lease Manager so it doesn't
-                // immediately reconcile our user-typed value back to the
-                // previously-allocated lease address.
+                // 1) Update the Lease Manager first so it knows about the
+                //    manual override (or about an explicit "clear → reset").
+                // 2) Then rewrite each leg's multicast field to the effective
+                //    address so the actual PATCH always carries a destination.
                 try{
                     if(MulticastLeaseManager.instance && Array.isArray(data?.legs)){
+                        let mgr = MulticastLeaseManager.instance;
                         data.legs.forEach((l:any) => {
                             if(typeof l.index !== "number") return;
-                            let ip = (typeof l.multicast === "string") ? l.multicast.trim() : "";
-                            let port = (typeof l.port === "number" && l.port > 0) ? l.port : undefined;
-                            if(ip || port !== undefined){
-                                MulticastLeaseManager.instance.recordManualEdit(nmosId, l.index, ip, port);
+                            const hasIpField = (typeof l.multicast === "string");
+                            const rawIp = hasIpField ? l.multicast.trim() : undefined;
+                            const port = (typeof l.port === "number" && l.port > 0) ? l.port : undefined;
+
+                            // Update lease: pass undefined when caller didn't
+                            // touch the IP, empty string for an explicit clear,
+                            // or the typed IP for a new override.
+                            mgr.recordManualEdit(nmosId, l.index, rawIp, port);
+
+                            // Substitute leg.multicast with the now-effective IP
+                            // so setFlowMulticast always has something to patch.
+                            // If no lease exists (auto-allocation disabled), we
+                            // leave the user's value untouched.
+                            const eff = mgr.getEffectiveIp(nmosId, l.index);
+                            if(eff){
+                                l.multicast = eff;
                             }
                         });
                     }
@@ -153,6 +168,46 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                         if(senderIds.length > 0 && MulticastLeaseManager.instance){
                             MulticastLeaseManager.instance.releaseLeases(senderIds);
                         }
+
+                        // DNS Push: also drop the DNS entry for the node that
+                        // backs this device. Only valid for nmos_<deviceId>
+                        // groups (grouphint-derived devices don't map 1:1 to a
+                        // single node).
+                        try{
+                            if(DnsPushService.instance && typeof dev.id === "string" && dev.id.startsWith("nmos_")){
+                                let nmosDevId = dev.id.slice(5);
+                                let nmosDev:any = this.nmosState?.devices?.[nmosDevId];
+                                if(nmosDev && nmosDev.node_id){
+                                    DnsPushService.instance.removeNode(nmosDev.node_id).catch(()=>{});
+                                }
+                            }
+                        }catch(e:any){
+                            SyncLog.log("warn", "DNS Push", "Could not remove DNS entry on delete: " + e.message);
+                        }
+                    }
+                }
+
+                // Single sender/receiver delete: release its multicast lease
+                // (sender only — receivers don't own a lease). The worker
+                // thread does the actual removal from the crosspoint shadow.
+                if(data && data.action === "delete" && data.devId && data.flowId){
+                    try{
+                        let dev = this.crosspointState.devices.find((d:any) => d.id === data.devId);
+                        if(dev){
+                            let isSender = false;
+                            for(let type of Object.keys(dev.senders || {})){
+                                if((dev.senders[type] || []).find((s:any) => s && s.id === data.flowId)){
+                                    isSender = true; break;
+                                }
+                            }
+                            if(isSender && MulticastLeaseManager.instance){
+                                let nmosId = (typeof data.flowId === "string" && data.flowId.startsWith("nmos_"))
+                                    ? data.flowId.slice(5) : data.flowId;
+                                MulticastLeaseManager.instance.releaseLeases([nmosId]);
+                            }
+                        }
+                    }catch(e:any){
+                        SyncLog.log("warn", "Multicast Lease", "Could not release lease on sender delete: " + e.message);
                     }
                 }
             }catch(e:any){
@@ -173,8 +228,107 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             this.worker.postMessage(JSON.stringify({
                 changeAlias:{id:id, alias:alias}
             }));
+
+            // DNS Push: re-push the affected node so its host_override on the
+            // pfSense DNS forwarder picks up the new alias straight away,
+            // without waiting for the next NMOS node update. Empty alias
+            // falls back to the node label.
+            try{
+                if(DnsPushService.instance){
+                    let targets = this.resolveDnsNodesForCrosspointId(id);
+                    for(let t of targets){
+                        let displayName = (alias && alias.trim()) ? alias.trim() : (t.nodeLabel || "");
+                        if(t.nodeIp && displayName){
+                            DnsPushService.instance.scheduleNodePush(t.nodeId, displayName, t.nodeIp);
+                        }
+                    }
+                }
+            }catch(e){}
+
             resolve({});
         });
+    }
+
+    /**
+     * Map a crosspoint id (device, sender or receiver) to the NMOS node(s)
+     * it belongs to, so the DNS Push hook can re-publish the right entries
+     * on an alias change.
+     *
+     *   nmos_<deviceId>      → exactly one node
+     *   nmosgrp_<hash>       → the node of any sender belonging to the group
+     *   nmos_<senderId>      → the node behind the sender's device
+     *   nmos_<receiverId>    → the node behind the receiver's device
+     *
+     * Returns an empty list when nothing can be resolved (e.g. shadow
+     * devices, unknown ids, NMOS state not yet hydrated).
+     */
+    private resolveDnsNodesForCrosspointId(id:string): { nodeId:string, nodeIp:string, nodeLabel:string }[] {
+        let out:{ nodeId:string, nodeIp:string, nodeLabel:string }[] = [];
+        try{
+            if(!this.nmosState) return out;
+
+            // Helper: turn a deviceId into a {nodeId, nodeIp, nodeLabel} triple.
+            const fromDevice = (devId:string) => {
+                try{
+                    let dev:any = this.nmosState.devices?.[devId];
+                    let nodeId = dev?.node_id;
+                    if(!nodeId) return null;
+                    let node:any = this.nmosState.nodes?.[nodeId];
+                    let ip = "";
+                    try{
+                        if(node && typeof node.href === "string" && node.href){
+                            ip = new URL(node.href).hostname;
+                        }
+                    }catch(e){}
+                    return { nodeId, nodeIp: ip, nodeLabel: node?.label || "" };
+                }catch(e){ return null; }
+            };
+            const pushUnique = (t:{nodeId:string, nodeIp:string, nodeLabel:string} | null) => {
+                if(!t || !t.nodeId) return;
+                if(out.find(x => x.nodeId === t.nodeId)) return;
+                out.push(t);
+            };
+
+            if(typeof id !== "string") return out;
+
+            // Crosspoint device id
+            if(id.startsWith("nmos_")){
+                let raw = id.slice(5);
+                // Could be a device id directly...
+                if(this.nmosState.devices?.[raw]){
+                    pushUnique(fromDevice(raw));
+                }
+                // ...or a sender / receiver id whose device we look up.
+                else if(this.nmosState.senders?.[raw]){
+                    pushUnique(fromDevice(this.nmosState.senders[raw].device_id));
+                }
+                else if(this.nmosState.receivers?.[raw]){
+                    pushUnique(fromDevice(this.nmosState.receivers[raw].device_id));
+                }
+                return out;
+            }
+
+            // Grouphint group — look at one of its senders to find the device.
+            if(id.startsWith("nmosgrp_")){
+                let xpDev = this.crosspointState.devices.find((d:any) => d.id === id);
+                if(!xpDev) return out;
+                for(let type of Object.keys(xpDev.senders || {})){
+                    for(let s of (xpDev.senders[type] || [])){
+                        if(!s || typeof s.id !== "string") continue;
+                        if(!s.id.startsWith("nmos_")) continue;
+                        let senderId = s.id.slice(5);
+                        let sender:any = this.nmosState.senders?.[senderId];
+                        if(sender?.device_id){
+                            pushUnique(fromDevice(sender.device_id));
+                            // All senders in a grouphint group share one
+                            // device → one node, so we're done.
+                            return out;
+                        }
+                    }
+                }
+            }
+        }catch(e){}
+        return out;
     }
 
     toggleHidden(id:string){
@@ -476,10 +630,15 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     }
                 }
 
-                // If the source sender is currently inactive, we try to activate
-                // it on-the-fly. First make sure its multicast isn't already
+                // If the source sender is currently inactive, we MAY try to
+                // activate it on-the-fly. Only do so when the operator opted
+                // into this behaviour via the Setup page — many control rooms
+                // gate sender activation through a separate workflow and don't
+                // want a stray click on the Crosspoint matrix to push a signal
+                // on the wire. First make sure its multicast isn't already
                 // claimed by another active sender on the same leg.
-                if(src && src.id.startsWith("nmos_") && senderInfo && senderInfo.active === false){
+                let autoActivate = !!(this.settings && this.settings.autoActivateInactiveSender);
+                if(autoActivate && src && src.id.startsWith("nmos_") && senderInfo && senderInfo.active === false){
                     let nmosId = src.id.slice(5);
                     let conflict = NmosRegistryConnector.instance.findMulticastConflict(nmosId);
                     if(conflict){
@@ -493,6 +652,33 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     SyncLog.log("info", "connect_crosspoint", "Auto-activating inactive sender before connect: " + src.id);
                     try{
                         await NmosRegistryConnector.instance.enableFlow(nmosId, false);
+                        // The SDP we fetched a moment ago belonged to the
+                        // inactive sender — it has only session-level lines
+                        // (`v=0`, `o=…`, `s=…`, `c=…`, …) but no `m=` media
+                        // section yet, so the receiver would reject the
+                        // transport_file with HTTP 400
+                        // "Could not parse transport file". The device needs
+                        // a moment to (re)publish a real SDP after activation.
+                        // Poll the manifest until we see an `m=` line, with a
+                        // safety timeout, then continue with the connect.
+                        let freshInfo: CrosspointConnectionSenderInfo | null = null;
+                        const deadline = Date.now() + 4000;
+                        while(Date.now() < deadline){
+                            await sleep(300);
+                            try{
+                                freshInfo = await NmosRegistryConnector.instance.connectionGetSenderInfo(nmosId);
+                            }catch(e){ freshInfo = null; }
+                            if(freshInfo && freshInfo.manifestFile && /\r?\nm=/.test(freshInfo.manifestFile)){
+                                break;
+                            }
+                        }
+                        if(freshInfo && freshInfo.manifestFile && /\r?\nm=/.test(freshInfo.manifestFile)){
+                            senderInfo = freshInfo;
+                        }else{
+                            SyncLog.log("warning", "connect_crosspoint",
+                                "Auto-activated sender " + src.id + " but its SDP still has no media section after 4s — patching with what we have.");
+                            if(freshInfo){ senderInfo = freshInfo; }
+                        }
                         // mark the locally-cached senderInfo as active so downstream
                         // code doesn't take another inactive-path.
                         senderInfo.active = true;
@@ -531,10 +717,16 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     }
 
 
-    reconnectOnChangesFromNmos( senderId:string ){
-        if(!this.settings.reconnectOnSdpChanges){
-            return;
-        }
+    /**
+     * Find every receiver currently connected to the given sender and
+     * re-execute the connection. Used whenever the sender's multicast
+     * (or any other SDP-relevant field) changes — without this, receivers
+     * would keep listening to the old destination IP / port.
+     *
+     * Always runs (no settings gate). Caller is responsible for triggering
+     * only when an actual change happened.
+     */
+    public reconnectReceiversOfSender( senderId:string ){
         let nmos_senderId = "nmos_"+senderId
         let src:CrosspointFlow = null;
         for(let dev of this.crosspointState.devices){
@@ -547,20 +739,38 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 }
             }
         }
+        if(!src) return;
 
-        if(src){
-            for(let dev of this.crosspointState.devices){
-                for(let type of Object.keys(dev.receivers)){
-                    for( let flow of dev.receivers[type]){
-                        if(flow.connectedFlow == nmos_senderId){
-                           let dst = flow;
-                           this.executeConnection(src,dst).then(()=>{}).catch(()=>{});
-                           SyncLog.info("crosspoint","Executed reconnection on SDP Changed: " + src.id +" > "+dst.id);
-                        }
+        for(let dev of this.crosspointState.devices){
+            for(let type of Object.keys(dev.receivers)){
+                for( let flow of dev.receivers[type]){
+                    if(flow.connectedFlow == nmos_senderId){
+                       let dst = flow;
+                       this.executeConnection(src,dst).then(()=>{}).catch(()=>{});
+                       SyncLog.log("info", "crosspoint", "Reconnecting receiver " + dst.id + " because sender " + src.id + " transport params changed.");
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Called when the SDP of a sender changed (detected by manifest re-fetch
+     * in nmosConnector — covers anything: multicast IP, port, channel count,
+     * video format, colorimetry, transfer characteristic, …).
+     *
+     * Gated by `settings.reconnectReceiversOnSenderChange` (default true).
+     * The legacy `settings.reconnectOnSdpChanges` flag is still respected for
+     * back-compat: if it's explicitly set to true, reconnects fire even when
+     * the new toggle is off.
+     */
+    reconnectOnChangesFromNmos( senderId:string ){
+        let auto   = (this.settings && this.settings.reconnectReceiversOnSenderChange !== false);
+        let legacy = !!(this.settings && this.settings.reconnectOnSdpChanges);
+        if(!auto && !legacy){
+            return;
+        }
+        this.reconnectReceiversOfSender(senderId);
     }
 
     updateFromNmos(state:any){

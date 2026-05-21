@@ -8,11 +8,10 @@
   import ServerConnector from "./lib/ServerConnector/ServerConnectorService";
   import OverlayMenuService from "./lib/OverlayMenu/OverlayMenuService";
 
-  import { Icon, Squares2x2, Share, ListBullet, WrenchScrewdriver, LockOpen, LockClosed  } from "svelte-hero-icons";
+  import { Icon, Squares2x2, ListBullet, WrenchScrewdriver, LockOpen, LockClosed  } from "svelte-hero-icons";
 
 
   import Crosspoint from './routes/crosspoint.svelte';
-  import Topology from './routes/topology.svelte';
   import Details from './routes/details.svelte';
   import Setup from './routes/setup.svelte';
   import Logging from './routes/logging.svelte';
@@ -28,7 +27,6 @@
   let routes = [
         {label:"Crosspoint", icon:Squares2x2, link:"/crosspoint"},
         {label:"Details", icon:ListBullet, link:"/details"},
-        {label:"Topology", icon:Share, link:"/topology"},
 
         {label:"Setup",  icon:WrenchScrewdriver, link:"/setup"},
     ];
@@ -82,16 +80,70 @@
     }
 
     let uiConfigSync:Subject<any> ;
+
+    // ----- Global Dev / TX / RX availability counter -----
+    // Subscribes to the `crosspoint` sync object so the numbers update in
+    // real-time as devices come and go from the NMOS registry. The counter
+    // sits at the very top of the right-hand nav so it's visible from every
+    // page (Crosspoint, Details, Setup, …).
+    let crosspointSync:Subject<any>;
+    let countAvailDev = 0, countTotalDev = 0;
+    let countAvailTx  = 0, countTotalTx  = 0;
+    let countAvailRx  = 0, countTotalRx  = 0;
+    function recomputeAvailability(state:any){
+      let aDev = 0, tDev = 0;
+      let aTx  = 0, tTx  = 0;
+      let aRx  = 0, tRx  = 0;
+      try{
+        let devs = (state && Array.isArray(state.devices)) ? state.devices : [];
+        for(let d of devs){
+          if(!d) continue;
+          tDev++;
+          if(d.available) aDev++;
+          for(let type of Object.keys(d.senders || {})){
+            for(let s of (d.senders[type] || [])){
+              if(!s) continue;
+              tTx++;
+              if(s.available) aTx++;
+            }
+          }
+          for(let type of Object.keys(d.receivers || {})){
+            for(let r of (d.receivers[type] || [])){
+              if(!r) continue;
+              tRx++;
+              if(r.available) aRx++;
+            }
+          }
+        }
+      }catch(e){}
+      countAvailDev = aDev; countTotalDev = tDev;
+      countAvailTx  = aTx;  countTotalTx  = tTx;
+      countAvailRx  = aRx;  countTotalRx  = tRx;
+    }
+    function counterStateClass(avail:number, total:number){
+      if(total === 0) return "nav-counter-row-neutral";
+      if(avail >= total) return "nav-counter-row-success";
+      if(avail === 0)    return "nav-counter-row-error";
+      return "nav-counter-row-warn";
+    }
+
     onDestroy(() => {
       uiConfigSync.unsubscribe();
       ServerConnector.unsync("uiconfig");
+      try{ crosspointSync && crosspointSync.unsubscribe(); }catch(e){}
+      try{ ServerConnector.unsync("crosspoint"); }catch(e){}
     });
     onMount(()=>{
-      
+
       uiConfigSync = ServerConnector.sync("uiconfig")
       uiConfigSync.subscribe((obj:any)=>{
         uiConfig = obj;
         routes = [...routes]
+      });
+
+      crosspointSync = ServerConnector.sync("crosspoint");
+      crosspointSync.subscribe((obj:any)=>{
+        recomputeAvailability(obj);
       });
       
       ServerConnector.connectionState.subscribe((state)=>{
@@ -178,7 +230,6 @@
     <Route path="/crosspoint"><Crosspoint bind:this="{crosspointComponent}" autoTake={autoTake} on:updateGlobalTake={(e)=>{updateGlobalTake(e)}}></Crosspoint></Route>
 
     <Route path="/details" component={Details}/>
-    <Route path="/topology" component={Topology}/>
 
     <Route path="/debug" component={Debug}/>
     <Route path="/logging" component={Logging}/>
@@ -194,6 +245,24 @@
 
     </div>
     <nav class="browser-nav menu bg-base-200">
+      <!-- Global availability counter — sits above the Crosspoint icon so the
+           current online/total numbers are visible from every page. -->
+      <div class="nav-counter"
+           use:menu.tooltip
+           data-tooltip="Online / total known — Devices · Senders · Receivers">
+        <div class="nav-counter-row {counterStateClass(countAvailDev, countTotalDev)}">
+          <span class="nav-counter-label">Dev</span>
+          <span class="nav-counter-value">{countAvailDev}/{countTotalDev}</span>
+        </div>
+        <div class="nav-counter-row {counterStateClass(countAvailTx, countTotalTx)}">
+          <span class="nav-counter-label">TX</span>
+          <span class="nav-counter-value">{countAvailTx}/{countTotalTx}</span>
+        </div>
+        <div class="nav-counter-row {counterStateClass(countAvailRx, countTotalRx)}">
+          <span class="nav-counter-label">RX</span>
+          <span class="nav-counter-value">{countAvailRx}/{countTotalRx}</span>
+        </div>
+      </div>
       <ul class="browser-nav-full">
         {#each routes as route}
           {#if !isDisabledModule(route.link)}

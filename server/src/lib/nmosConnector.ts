@@ -19,8 +19,8 @@ import * as jsonpatch from 'fast-json-patch';
 
 import * as sdpTransform from 'sdp-transform';
 import { CrosspointAbstraction, CrosspointConnectionSenderInfo } from "./crosspointAbstraction";
-import { Topology } from "./topology";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
+import { DnsPushService } from "./dnsPushService";
 
 const fs = require("fs");
 
@@ -228,7 +228,6 @@ export class NmosRegistryConnector {
             this.updateCrosspointTimer = null;
             if(CrosspointAbstraction.instance){
                 CrosspointAbstraction.instance.updateFromNmos(this.nmosState);
-                Topology.instance.updateDevicesFromNmos(this.nmosState);
             }
         },100);
     }
@@ -383,7 +382,26 @@ export class NmosRegistryConnector {
                                 }
 
                                 this.nmosState[type][g.path] = postData;
-                                
+
+                                // DNS Push: whenever a node's label or href
+                                // changes, schedule a push. Debounced inside
+                                // the service so a burst of updates produces
+                                // a single API batch.
+                                if(type === "nodes"){
+                                    try{
+                                        let ip = "";
+                                        try{
+                                            if(typeof postData.href === "string" && postData.href){
+                                                ip = new URL(postData.href).hostname;
+                                            }
+                                        }catch(e){}
+                                        let displayName = this.resolveDnsDisplayName(g.path, postData.label || "");
+                                        if(DnsPushService.instance && ip && displayName){
+                                            DnsPushService.instance.scheduleNodePush(g.path, displayName, ip);
+                                        }
+                                    }catch(e){}
+                                }
+
                             }
 
                         }
@@ -392,6 +410,15 @@ export class NmosRegistryConnector {
                         try {
                             if(this.nmosState[type][g.path]["_sourceVersion"] == version){
                                 delete this.nmosState[type][g.path];
+                                // DNS Push: a node that's gone from the
+                                // registry should not keep a stale DNS entry.
+                                if(type === "nodes"){
+                                    try{
+                                        if(DnsPushService.instance){
+                                            DnsPushService.instance.removeNode(g.path).catch(()=>{});
+                                        }
+                                    }catch(e){}
+                                }
                                 changes = true;
                             }
                         } catch (e) {}
@@ -697,6 +724,175 @@ export class NmosRegistryConnector {
 
     reconnectOnChanges(senderId:string){
         CrosspointAbstraction.instance.reconnectOnChangesFromNmos(senderId);
+    }
+
+    /**
+     * Pick the hostname we want to publish to DNS for this node. If the user
+     * has set a custom alias on any crosspoint device that belongs to this
+     * node, that alias wins. Otherwise the node label is used.
+     *
+     * Handles both flavours of crosspoint device id:
+     *   nmos_<deviceId>    → direct device lookup
+     *   nmosgrp_<hash>     → look at one of the group's senders to find the
+     *                        backing NMOS device.
+     */
+    resolveDnsDisplayName(nodeId:string, fallback:string): string {
+        try{
+            let xp = CrosspointAbstraction.instance;
+            if(!xp || !xp.crosspointState || !Array.isArray(xp.crosspointState.devices)){
+                return fallback || "";
+            }
+            for(let xd of xp.crosspointState.devices){
+                if(!xd || typeof xd.id !== "string") continue;
+                let alias = (typeof xd.alias === "string") ? xd.alias : "";
+                let name  = (typeof xd.name  === "string") ? xd.name  : "";
+                if(!alias || alias === name) continue;  // not user-customised
+
+                let xdNodeId = "";
+                if(xd.id.startsWith("nmos_")){
+                    let devId = xd.id.slice(5);
+                    let dev:any = this.nmosState.devices[devId];
+                    if(dev) xdNodeId = dev.node_id || "";
+                }else if(xd.id.startsWith("nmosgrp_")){
+                    // All senders in a grouphint group belong to one device.
+                    for(let type of Object.keys(xd.senders || {})){
+                        for(let s of (xd.senders[type] || [])){
+                            if(!s || typeof s.id !== "string") continue;
+                            if(!s.id.startsWith("nmos_")) continue;
+                            let sender:any = this.nmosState.senders[s.id.slice(5)];
+                            if(sender && sender.device_id){
+                                let dev:any = this.nmosState.devices[sender.device_id];
+                                if(dev) xdNodeId = dev.node_id || "";
+                                break;
+                            }
+                        }
+                        if(xdNodeId) break;
+                    }
+                }
+
+                if(xdNodeId === nodeId){
+                    return alias;
+                }
+            }
+        }catch(e){}
+        return fallback || "";
+    }
+
+    /**
+     * Walk every known NMOS sender and run the lease reconcile. Used as a
+     * one-off "force-allocate from pool" pass when Auto-Allocation is turned
+     * on and the user wants a fresh start. Always forces receivers to
+     * reconnect — otherwise they'd silently stay on the old IPs and the
+     * fresh allocation would only confuse the network.
+     */
+    public sweepAllSenders(){
+        try{
+            for(let senderId in this.nmosState.senders){
+                try{
+                    this.reconcileSenderWithLease(senderId, true);
+                }catch(e){}
+            }
+        }catch(e){}
+    }
+
+    /**
+     * Walk every active sender and adopt its *current* IS-05 destination IPs
+     * as the lease, instead of allocating new ones from the pool. Used when
+     * the user enables Auto-Allocation and wants to keep existing streams
+     * untouched. Falls back to a fresh allocation per-sender if adoption is
+     * not possible (no IP set yet, collision with another lease, etc.).
+     */
+    public adoptCurrentSenderIPs(){
+        let manager = MulticastLeaseManager.instance;
+        if(!manager) return;
+        try{
+            for(let senderId in this.nmosState.senders){
+                try{
+                    let sender = this.nmosState.senders[senderId];
+                    if(!sender) continue;
+                    let isActive = !!(sender.subscription && sender.subscription.active);
+                    if(!isActive) continue;
+                    if(manager.getLease(senderId)) continue;  // already has a lease
+
+                    let flow:any = this.nmosState.flows[sender.flow_id];
+                    if(!flow) continue;
+                    let source:any = this.nmosState.sources[flow.source_id];
+                    let mediaType:string = flow.media_type || "";
+                    let channels:number = 0;
+                    try{
+                        if(source && Array.isArray(source.channels)){
+                            channels = source.channels.length;
+                        }
+                    }catch(e){}
+
+                    let deviceLabel = "";
+                    let nodeId = "";
+                    try{
+                        let dev = this.nmosState.devices[sender.device_id];
+                        if(dev){ deviceLabel = dev.label || ""; nodeId = dev.node_id || ""; }
+                    }catch(e){}
+
+                    let activeData:any = (this.nmosState as any).senderActiveData?.[senderId];
+                    let primaryIp = "";
+                    let secondaryIp = "";
+                    let port = 5004;
+                    if(activeData && Array.isArray(activeData.transport_params)){
+                        let tp0 = activeData.transport_params[0];
+                        let tp1 = activeData.transport_params[1];
+                        if(tp0 && typeof tp0.destination_ip === "string"){ primaryIp = tp0.destination_ip; }
+                        if(tp1 && typeof tp1.destination_ip === "string"){ secondaryIp = tp1.destination_ip; }
+                        if(tp0 && typeof tp0.destination_port === "number" && tp0.destination_port > 0){
+                            port = tp0.destination_port;
+                        }
+                    }
+
+                    let lease:any = null;
+                    if(primaryIp){
+                        lease = manager.adoptLease({
+                            senderId, mediaType, channels, deviceLabel, nodeId, port,
+                            primaryIp, secondaryIp
+                        });
+                    }
+                    if(!lease){
+                        // Adoption failed (no current IP / collision) → fall
+                        // back to a fresh pool allocation for this one.
+                        manager.ensureLease({ senderId, mediaType, channels, deviceLabel, nodeId, port, isActive: true });
+                        // And reconcile so the device actually gets the new IP.
+                        this.reconcileSenderWithLease(senderId);
+                    }
+                    // Adopted leases match the device's current IPs, so no
+                    // PATCH is needed — reconcile would be a no-op.
+                }catch(e){}
+            }
+        }catch(e){}
+    }
+
+    /**
+     * Return a set of all destination IPs that NMOS-known senders currently
+     * advertise in their IS-05 active transport_params. Used by the Multicast
+     * Lease Manager to avoid handing out an address that's already in use on
+     * the wire, even by senders that don't yet have a managed lease.
+     *
+     * The `excludeSenderId` is excluded from the scan (so a sender being
+     * allocated doesn't conflict with its own previous addresses).
+     */
+    public getActiveSenderIps(excludeSenderId?: string): Set<string> {
+        const ips: Set<string> = new Set<string>();
+        try{
+            const data:any = (this.nmosState as any).senderActiveData;
+            if(!data) return ips;
+            for(const id in data){
+                if(excludeSenderId && id === excludeSenderId) continue;
+                const active = data[id];
+                if(!active || !Array.isArray(active.transport_params)) continue;
+                active.transport_params.forEach((tp:any) => {
+                    if(tp && typeof tp.destination_ip === "string" && tp.destination_ip){
+                        ips.add(tp.destination_ip);
+                    }
+                });
+            }
+        }catch(e){}
+        return ips;
     }
 
     /**
@@ -1217,6 +1413,7 @@ export class NmosRegistryConnector {
                 "transport_params": transportParams
             };
 
+            let meaningfulChange = false;
             data.legs.forEach((l)=>{
                 if(typeof l.index !== "number" || l.index < 0 || l.index >= legCount){
                     return;
@@ -1224,15 +1421,26 @@ export class NmosRegistryConnector {
                 let leg:any = {source_ip:"auto"};
                 if(l.multicast !== undefined && l.multicast !== null && l.multicast !== ""){
                     leg.destination_ip = l.multicast;
+                    meaningfulChange = true;
                 }
                 if(l.port !== undefined && l.port !== null && l.port !== ""){
                     let p = parseInt(""+l.port);
                     if(!isNaN(p) && p > 0 && p < 65536){
                         leg.destination_port = p;
+                        meaningfulChange = true;
                     }
                 }
                 patch.transport_params[l.index] = leg;
             });
+
+            // Last-line-of-defence: never send a PATCH that would only set
+            // `source_ip: "auto"` on every leg. Such a no-op PATCH causes the
+            // reconcile loop to fire forever because nothing on the device
+            // changes.
+            if(!meaningfulChange){
+                SyncLog.log("warn", "nmos", "Refusing to send empty setFlowMulticast PATCH for " + senderId + " (no destination_ip / destination_port).");
+                return;
+            }
 
             
 
@@ -1254,6 +1462,29 @@ export class NmosRegistryConnector {
                         this.getSenderActive("senders", {path:senderId, post:sender});
                         this.getSenderManifestData("senders", {path:senderId, post:sender});
                     },1000);
+
+                    // The sender's destination IP/port just changed. Any
+                    // receiver currently subscribed to it has the OLD
+                    // multicast in its IS-05 active transport_params and
+                    // would silently stop receiving. We can optionally
+                    // reconnect them so they pick up the new manifest.
+                    //
+                    // Gated by `settings.reconnectReceiversOnSenderChange`
+                    // (default true). The caller can force the reconnect by
+                    // setting `data._forceReconnect = true` — used by the
+                    // "Reallocate from pool" sweep when Auto-Allocation is
+                    // toggled on, where receivers must follow no matter what.
+                    let forceReconnect = !!(data && data._forceReconnect);
+                    let cfg = (this.settings && this.settings.reconnectReceiversOnSenderChange !== false);
+                    if(forceReconnect || cfg){
+                        setTimeout(()=>{
+                            try{
+                                if(CrosspointAbstraction.instance){
+                                    CrosspointAbstraction.instance.reconnectReceiversOfSender(senderId);
+                                }
+                            }catch(e){}
+                        }, 2000);
+                    }
 
 
                     return;
@@ -1287,8 +1518,12 @@ export class NmosRegistryConnector {
      * Ensure the given sender has a Multicast Lease and that its active IS-05
      * transport_params reflect the lease's addresses. Called after every
      * senderActiveData refresh. Idempotent and safe to call repeatedly.
+     *
+     * `forceReconnect` propagates through to setFlowMulticast so any
+     * resulting PATCH triggers receiver reconnects regardless of the
+     * `reconnectReceiversOnSenderChange` setting.
      */
-    private reconcileSenderWithLease(senderId:string){
+    private reconcileSenderWithLease(senderId:string, forceReconnect:boolean = false){
         let manager = MulticastLeaseManager.instance;
         if(!manager){ return; }
 
@@ -1325,7 +1560,8 @@ export class NmosRegistryConnector {
             }
         }catch(e){}
 
-        let lease = manager.ensureLease({ senderId, mediaType, channels, deviceLabel, nodeId, port });
+        let isActive = !!(sender.subscription && sender.subscription.active);
+        let lease = manager.ensureLease({ senderId, mediaType, channels, deviceLabel, nodeId, port, isActive });
         if(!lease){ return; }
 
         // Compare lease against current active transport_params
@@ -1334,9 +1570,15 @@ export class NmosRegistryConnector {
 
         let legs:any[] = [];
         active.transport_params.forEach((tp:any, idx:number)=>{
-            let desiredIp = (idx === 0) ? lease.primaryIp : (idx === 1 ? lease.secondaryIp : null);
-            if(desiredIp === null){ return; }
-            let needIp   = (tp && tp.destination_ip   !== desiredIp);
+            // Effective IP honours manual overrides — if the user set one,
+            // we reconcile towards that; otherwise to the reserved address.
+            let desiredIp = manager.getEffectiveIp(senderId, idx);
+            // Skip the leg entirely when we have nothing valid to push —
+            // prevents an infinite reconcile loop with empty destination_ip
+            // PATCHes if a lease somehow ended up with an empty IP.
+            if(!desiredIp || typeof desiredIp !== "string"){ return; }
+
+            let needIp   = (tp && tp.destination_ip !== desiredIp);
             let needPort = (tp && typeof tp.destination_port === "number" && tp.destination_port !== lease.port);
             if(needIp || needPort){
                 let legUpdate:any = { index: idx };
@@ -1350,7 +1592,7 @@ export class NmosRegistryConnector {
             SyncLog.log("info", "Multicast Lease", "Reconciling sender " + senderId + " to lease addresses.", {legs});
             // Fire-and-forget — the PATCH triggers another getSenderActive,
             // which lands here again but finds no diff and stops.
-            this.setFlowMulticast(senderId, { legs }).catch(()=>{});
+            this.setFlowMulticast(senderId, { legs, _forceReconnect: forceReconnect }).catch(()=>{});
         }
     }
 

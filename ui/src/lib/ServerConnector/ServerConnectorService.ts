@@ -529,27 +529,51 @@ class _ServerConnector {
     
       public sync(channel: string, id: string | number = 0): Subject<any> {
         this.resetAuthTimer();
-        if (!this.syncList.hasOwnProperty(channel + '_' + id)) {
-          this.syncList[channel + '_' + id] = {
+        const key = channel + '_' + id;
+        if (!this.syncList.hasOwnProperty(key)) {
+          this.syncList[key] = {
             channel: channel,
             observable: null,
             objectId: id,
             state: undefined,
             refCount: 0,
           };
-    
-          this.syncList[channel + '_' + id].observable = new Subject<any>();
+
+          // Internal fan-out Subject. NEVER returned to callers — only used
+          // by processSync() to push values to all per-caller wrappers.
+          this.syncList[key].observable = new Subject<any>();
           this.subscribeSync(channel, id);
         }
-        this.syncList[channel + '_' + id].refCount++;
-        if (this.syncList[channel + '_' + id].state) {
+        this.syncList[key].refCount++;
+
+        // Return a *per-caller* wrapper Subject that mirrors the internal
+        // shared Subject. Many components subscribe to the same channel and
+        // each one calls `wrapper.unsubscribe()` in onDestroy. Calling
+        // `.unsubscribe()` on an RxJS Subject permanently closes it, so if
+        // we returned the shared instance directly, one component leaving
+        // the route would silently kill updates for every other subscriber
+        // — the symptom being a blank GUI that only F5 fixes. With the
+        // wrapper, closing it only tears down that caller's forwarding;
+        // the shared Subject and all other consumers stay alive.
+        const inner = this.syncList[key].observable as Subject<any>;
+        const wrapper = new Subject<any>();
+        const fwd = inner.subscribe({
+          next:  (v:any) => { try { wrapper.next(v); }  catch(e){} },
+          error: (e:any) => { try { wrapper.error(e); } catch(e2){} },
+        });
+        const originalUnsub = wrapper.unsubscribe.bind(wrapper);
+        wrapper.unsubscribe = () => {
+          try { fwd.unsubscribe(); } catch(e){}
+          try { originalUnsub();   } catch(e){}
+        };
+
+        if (this.syncList[key].state) {
+          const cached = this.syncList[key].state;
           setTimeout(() => {
-            this.syncList[channel + '_' + id].observable.next(
-              this.syncList[channel + '_' + id].state
-            );
+            try { wrapper.next(cached); } catch(e){}
           }, 0);
         }
-        return this.syncList[channel + '_' + id].observable;
+        return wrapper;
       }
       public unsync(channel: string, id: string | number = 0) {
         try {
