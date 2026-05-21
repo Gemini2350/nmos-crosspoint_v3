@@ -1,6 +1,6 @@
 # NMOS Crosspoint
 
-NMOS Crosspoint is a web-based control panel for **NMOS** **ST 2110 / AES67** media networks. It shows every device on your network, lets you route senders to receivers like a classic crosspoint, takes care of multicast addresses for you, and keeps things tidy with little touches like vendor-specific Web-UI links, DNS hostname registration and PTP health hints.
+NMOS Crosspoint is a web-based  **NMOS** Controller for **ST 2110 / AES67** media networks. It shows every device on your network, lets you route senders to receivers like a classic crosspoint, takes care of multicast addresses for you, and keeps things tidy with little touches like vendor-specific Web-UI links, DNS hostname registration and PTP health hints.
 
 ![Crosspoint matrix](Screenshots/Screenshot%202026-05-22%20at%2000.58.10.png)
 
