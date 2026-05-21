@@ -16,8 +16,9 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 - **Manual multicast editing.** Each sender's leg can be overridden with a custom address on the Details page; clearing the field falls back to the DHCP-reserved one. Duplicate-multicast detection runs across every active sender on the network. The offending leg is flagged in the UI so you can spot the conflict immediately.
 
 ![Duplicate-multicast detection and per-leg editing](Screenshots/Screenshot%202026-05-22%20at%2001.33.07.png)
-- **Live device overview.** Every node, device, sender and receiver from the NMOS registry, in real time updated via Websocket Connection from the Registry. Status dots show whether a device is online and locked to your house PTP. 
-- **Forget and Hide.** Remove offline devices or individual offline senders / receivers; hide flows you don't want to see in the matrix without losing the device.
+- **Live device overview.** Every node, device, sender and receiver from the NMOS registry, in real time updated via Websocket Connection from the Registry. Status dots show whether a device is online and locked to your house PTP.
+- **Hide devices.** Hide flows you don't want to see in the matrix without losing the device.
+- **Offline devices.** Crosspoint keeps track of offline devices or individual offline senders / receivers; 
 
 ![Forget badge on an offline sender](Screenshots/Screenshot%202026-05-22%20at%2001.38.13.png)
 - **Vendor Web-UI links.** One click opens the device's own configuration page in a new tab: The URL is built from a vendor recipe so it works the same across Matrox, Merging, QSC, Sony and the rest.
