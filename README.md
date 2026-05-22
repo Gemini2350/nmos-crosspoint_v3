@@ -26,7 +26,7 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 - **DNS hostname push.** Each device's name lands as a `host_override` on your pfSense DNS resolver, so `Camera1.simplexity.training` resolves automatically. 
 - **Aliases.** Rename a device or a single flow to whatever your operators call it; the original NMOS label is still visible as a tooltip. NMOS IS-13 is planned to push  the Aliases back to the Device.
 - **Virtual Senders.** Want do use your old Devices without NMOS Support? Use them as Virtual-Sender in the Crosspoint Matrix by adding their SDP's in the Setup. 
-![Virtual Senders](Screenshots/Screenshot%2026-05-22%at%09.55.44.png)
+![Virtual Senders](Screenshots/Screenshot%202026-05-22%20at%2010.04.20.png)
 
 
 
@@ -72,7 +72,7 @@ Per-vendor recipes for the "Open device Web UI" link on the Details page. Profil
 **Push Names to DNS**
 Setup Virtual Senders by adding their SDP. An Sender_ID is automatically generated. Connections are only Visible in Nmos-Crosspoint as the Sender_ID is only known to NMOS Crosspoint
 
-![Setup Virtual Senders](Screenshots/Screenshot%2026-05-22%at%09.58.22.png)
+![Setup Virtual Senders](Screenshots/Screenshot%202026-05-22%20at%2009.58.22.png)
 
 **Push Names to DNS**
 Publish every device's name as a DNS entry on your pfSense Unbound resolver via the [pfRest](https://pfrest.org) API. Manual DNS entries on the same server are never touched — Crosspoint tags everything it owns. Forgetting a device also removes its DNS entry.
@@ -101,6 +101,8 @@ If you don't have one yet, the ready-made image from rhastie is a fast way to ge
 
 
 ## Installation
+
+Copy Files to your Docker Host
 
 ```shell
 docker-compose up
