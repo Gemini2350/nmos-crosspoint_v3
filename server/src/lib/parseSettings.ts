@@ -155,6 +155,48 @@ export function parseSettings(settings:any){
     }
 
 
+    // ----- Virtual Senders -----
+    // Operator-defined senders that don't exist in any NMOS registry. Each
+    // entry stores a raw SDP that the user pasted on the Setup page. The
+    // sender shows up in the Crosspoint under a synthetic "Virtual Device"
+    // node and, when used as the source of a connection, the receiver gets
+    // PATCHed with this SDP as its transport_file — no IS-05 push on the
+    // sender side, since there is no sender side.
+    //
+    // Schema: { id:string, name:string, sdp:string }
+    if(!Array.isArray(settings.virtualSenders)){
+        settings.virtualSenders = [];
+    }else{
+        let crypto:any;
+        try{ crypto = require("crypto"); }catch(e){}
+        let mkUuid = () => {
+            try{
+                if(crypto && typeof crypto.randomUUID === "function"){
+                    return crypto.randomUUID();
+                }
+            }catch(e){}
+            // Fallback: simple-but-deterministic UUID-shaped random string.
+            // Good enough for an identifier; not cryptographically strong.
+            return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+                let r = Math.random() * 16 | 0;
+                let v = c === "x" ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        };
+        settings.virtualSenders = settings.virtualSenders
+            .filter((v:any) => v && typeof v === "object")
+            .map((v:any) => ({
+                id:        (typeof v.id === "string" && v.id) ? v.id : ("vs_" + Math.random().toString(36).slice(2,10)),
+                name:      (typeof v.name === "string") ? v.name : "",
+                sdp:       (typeof v.sdp === "string") ? v.sdp : "",
+                // Stable UUID published as `sender_id` on the receiver PATCH.
+                // Generated once and reused on every save so receivers stay
+                // bound to the same virtual sender across reloads.
+                senderId:  (typeof v.senderId === "string" && /^[a-f0-9-]{36}$/i.test(v.senderId)) ? v.senderId : mkUuid()
+            }));
+    }
+
+
     // ----- DNS Push (pfSense REST API) -----
     // When enabled, NMOS node labels (or user aliases) are pushed as DNS
     // host_overrides on the pfSense DNS forwarder via the pfrest API.

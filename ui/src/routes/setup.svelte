@@ -16,6 +16,11 @@
       port: number;
       path: string;
     }
+    interface VirtualSender {
+      id: string;
+      name: string;
+      sdp: string;
+    }
     interface LeaseStat { used: number; total: number }
     interface DnsPush {
       enabled: boolean;
@@ -31,6 +36,7 @@
       registry: { ip:string, port:number };
       acceptableGmid: string;
       vendorProfiles: VendorProfile[];
+      virtualSenders: VirtualSender[];
       multicastRange: string;
       autoMulticast: { enabled: boolean, reconnectReceiversOnSenderChange?: boolean };
       autoActivateInactiveSender: boolean;
@@ -45,6 +51,7 @@
       registry: { ip: "", port: 80 },
       acceptableGmid: "",
       vendorProfiles: [],
+      virtualSenders: [],
       multicastRange: "",
       autoMulticast: { enabled: false, reconnectReceiversOnSenderChange: false },
       autoActivateInactiveSender: false,
@@ -59,6 +66,7 @@
     let formPort:string = "80";
     let formGmid:string = "";
     let formProfiles:VendorProfile[] = [];
+    let formVirtualSenders:VirtualSender[] = [];
     let formAutoMulticastEnabled:boolean = false;
     let formReconnectReceivers:boolean = false;
     let formAutoActivateSender:boolean = false;
@@ -123,8 +131,11 @@
     let syncNmos:Subject<any>;
     let syncLeases:Subject<any>;
     let syncCrosspoint:Subject<any>;
+    let syncDnsPushed:Subject<any>;
     let nmosState:any = { nodes:{}, devices:{}, senders:{}, receivers:{} };
     let crosspointState:any = { devices:[] };
+    // Live inventory of DNS entries currently published to pfSense
+    let dnsPushedSnapshot:any = { entries: [], updatedAt: "" };
 
     // Live lease inventory snapshot: { leases:{[id]:Lease}, stats:..., updatedAt:string }
     let leaseSnapshot:any = { leases:{}, stats:{}, updatedAt:"" };
@@ -142,6 +153,7 @@
             formPort = ""+(obj.registry.port || 80);
             formGmid = obj.acceptableGmid || "";
             formProfiles = Array.isArray(obj.vendorProfiles) ? obj.vendorProfiles.map((p:any) => ({...p})) : [];
+            formVirtualSenders = Array.isArray(obj.virtualSenders) ? obj.virtualSenders.map((v:any) => ({...v})) : [];
             formAutoMulticastEnabled = !!(obj.autoMulticast && obj.autoMulticast.enabled);
             // `reconnectReceiversOnSenderChange` default is now FALSE, so we
             // take the stored value as-is (no "!== false" magic).
@@ -189,6 +201,12 @@
       syncCrosspoint.subscribe((obj:any)=>{
         if(obj){ scheduleStateUpdate("crosspoint", obj); }
       });
+      // Inventory of currently-pushed DNS entries (updated by the
+      // DnsPushService whenever a push, update or remove succeeds).
+      syncDnsPushed = ServerConnector.sync("dnsPushed");
+      syncDnsPushed.subscribe((obj:any)=>{
+        if(obj){ dnsPushedSnapshot = obj; }
+      });
     });
 
     onDestroy(() => {
@@ -200,6 +218,8 @@
       try{ServerConnector.unsync("multicastLeases");}catch(e){}
       try{syncCrosspoint && syncCrosspoint.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("crosspoint");}catch(e){}
+      try{syncDnsPushed && syncDnsPushed.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("dnsPushed");}catch(e){}
     });
 
     // Coalesce rapid sync patches into one Svelte update per animation
@@ -248,6 +268,7 @@
       formPort = ""+(serverState.registry.port || 80);
       formGmid = serverState.acceptableGmid || "";
       formProfiles = Array.isArray(serverState.vendorProfiles) ? serverState.vendorProfiles.map((p:any)=>({...p})) : [];
+      formVirtualSenders = Array.isArray((serverState as any).virtualSenders) ? (serverState as any).virtualSenders.map((v:any)=>({...v})) : [];
       formAutoMulticastEnabled = !!(serverState.autoMulticast && serverState.autoMulticast.enabled);
       formReconnectReceivers   = !!(serverState.autoMulticast && (
         (serverState.autoMulticast as any).reconnectReceiversOnSenderChange ??
@@ -311,6 +332,7 @@
         registry: { ip: formIp.trim(), port: port },
         acceptableGmid: formGmid.trim(),
         vendorProfiles: formProfiles,
+        virtualSenders: formVirtualSenders.map(v => ({ id: v.id, name: v.name, sdp: v.sdp })),
         multicastRange: formMulticastRange.trim(),
         autoMulticast: {
           enabled: formAutoMulticastEnabled,
@@ -329,12 +351,20 @@
         }
       };
 
-      // If the user is switching Auto-Allocation ON for the first time
-      // (it was off before), ask what should happen with currently online
-      // senders: adopt their existing IPs, or force fresh pool addresses.
-      let wasEnabled = !!(serverState.autoMulticast && serverState.autoMulticast.enabled);
-      let nowEnabled = !!formAutoMulticastEnabled;
-      if(!wasEnabled && nowEnabled){
+      // Open the Adopt-vs-Renew modal in two situations:
+      //   a) Auto-Allocation just got switched ON for the first time.
+      //   b) Auto-Allocation is still on but the operator changed the
+      //      multicast CIDR. The current leases may sit outside the new
+      //      pool, so the operator must decide whether to keep existing
+      //      IPs (adopt) or to re-allocate everyone into the new range.
+      let wasEnabled  = !!(serverState.autoMulticast && serverState.autoMulticast.enabled);
+      let nowEnabled  = !!formAutoMulticastEnabled;
+      let rangeBefore = (serverState.multicastRange || "").trim();
+      let rangeAfter  = formMulticastRange.trim();
+      let rangeChanged = nowEnabled && wasEnabled && rangeBefore && rangeAfter && rangeBefore !== rangeAfter;
+      let enabledNow   = !wasEnabled && nowEnabled;
+
+      if(enabledNow || rangeChanged){
         pendingPayload = payload;
         if(autoMulticastModal){ autoMulticastModal.showModal(); }
         return;
@@ -438,6 +468,21 @@
     }
     function removeProfile(id:string){
       formProfiles = formProfiles.filter(p => p.id !== id);
+      markDirty();
+    }
+
+
+    // ----- Virtual Senders -----
+    function addVirtualSender(){
+      formVirtualSenders = [...formVirtualSenders, {
+        id:   "vs_" + Math.random().toString(36).slice(2,10),
+        name: "",
+        sdp:  ""
+      }];
+      markDirty();
+    }
+    function removeVirtualSender(id:string){
+      formVirtualSenders = formVirtualSenders.filter(v => v.id !== id);
       markDirty();
     }
 
@@ -805,6 +850,13 @@
       </div>
     {/if}
 
+    {#if dirty}
+      <div class="alert alert-warning setup-alert">
+        <Icon src={ExclamationTriangle} />
+        <span>You have unsaved changes — click the <strong>Save</strong> button at the bottom of the page to persist them to <code>./config/settings.json</code>.</span>
+      </div>
+    {/if}
+
 
     <section class="setup-section">
       <h3>NMOS Registry</h3>
@@ -847,12 +899,11 @@
     <section class="setup-section">
       <h3>Receiver Auto-Reconnect</h3>
       <p class="setup-section-hint">
-        Whenever a sender's SDP changes — destination IP / port (reconcile, manual edit,
-        lease release) <em>or</em> any other field like channel count, video format,
-        colorimetry — re-execute the connection of every receiver currently subscribed to
-        it so they pick up the new manifest. Recommended ON for production. The one-shot
-        „Renew from Pool" sweep in <em>Multicast DHCP</em> ignores this setting and
-        always reconnects.
+        Whenever a sender's SDP changes (Multicast IP / port or like channel count,
+        video format, colorimetry) redo the connection of every receiver currently
+        subscribed to it so they pick up the new manifest. Recommended ON for
+        production. The one-shot „Renew from Pool" sweep in <em>Multicast DHCP</em>
+        ignores this setting and always reconnects.
       </p>
 
       <div class="setup-form">
@@ -890,7 +941,7 @@
         When enabled, the server reserves a pair of consecutive multicast addresses per <strong>active</strong> sender
         (odd for Leg 1, even = odd + 1 for Leg 2). The reservation is kept for the lifetime of the
         device — even if the sender goes offline — and is only released when the device is
-        explicitly <em>Forget</em>en on the Details page or its lease is deleted in the inventory below.
+        explicitly <em>Forgotten</em> on the Details page or its lease is deleted in the inventory below.
       </p>
       <p class="setup-section-hint">
         <strong>An address is (re-)assigned in two cases:</strong>
@@ -1024,6 +1075,60 @@
           </table>
         </div>
       </details>
+    </section>
+
+
+    <section class="setup-section">
+      <h3>Virtual Senders</h3>
+      <p class="setup-section-hint">
+        Operator-defined senders that don't exist in any NMOS registry. Each entry stores a raw SDP
+        you paste below. All virtual senders are grouped under a synthetic <strong>Virtual Device</strong>
+        node and are immediately available on the Crosspoint page. When a receiver is connected to
+        a virtual sender, the pasted SDP is sent as its <code>transport_file</code> — no IS-05
+        PATCH on a sender side, since there is no sender side.
+      </p>
+
+      {#each formVirtualSenders as v (v.id)}
+        <details class="virtual-sender-row">
+          <summary class="virtual-sender-head">
+            <span class="virtual-sender-summary-name">
+              {v.name || "(unnamed virtual sender)"}
+            </span>
+            <span class="virtual-sender-summary-meta">
+              {v.sdp ? "SDP set" : "no SDP"}
+            </span>
+            <button class="btn btn-ghost btn-sm"
+                    on:click|stopPropagation|preventDefault={()=>removeVirtualSender(v.id)}
+                    aria-label="Remove virtual sender" title="Remove">
+              <Icon src={Trash} />
+            </button>
+          </summary>
+
+          <div class="virtual-sender-body">
+            <label class="setup-field">
+              <span class="setup-label">Name</span>
+              <input type="text" class="input input-bordered input-sm virtual-sender-name"
+                     placeholder="Sender name (e.g. PlayoutA)"
+                     bind:value={v.name} on:input={markDirty} />
+            </label>
+            <label class="setup-field" style="margin-top:8px;">
+              <span class="setup-label">SDP</span>
+              <textarea class="textarea textarea-bordered vendor-mono virtual-sender-sdp"
+                        rows="8" placeholder="Paste a full SDP here…&#10;v=0&#10;o=- 0 0 IN IP4 …&#10;s=…&#10;m=audio 5004 RTP/AVP 96&#10;c=IN IP4 239.x.x.x/32&#10;a=rtpmap:96 L24/48000/2"
+                        bind:value={v.sdp} on:input={markDirty}></textarea>
+            </label>
+          </div>
+        </details>
+      {/each}
+      {#if formVirtualSenders.length === 0}
+        <p class="vendor-empty" style="margin:8px 0 12px 0;">No virtual senders defined.</p>
+      {/if}
+
+      <div class="vendor-actions-row" style="margin-top:8px;">
+        <button class="btn btn-sm" on:click={addVirtualSender}>
+          <Icon src={Plus} /> Add virtual sender
+        </button>
+      </div>
     </section>
 
 
@@ -1211,6 +1316,42 @@
           <input type="checkbox" class="toggle" bind:checked={formDnsInsecureTLS} on:change={markDirty} />
         </label>
       </div>
+
+
+      <!-- Pushed Names Inventory — mirrors the Multicast Lease inventory.
+           Lists every DNS entry the server has successfully published to
+           pfSense. Updated live as new pushes / updates / removes happen. -->
+      <details class="lease-inventory">
+        <summary>Pushed DNS Entries ({(dnsPushedSnapshot.entries || []).length})</summary>
+
+        <div class="lease-table-wrap">
+          <table class="lease-table">
+            <thead>
+              <tr>
+                <th>Hostname</th>
+                <th>IP</th>
+                <th>Node ID</th>
+                <th>Pushed at</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each (dnsPushedSnapshot.entries || []) as e (e.nodeId)}
+                <tr>
+                  <td class="vendor-mono">{e.host}.{e.domain}</td>
+                  <td class="vendor-mono">{e.ip}</td>
+                  <td><span class="vendor-mono" title={e.nodeId}>{shortId(e.nodeId)}</span></td>
+                  <td><span class="lease-date">{fmtDate(e.ts)}</span></td>
+                </tr>
+              {/each}
+              {#if (dnsPushedSnapshot.entries || []).length === 0}
+                <tr><td colspan="4" class="vendor-empty">
+                  No DNS entries pushed yet. Enable DNS Push above and save.
+                </td></tr>
+              {/if}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </section>
 
 

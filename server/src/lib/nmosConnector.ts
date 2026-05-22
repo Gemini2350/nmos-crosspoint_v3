@@ -1109,8 +1109,13 @@ export class NmosRegistryConnector {
 
         if(senderInfo.senderId == "disconnect"){
             //
-        }else{
+        }else if(senderInfo.senderId){
             patch.sender_id = senderInfo.senderId;
+        }else{
+            // Virtual sender — no NMOS sender to bind to. Send null
+            // explicitly so strict IS-05 implementations accept the
+            // PATCH (empty string is not a valid sender_id).
+            patch.sender_id = null;
         }
 
         let deviceId

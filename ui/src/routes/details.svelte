@@ -90,6 +90,9 @@
       codec:string;
       bitrate:any;
       legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string }>;
+      // Raw SDP carried directly on the flow for virtual senders (no NMOS
+      // manifest fetch available). Empty string for normal NMOS senders.
+      sdp:string;
     }
     interface ReceiverRow {
       id:string;
@@ -433,7 +436,8 @@
                 format: s.format || "",
                 codec: renderCodecs(s.capabilities && s.capabilities.mediaTypes ? s.capabilities.mediaTypes : []),
                 bitrate: s.bitrate,
-                legs: nmosId ? getLegsFromManifest(nmosId) : []
+                legs: nmosId ? getLegsFromManifest(nmosId) : [],
+                sdp: (typeof s.sdp === "string") ? s.sdp : ""
               };
             });
           }
@@ -550,7 +554,8 @@
             format: s.format || "",
             codec: renderCodecs(s.capabilities && s.capabilities.mediaTypes ? s.capabilities.mediaTypes : []),
             bitrate: s.bitrate,
-            legs
+            legs,
+            sdp: (typeof s.sdp === "string") ? s.sdp : ""
           };
 
           if(searchTokens.length > 0){
@@ -985,8 +990,15 @@
     function openSdpView(flow:SenderRow){
       sdpModalTitle = flow.alias || flow.name || flow.id;
       sdpModalContent = "";
+      // Virtual senders carry the SDP directly on the flow — no NMOS
+      // registry to fetch from. Check that first.
       try{
-        if(flow.nmosId && nmosState.sendersManifestDetail && nmosState.sendersManifestDetail[flow.nmosId]){
+        if(typeof flow.sdp === "string" && flow.sdp.length > 0){
+          sdpModalContent = flow.sdp;
+        }
+      }catch(e){}
+      try{
+        if(!sdpModalContent && flow.nmosId && nmosState.sendersManifestDetail && nmosState.sendersManifestDetail[flow.nmosId]){
           let raw = nmosState.sendersManifestDetail[flow.nmosId]._RAWSDP;
           if(typeof raw === "string" && raw.length > 0){
             sdpModalContent = raw;

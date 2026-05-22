@@ -4,6 +4,82 @@
     }
 }
 
+// Virtual Sender editor — one collapsible card per sender. Collapsed: just
+// shows the name and a "remove" button. Expanded: full name field + SDP
+// textarea. Long lists stay compact this way.
+.virtual-sender-row {
+    border: 1px solid theme('colors.base-300');
+    border-radius: 8px;
+    margin-bottom: 8px;
+    background-color: theme('colors.base-100');
+    overflow: hidden;
+
+    // <summary> — clickable header row. Native disclosure marker hidden
+    // and replaced with a chevron via the open state.
+    .virtual-sender-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+        position: relative;
+        padding-left: 26px;
+
+        &::-webkit-details-marker { display: none; }
+        &::marker                  { display: none; }
+
+        // Chevron on the very left, rotates on open.
+        &::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            width: 8px; height: 8px;
+            border-right: 2px solid theme('colors.slate.400');
+            border-bottom: 2px solid theme('colors.slate.400');
+            transform: translateY(-65%) rotate(-45deg);
+            transition: transform 0.15s ease-in-out;
+        }
+
+        .virtual-sender-summary-name {
+            flex: 1 1 auto;
+            font-weight: 600;
+            font-size: 0.95rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .virtual-sender-summary-meta {
+            font-size: 0.75rem;
+            color: theme('colors.slate.400');
+            font-family: 'Roboto Mono', monospace;
+        }
+    }
+
+    &[open] > .virtual-sender-head::before {
+        // rotate so the chevron points down when expanded
+        transform: translateY(-35%) rotate(45deg);
+    }
+
+    .virtual-sender-body {
+        padding: 4px 12px 12px 12px;
+        border-top: 1px solid theme('colors.base-300');
+    }
+
+    .virtual-sender-name {
+        flex: 1 1 auto;
+    }
+
+    .virtual-sender-sdp {
+        width: 100%;
+        font-size: 0.8rem;
+        line-height: 1.35;
+        min-height: 120px;
+    }
+}
+
 
 .setup-page {
     overflow-y: auto;

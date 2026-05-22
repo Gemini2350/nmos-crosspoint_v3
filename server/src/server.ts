@@ -110,6 +110,18 @@ const multicastLeaseManager = new MulticastLeaseManager(settings);
 const dnsPushService = new DnsPushService();
 try { dnsPushService.setSettings(settings.dnsPush); } catch (e) {}
 
+// Inventory of currently-pushed DNS entries, exposed to the Setup page.
+function getDnsPushedSnapshot() {
+    return {
+        entries: dnsPushService.getPushedEntries(),
+        updatedAt: new Date().toISOString()
+    };
+}
+const dnsPushedSync: SyncObject = new SyncObject("dnsPushed", getDnsPushedSnapshot());
+dnsPushService.setOnChange(() => {
+    try { dnsPushedSync.setState(getDnsPushedSnapshot()); } catch (e) {}
+});
+
 function getMulticastLeaseSnapshot() {
     return {
         leases: multicastLeaseManager.getAllLeases(),
@@ -179,6 +191,15 @@ function getSetupConfigState() {
             vendorProfiles = settings.vendorProfiles.map((v:any) => ({...v}));
         }
     }catch(e){}
+    let virtualSenders:any[] = [];
+    try{
+        if(Array.isArray(settings.virtualSenders)){
+            virtualSenders = settings.virtualSenders.map((v:any) => ({
+                id: v.id, name: v.name || "", sdp: v.sdp || "",
+                senderId: v.senderId || ""
+            }));
+        }
+    }catch(e){}
     let multicastRange:string = (typeof settings.multicastRange === "string") ? settings.multicastRange : "";
     let autoMulticast = {
         enabled: !!(settings.autoMulticast && settings.autoMulticast.enabled),
@@ -220,6 +241,7 @@ function getSetupConfigState() {
         registry,
         acceptableGmid: (typeof settings.acceptableGmid === "string") ? settings.acceptableGmid : "",
         vendorProfiles,
+        virtualSenders,
         multicastRange,
         autoMulticast,
         autoActivateInactiveSender,
@@ -231,6 +253,16 @@ function getSetupConfigState() {
 }
 const setupConfigSync: SyncObject = new SyncObject("setupConfig", getSetupConfigState());
 server.addSyncObject("setupConfig","public",setupConfigSync);
+
+// Refresh the setupConfig SyncObject when the crosspoint abstraction
+// renames a virtual sender (alias change on the Details page). Keeps the
+// Setup-page form in sync with the actually-stored name without
+// requiring a reload.
+try{
+    crosspoint.onVirtualSendersChange = () => {
+        try{ setupConfigSync.setState(getSetupConfigState()); }catch(e){}
+    };
+}catch(e){}
 
 
 /**
@@ -315,6 +347,7 @@ function collectDnsPushNodes(): { nodeId:string, displayName:string, ip:string }
 }
 
 server.addSyncObject("multicastLeases","global",multicastLeasesSync);
+server.addSyncObject("dnsPushed","global",dnsPushedSync);
 
 // Release a single multicast lease from the Setup page inventory. The
 // allocated pair goes back into the pool; the next call to ensureLease
@@ -440,6 +473,35 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                             };
                         });
                 }
+                if(Array.isArray(postData.virtualSenders)){
+                    // Preserve existing senderIds keyed by the editor `id`
+                    // so an edit-and-save doesn't churn the UUIDs and break
+                    // any currently-connected receivers.
+                    let prevSenderIds: {[id:string]:string} = {};
+                    try{
+                        if(Array.isArray(settings.virtualSenders)){
+                            for(let v of settings.virtualSenders){
+                                if(v && typeof v.id === "string" && typeof v.senderId === "string"){
+                                    prevSenderIds[v.id] = v.senderId;
+                                }
+                            }
+                        }
+                    }catch(e){}
+                    next.virtualSenders = postData.virtualSenders
+                        .filter((v:any) => v && typeof v === "object")
+                        .map((v:any) => {
+                            let id = (typeof v.id === "string" && v.id) ? v.id : ("vs_" + Math.random().toString(36).slice(2,10));
+                            let senderId = (typeof v.senderId === "string" && /^[a-f0-9-]{36}$/i.test(v.senderId))
+                                ? v.senderId
+                                : (prevSenderIds[id] || "");  // parseSettings will mint one if still ""
+                            return {
+                                id,
+                                name: (typeof v.name === "string") ? v.name.trim() : "",
+                                sdp:  (typeof v.sdp === "string") ? v.sdp : "",
+                                senderId
+                            };
+                        });
+                }
             }
 
             // Reflect into the in-memory settings object
@@ -457,7 +519,30 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             }
             settings.acceptableGmid = next.acceptableGmid;
             settings.vendorProfiles = next.vendorProfiles;
+            if(Array.isArray(next.virtualSenders)){
+                settings.virtualSenders = next.virtualSenders;
+                // Re-run the parse step on just this slice so any missing
+                // senderId UUIDs get minted and the schema stays
+                // self-healing (same logic as the boot-time read).
+                try{
+                    let tmp:any = { virtualSenders: settings.virtualSenders };
+                    parseSettings(tmp);
+                    settings.virtualSenders = tmp.virtualSenders;
+                }catch(e){}
+                // Notify the crosspoint abstraction so its worker can re-
+                // materialise the virtual device with the new list. We push
+                // the update through the same path as nmosState updates.
+                try{ crosspoint.setVirtualSenders(settings.virtualSenders); }catch(e){}
+            }
+            // Track whether the multicast pool CIDR changed — the UI sends
+            // the same Adopt-vs-Renew choice for that case, so we need a
+            // flag to fan out the corresponding sweep below.
+            let prevMulticastRange = (typeof settings.multicastRange === "string") ? settings.multicastRange : "";
+            let multicastRangeChanged = false;
             if(typeof next.multicastRange === "string" && next.multicastRange){
+                if(prevMulticastRange !== next.multicastRange){
+                    multicastRangeChanged = true;
+                }
                 settings.multicastRange = next.multicastRange;
             }
             let autoMulticastWasEnabled = !!(settings.autoMulticast && settings.autoMulticast.enabled);
@@ -494,12 +579,19 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                     DnsPushService.instance.setSettings(settings.dnsPush);
                 }
             }catch(e){}
-            // If the user just turned Auto-Allocation ON, kick off a one-off
-            // pass over all known senders. The UI passes `adoptOnEnable`:
+            // Adopt-vs-Renew sweep. Fires in two cases:
+            //   1) Auto-Allocation just got switched ON.
+            //   2) Auto-Allocation is on and the operator picked a new
+            //      multicast CIDR — current leases may be outside the new
+            //      range, so we offer the same choice.
+            // `adoptOnEnable`:
             //   true  → keep each sender's current IP as its lease (no PATCH,
             //           no stream interruption);
             //   false → force everyone onto a fresh pool address (disruptive).
-            if(!autoMulticastWasEnabled && settings.autoMulticast.enabled){
+            let needSweep =
+                (!autoMulticastWasEnabled && settings.autoMulticast.enabled) ||
+                (settings.autoMulticast.enabled && multicastRangeChanged);
+            if(needSweep){
                 try{
                     if(NmosRegistryConnector.instance){
                         let adopt = !!(postData && postData.autoMulticast && postData.autoMulticast.adoptOnEnable === true);

@@ -262,9 +262,12 @@
     </div>
     <nav class="browser-nav menu bg-base-200">
       <!-- Global availability counter — sits above the Crosspoint icon so the
-           current online/total numbers are visible from every page. -->
+           current online/total numbers are visible from every page. The
+           tooltip anchors to the LEFT edge of the counter so it doesn't
+           fly off the right side of the browser. -->
       <div class="nav-counter"
            use:menu.tooltip
+           data-tooltip-position="left,middle"
            data-tooltip="Online / total known — Devices · Senders · Receivers">
         <div class="nav-counter-row {counterStateClass(countAvailDev, countTotalDev)}">
           <span class="nav-counter-label">Dev</span>

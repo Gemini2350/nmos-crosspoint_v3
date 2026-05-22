@@ -67,6 +67,21 @@ export class DnsPushService {
     private pending: Map<string, PendingNode> = new Map();
     private debounceTimer: any = null;
 
+    // Inventory of entries we've successfully pushed (or refreshed) to the
+    // pfSense resolver. Keyed by nodeId. Surfaced to the Setup page via a
+    // SyncObject so the operator can see what's actually live.
+    private lastPushed: Map<string, { nodeId:string, host:string, domain:string, ip:string, ts:string }> = new Map();
+    private onChange: (() => void) | null = null;
+    setOnChange(cb: (() => void) | null) { this.onChange = cb; }
+    private notifyChange() {
+        if (this.onChange) {
+            try { this.onChange(); } catch { /* swallow */ }
+        }
+    }
+    getPushedEntries(): Array<{ nodeId:string, host:string, domain:string, ip:string, ts:string }> {
+        return Array.from(this.lastPushed.values()).sort((a,b)=>a.host.localeCompare(b.host));
+    }
+
     constructor() {
         DnsPushService._instance = this;
     }
@@ -209,11 +224,18 @@ export class DnsPushService {
                 if (owned && owned.id !== undefined) {
                     if (owned.host === host && owned.domain === domain &&
                         Array.isArray(owned.ip) && owned.ip.length === 1 && owned.ip[0] === node.ip) {
-                        // already up to date, skip
+                        // already up to date — still record so the inventory
+                        // shows it (timestamp may be from a previous run)
+                        if(!this.lastPushed.has(node.nodeId)){
+                            this.lastPushed.set(node.nodeId, { nodeId: node.nodeId, host, domain, ip: node.ip, ts: new Date().toISOString() });
+                            this.notifyChange();
+                        }
                         continue;
                     }
                     await ax.patch(DNS_SERVICE_BASE + "/host_override", { id: owned.id, ...body });
                     SyncLog.log("info", "DNS Push", `Updated ${host}.${domain} → ${node.ip}  (id=${owned.id})`);
+                    this.lastPushed.set(node.nodeId, { nodeId: node.nodeId, host, domain, ip: node.ip, ts: new Date().toISOString() });
+                    this.notifyChange();
                     changed = true;
                 } else {
                     // Avoid clobbering a non-owned manual entry with the same name
@@ -224,6 +246,8 @@ export class DnsPushService {
                     }
                     await ax.post(DNS_SERVICE_BASE + "/host_override", body);
                     SyncLog.log("info", "DNS Push", `Created ${host}.${domain} → ${node.ip}`);
+                    this.lastPushed.set(node.nodeId, { nodeId: node.nodeId, host, domain, ip: node.ip, ts: new Date().toISOString() });
+                    this.notifyChange();
                     changed = true;
                 }
             } catch (e: any) {
@@ -252,6 +276,9 @@ export class DnsPushService {
             await ax.delete(DNS_SERVICE_BASE + `/host_override?id=${owned.id}`);
             await this.applyChanges(ax);
             SyncLog.log("info", "DNS Push", `Removed DNS entry ${owned.host}.${owned.domain} (id=${owned.id})`);
+            if(this.lastPushed.delete(nodeId)){
+                this.notifyChange();
+            }
         } catch (e: any) {
             SyncLog.log("error", "DNS Push", `Remove failed for nodeId=${nodeId}: ` + (e?.message || e));
         }

@@ -48,10 +48,17 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     settings:any = {};
     constructor(config:any){
         this.settings = config;
+        // Seed the virtual-sender list from settings so the very first
+        // worker tick already publishes the virtual device.
+        try{
+            if(Array.isArray(config?.virtualSenders)){
+                this.virtualSenders = config.virtualSenders;
+            }
+        }catch(e){}
 
         this.startWorker();
 
-        
+
 
 
         if(CrosspointAbstraction.instance == null){
@@ -62,6 +69,19 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     }
 
     nmosState : any = null;
+    // Operator-defined virtual senders (id / name / sdp). Pushed into the
+    // worker thread alongside the NMOS state so the worker can build the
+    // synthetic "Virtual Device" entry.
+    virtualSenders:any[] = [];
+    public setVirtualSenders(list:any[]){
+        this.virtualSenders = Array.isArray(list) ? list : [];
+        this.update();
+    }
+
+    // Notified when the virtual-sender LIST changed via an alias rename
+    // (so server.ts can refresh setupConfigSync and the Setup page name
+    // updates without the operator having to reload).
+    public onVirtualSendersChange:(()=>void)|null = null;
 
     getFlowInfo(flowId:string){
         try{
@@ -232,6 +252,36 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             this.worker.postMessage(JSON.stringify({
                 changeAlias:{id:id, alias:alias}
             }));
+
+            // Virtual sender alias: keep settings.virtualSenders[].name in
+            // sync with the alias the operator typed on the Details page,
+            // and re-publish the list to the worker so the Setup UI and
+            // the Crosspoint card show the same name. Persist settings.json
+            // straight away so the new name survives a restart.
+            if(id && id.startsWith("virtual_")){
+                try{
+                    let vsId = id.slice(8);
+                    if(Array.isArray(this.settings?.virtualSenders)){
+                        let entry = this.settings.virtualSenders.find((v:any) => v && v.id === vsId);
+                        if(entry){
+                            let newName = (alias && alias.trim()) ? alias.trim() : "";
+                            if(entry.name !== newName){
+                                entry.name = newName;
+                                this.virtualSenders = this.settings.virtualSenders;
+                                this.update();
+                                try{
+                                    const fs = require("fs");
+                                    fs.writeFileSync("./config/settings.json", JSON.stringify(this.settings, null, 4));
+                                    SyncLog.log("info", "Settings", "Updated virtualSenders[" + vsId + "].name from alias change.");
+                                }catch(e:any){
+                                    SyncLog.log("warn", "Settings", "Could not persist virtual sender rename: " + (e?.message || e));
+                                }
+                                try{ if(this.onVirtualSendersChange){ this.onVirtualSendersChange(); } }catch(e){}
+                            }
+                        }
+                    }
+                }catch(e){}
+            }
 
             // DNS Push: re-push the affected node so its host_override on the
             // pfSense DNS forwarder picks up the new alias straight away,
@@ -617,6 +667,28 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                         if(src.id.startsWith("nmos_")){
                             let nmosId = src.id.slice(5);
                             senderInfo = await NmosRegistryConnector.instance.connectionGetSenderInfo(nmosId);
+                        } else if(src.id.startsWith("virtual_")){
+                            // Operator-defined virtual sender — no NMOS source
+                            // to query. Build the senderInfo directly from the
+                            // SDP the operator pasted on the Setup page; the
+                            // receiver PATCH later carries this as its
+                            // transport_file. We pass the virtual sender's
+                            // stable UUID (`senderId`) as sender_id so the
+                            // receiver record cleanly references the binding
+                            // and the operator sees it on the Details page.
+                            let vsId = src.id.slice(8);
+                            let vs:any = (this.virtualSenders || []).find((v:any) => v && v.id === vsId);
+                            if(!vs){
+                                throw new Error("virtual sender " + vsId + " not found");
+                            }
+                            senderInfo = {
+                                senderId:     vs.senderId || "",
+                                interfaces:   [],
+                                manifestFile: vs.sdp || "",
+                                active:       true,
+                                error:        "",
+                                transport:    "rtp"
+                            };
                         }
 
                     }catch(e){
@@ -785,6 +857,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     update(){
         this.worker.postMessage(JSON.stringify({
             nmosState:this.nmosState,
+            virtualSenders:this.virtualSenders
         }))
     }
 
@@ -846,7 +919,11 @@ export interface CrosspointFlow {
     capLimits:string,
     channelNumber: number,
     sourceNumber: number,
-    bitrate:CrosspointFlowBitrate
+    bitrate:CrosspointFlowBitrate,
+    // Optional: raw SDP shipped with virtual senders so the Details page
+    // can show it without a manifest fetch (there is no real device to
+    // fetch from).
+    sdp?:string
 };
 
 

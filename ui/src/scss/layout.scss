@@ -35,31 +35,42 @@
         .nav-counter {
             display: flex;
             flex-direction: column;
-            gap: 4px;
-            margin: 0.6rem 0.55rem 0.4rem 0.55rem;
-            padding: 8px 6px;
+            gap: 2px;
+            // Pull the whole block to the left (and trim padding) so it
+            // doesn't visually overweight the nav. The 20px translateX
+            // lives outside the layout flow so it doesn't affect the
+            // surrounding menu items.
+            margin: 0.55rem 0.35rem 0.4rem 0.3rem;
+            padding: 7px 8px;
+            transform: translateX(-20px);
             background-color: theme('colors.base-300');
             border-radius: 8px;
-            font-size: 0.7rem;
-            line-height: 1.1;
+            // Finer typography — slightly smaller, lighter weight, and
+            // left-aligned label + value (instead of space-between, which
+            // pushed the value all the way to the right edge of the box).
+            font-size: 0.78rem;
+            line-height: 1.2;
             cursor: default;
         }
         .nav-counter-row {
             display: flex;
-            justify-content: space-between;
             align-items: baseline;
-            gap: 4px;
-            padding: 2px 4px;
+            gap: 6px;
+            padding: 1px 2px;
             border-radius: 4px;
             font-family: 'Roboto Mono', monospace;
         }
         .nav-counter-label {
-            font-weight: 600;
-            letter-spacing: 0.04em;
-            opacity: 0.75;
+            // Fixed slot for "Dev" / "TX" / "RX" so the values line up.
+            min-width: 26px;
+            text-align: left;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+            opacity: 0.7;
         }
         .nav-counter-value {
-            font-weight: 700;
+            text-align: left;
+            font-weight: 500;
         }
         // Colour states — green = all present, amber = some missing,
         // red = none online, neutral = nothing known yet.

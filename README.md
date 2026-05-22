@@ -4,7 +4,7 @@ NMOS Crosspoint is a web-based  **NMOS** Controller for **ST 2110 / AES67** medi
 
 ![Crosspoint matrix](Screenshots/Screenshot%202026-05-22%20at%2000.58.10.png)
 
-Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, Sony, Grass Valley, Blackmagic, Merging Anubis / Hapi / Horus, DirectOut, QSC, Matrox — and stable with more than 2000 flows.
+Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, Sony, Grass Valley, Blackmagic, Merging, DirectOut, QSC, Matrox — and stable with more than 2000 flows. Let me know if you have any problems
 
 ![Details page](Screenshots/Screenshot%202026-05-22%20at%2000.55.31.png)
 
@@ -12,23 +12,30 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 ## What it does
 - **Autodiscover.** Finds Senders and Receivers according to NMOS IS-04
 - **Crosspoint matrix.** Click a sender and a receiver to connect them according to NMOS IS-05. Autotake or "stage and then TAKE" workflow.
-- **Multicast DHCP.** Hands out and tracks multicast addresses automatically from a pool you define. No more spreadsheets.
-- **Manual multicast editing.** Each sender's leg can be overridden with a custom address on the Details page; clearing the field falls back to the DHCP-reserved one. Duplicate-multicast detection runs across every active sender on the network. The offending leg is flagged in the UI so you can spot the conflict immediately.
+- **Multicast DHCP.** Hands out and tracks multicast addresses automatically from a pool you define. 
+- **Manual multicast editing.** Each sender's leg can be overridden with a custom address on the Details page; clearing the field falls back to the DHCP-reserved one. 
+- **Duplicate-multicast detection.** Runs across every active sender on the network. The offending leg is flagged in the UI so you can spot the conflict immediately.
 
 ![Duplicate-multicast detection and per-leg editing](Screenshots/Screenshot%202026-05-22%20at%2001.33.07.png)
-- **Live device overview.** Every node, device, sender and receiver from the NMOS registry, in real time updated via Websocket Connection from the Registry. Status dots show whether a device is online and locked to your house PTP.
+- **Live device overview.** Every node, device, sender and receiver from the NMOS registry, in real time updated via Websocket Connection from the Registry. 
 - **Hide devices.** Hide flows you don't want to see in the matrix without losing the device.
 - **Offline devices.** Crosspoint keeps track of offline devices or individual offline senders / receivers; 
 
 ![Forget badge on an offline sender](Screenshots/Screenshot%202026-05-22%20at%2001.38.13.png)
-- **Vendor Web-UI links.** One click opens the device's own configuration page in a new tab: The URL is built from a vendor recipe so it works the same across Matrox, Merging, QSC, Sony and the rest.
-- **DNS hostname push.** Each device's name lands as a `host_override` on your pfSense DNS resolver, so `Camera1.simplexity.training` resolves automatically. No more IP's
-- **Aliases.** Rename a device or a single flow to whatever your operators call it; the original NMOS label is still visible as a tooltip. NMOS IS-13 is planned to store the Aliases back to the Device
-- **PTP health.** Tell Crosspoint which Grand-Master ID is the "correct" one and every device shows a green / yellow / red dot at a glance. Devices that have lost lock or sit on a different GMID are obvious from across the room.
+- **Web-UI links.** One click opens the device's own configuration page in a new tab.
+- **DNS hostname push.** Each device's name lands as a `host_override` on your pfSense DNS resolver, so `Camera1.simplexity.training` resolves automatically. 
+- **Aliases.** Rename a device or a single flow to whatever your operators call it; the original NMOS label is still visible as a tooltip. NMOS IS-13 is planned to push  the Aliases back to the Device.
+- **Virtual Senders.** Want do use your old Devices without NMOS Support? Use them as Virtual-Sender in the Crosspoint Matrix by adding their SDP's in the Setup. 
+![Virtual Senders](Screenshots/Screenshot%2026-05-22%at%09.55.44.png)
+
+
+
+
+- **PTP health.** Tell Crosspoint which Grand-Master ID is the "correct" one and every device shows a green / yellow / red dot at a glance. 
 
 ![PTP health dots — locked, unlocked, wrong GMID](Screenshots/Screenshot%202026-05-22%20at%2001.41.33.png)
-- **Bandwidth estimates.** Crosspoint computes a Mbit/s estimate per flow from the SDP / IS-04 data — ST 2110-20 raw video (timings via VIC/DMT), JPEG-XS, L16/L24/L32 audio, AM824 and ANC. The number shows up in the Details view and the Lease Inventory so you can sanity-check what's running on the wire.
-- **SDP viewer.** One-click on the `SDP` button next to a sender opens the raw SDP manifest in a modal — copy-paste ready for debugging with a third-party tool or a colleague.
+- **Bandwidth estimates.** Crosspoint computes a Mbit/s estimate per flow from the SDP.
+- **SDP viewer.** One-click on the `SDP` button next to a sender opens the raw SDP manifest in a modal.
 
 ![SDP viewer modal](Screenshots/Screenshot%202026-05-22%20at%2001.38.20.png)
 - **Search and filter.** Three independent search boxes on the Details page: by name (device or flow alias), by codec / format (e.g. `L24`, `JPEG-XS`, `1080i50`), and by IP (`239.77.0.85` finds the one sender or receiver that uses that address). Tokens are matched against every matching field — type `Anubis 48` to narrow down to Anubis flows running at 48 kHz. Filters compose so you can quickly locate exactly the one flow you're looking for.
@@ -61,6 +68,11 @@ Per-vendor recipes for the "Open device Web UI" link on the Details page. Profil
 ![Device Web UI Link Setup](Screenshots/Screenshot%202026-05-22%20at%2000.56.24.png)
 
 ![Detected devices with resolved Web-UI links](Screenshots/Screenshot%202026-05-22%20at%2001.36.51.png)
+
+**Push Names to DNS**
+Setup Virtual Senders by adding their SDP. An Sender_ID is automatically generated. Connections are only Visible in Nmos-Crosspoint as the Sender_ID is only known to NMOS Crosspoint
+
+![Setup Virtual Senders](Screenshots/Screenshot%2026-05-22%at%09.58.22.png)
 
 **Push Names to DNS**
 Publish every device's name as a DNS entry on your pfSense Unbound resolver via the [pfRest](https://pfrest.org) API. Manual DNS entries on the same server are never touched — Crosspoint tags everything it owns. Forgetting a device also removes its DNS entry.

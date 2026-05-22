@@ -17,6 +17,10 @@ const {  parentPort } = require('worker_threads');
 class CrosspointUpdateThread{
 
     crosspointState: CrosspointState = {devices:[]};
+    // Operator-defined virtual senders (id / name / sdp). Pushed in from
+    // the main thread via the worker message channel. Materialised as the
+    // synthetic "Virtual Device" in crosspointShadow on every updateShadow.
+    virtualSenders: any[] = [];
     crosspointShadow: CrosspointShadowState = {devices:{}};
     nmosState : any = null;
     crosspointAlias = {};
@@ -127,6 +131,11 @@ class CrosspointUpdateThread{
 
         if(data.hasOwnProperty('nmosState')){
             this.nmosState = data.nmosState;
+            this.updateRequest ++;
+        }
+
+        if(data.hasOwnProperty('virtualSenders')){
+            this.virtualSenders = Array.isArray(data.virtualSenders) ? data.virtualSenders : [];
             this.updateRequest ++;
         }
 
@@ -694,6 +703,56 @@ class CrosspointUpdateThread{
         }
 
 
+        // ----- Materialise the "Virtual Device" -----
+        // All operator-defined virtual senders share one synthetic device
+        // in crosspointShadow. We rebuild the device's senders dict from
+        // scratch on every tick (no shadowy persistence — the source of
+        // truth is `this.virtualSenders` pushed in from the main thread).
+        try {
+            const VIRT_DEV_ID = "virtual_node";
+            let vs = Array.isArray(this.virtualSenders) ? this.virtualSenders : [];
+            if(vs.length === 0){
+                if(this.crosspointShadow.devices.hasOwnProperty(VIRT_DEV_ID)){
+                    delete this.crosspointShadow.devices[VIRT_DEV_ID];
+                    changed = true;
+                }
+            }else{
+                if(!this.crosspointShadow.devices.hasOwnProperty(VIRT_DEV_ID)){
+                    this.crosspointShadow.devices[VIRT_DEV_ID] = {
+                        id: VIRT_DEV_ID,
+                        num: this.nextDeviceNum++,
+                        order: -1,
+                        name: "Virtual Device",
+                        senders:  { audio:{},audiochannel:{},video:{},data:{},websocket:{},mqtt:{}, unknown:{} },
+                        receivers:{ audio:{},audiochannel:{},video:{},data:{},websocket:{},mqtt:{}, unknown:{} }
+                    } as any;
+                    changed = true;
+                }
+                (this.crosspointShadow.devices[VIRT_DEV_ID] as any)["available"] = true;
+                let dev:any = this.crosspointShadow.devices[VIRT_DEV_ID];
+                // Wipe & repopulate the senders buckets so removed entries
+                // disappear cleanly. The ID format `virtual_<vsId>` lets
+                // crosspointAbstraction.executeConnection look the SDP up.
+                dev.senders = { audio:{},audiochannel:{},video:{},data:{},websocket:{},mqtt:{}, unknown:{} };
+                let num = 1;
+                for(let v of vs){
+                    if(!v || typeof v.id !== "string") continue;
+                    let type = this.classifyVirtualSenderFromSdp(v.sdp || "");
+                    let flowId = "virtual_" + v.id;
+                    dev.senders[type][flowId] = {
+                        id: flowId,
+                        name: v.name || ("Virtual " + v.id),
+                        num: num++,
+                        order: -1,
+                        type: type,
+                        channelNumber: -1
+                    };
+                }
+                changed = true;
+            }
+        } catch(e) {}
+
+
         // ----- Prune ghost devices -----
         // A device entry in crosspointShadow.devices can outlive its NMOS
         // source. If it ends up with ZERO senders and ZERO receivers in the
@@ -784,6 +843,11 @@ class CrosspointUpdateThread{
                     }
                 }
             }
+            // Virtual device — always available; its senders carry the
+            // operator-pasted SDP and don't depend on any NMOS registry.
+            if(dev.id === "virtual_node"){
+                device.available = true;
+            }
             if(this.crosspointAlias.hasOwnProperty(dev.id)){
                 device.alias = this.crosspointAlias[dev.id];
             }else{
@@ -817,6 +881,23 @@ class CrosspointUpdateThread{
                         device.senderIds.push(send.id);
                         if(this.crosspointAlias.hasOwnProperty(send.id)){
                             source.alias = this.crosspointAlias[send.id];
+                        }
+                        // Virtual sender — always live (the SDP defines it).
+                        // Look up the operator-pasted SDP and attach it to
+                        // the flow so the Details-page SDP viewer can show
+                        // it without an upstream manifest fetch.
+                        if(send.id.startsWith("virtual_")){
+                            source.available = true;
+                            source.active = true;
+                            source.manifestOk = true;
+                            source.capabilities.transport = "rtp";
+                            source.format = "Virtual";
+                            let vsId = send.id.slice(8);
+                            let vs:any = (this.virtualSenders || []).find((v:any) => v && v.id === vsId);
+                            if(vs){
+                                source.sdp = (typeof vs.sdp === "string") ? vs.sdp : "";
+                                if(vs.name){ source.name = vs.name; }
+                            }
                         }
                         if(send.id.startsWith("nmos_")){
                             if(this.nmosState){ // TODO more error Handling ???
@@ -904,8 +985,26 @@ class CrosspointUpdateThread{
                                     receiver.capabilities.mediaTypes = this.nmosState.receivers[nmosId].caps?.media_types || [];
                                     let sub:any = this.nmosState.receivers[nmosId].subscription;
                                     if(sub && sub.active && sub.sender_id){
-                                        receiver.connectedFlow = "nmos_" + sub.sender_id;
-                                        device.connectedFlows.push("nmos_" + sub.sender_id);
+                                        // The sender_id can belong to a real
+                                        // NMOS sender OR to one of our virtual
+                                        // senders. NMOS first — O(1) dict
+                                        // lookup, the common case — and only
+                                        // fall back to the linear virtual
+                                        // search when no NMOS sender owns
+                                        // that UUID. Keeps the connect-feedback
+                                        // path snappy on large registries.
+                                        let flowRef:string;
+                                        if(this.nmosState && this.nmosState.senders && this.nmosState.senders.hasOwnProperty(sub.sender_id)){
+                                            flowRef = "nmos_" + sub.sender_id;
+                                        }else{
+                                            let vMatch:any = (this.virtualSenders || [])
+                                                .find((v:any) => v && v.senderId === sub.sender_id);
+                                            flowRef = vMatch
+                                                ? ("virtual_" + vMatch.id)
+                                                : ("nmos_" + sub.sender_id);
+                                        }
+                                        receiver.connectedFlow = flowRef;
+                                        device.connectedFlows.push(flowRef);
                                     }
                                 }
                             }
@@ -1216,6 +1315,23 @@ class CrosspointUpdateThread{
           }
         } catch (e) {}
         return 'unknown';
+    }
+
+    /**
+     * Best-effort type classification of a virtual sender from its raw SDP.
+     * We don't run the full sdpTransform here (kept light to avoid worker
+     * cold-start cost); a regex scan of the first `m=` line is enough.
+     */
+    classifyVirtualSenderFromSdp(sdp: string): "video" | "audio" | "data" | "mqtt" | "websocket" | "audiochannel" | "unknown" {
+        try {
+            let m = (sdp || "").match(/^m=(\w+)/m);
+            if(m){
+                let t = m[1].toLowerCase();
+                if(t === "video") return "video";
+                if(t === "audio") return "audio";
+            }
+        } catch(e) {}
+        return "data";
     }
 
     getNmosSenderClass(senderId: string): "video" | "audio" | "data" | "mqtt" | "websocket" | "audiochannel" | "unknown" {
