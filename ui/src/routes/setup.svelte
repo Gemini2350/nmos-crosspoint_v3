@@ -686,7 +686,12 @@
 
 <div class="content-container setup-page">
   <div class="setup-card">
-    <h2 class="setup-title">Setup</h2>
+    <h2 class="setup-title">
+      Setup
+      {#if (serverState as any).version}
+        <span class="setup-version">v{(serverState as any).version}</span>
+      {/if}
+    </h2>
     <p class="setup-subtitle">Edit the most-used NMOS Crosspoint settings. Persists to <code>./config/settings.json</code>.</p>
 
     {#if serverState.restartRequired}

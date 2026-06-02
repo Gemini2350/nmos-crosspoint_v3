@@ -37,10 +37,21 @@ export class NmosNodeRegistration {
     private settings:any;
     private heartbeatTimer:any = null;
     private heartbeatMs = 5000;
+    // How many heartbeat ticks between safety re-syncs of all resources.
+    // 12 ticks × 5 s = 60 s. The safety sync catches drift scenarios where
+    // the heartbeat is healthy (node present) but the registry has lost or
+    // never received some of our dependent resources — without this we'd
+    // be stuck POSTing nothing because 404 is never returned on
+    // /health/nodes/<id>.
+    private safetyResyncEveryNTicks = 12;
     // Generation counter — bumped on stop() / settings change so a stray
     // re-POST after the registry was torn down doesn't undo the teardown.
     private gen = 0;
     private running = false;
+    // Set while a syncResources() is mid-flight so concurrent triggers
+    // (heartbeat 404 + safety re-sync + setupConfig POST) don't interleave
+    // two POST sequences against the same registry.
+    private syncInFlight = false;
 
     // IDs we last POSTed to the registry, so syncResources() can DELETE
     // entries that disappeared from settings.virtualSenders.
@@ -105,21 +116,38 @@ export class NmosNodeRegistration {
         }
 
         SyncLog.log("info", "NMOS Node Registration", "Registering virtual Node + " + resources.senders.length + " sender(s) on " + url);
+
+        // POST the node first AND start the heartbeat right after — the
+        // registry expires the node after ~12 s without a heartbeat, and
+        // POSTing all dependent resources for a large virtualSenders list
+        // can take longer than that on a slow link. Starting the heartbeat
+        // before the dependent POSTs keeps the TTL fresh and prevents the
+        // "node disappears mid-registration" failure mode.
+        let nodePosted = false;
         try{
             await this.postResource(url, "node", resources.node);
-            await this.postResource(url, "device", resources.device);
-            for(let s of resources.sources) await this.postResource(url, "source", s);
-            for(let f of resources.flows)   await this.postResource(url, "flow",   f);
-            for(let s of resources.senders) await this.postResource(url, "sender", s);
-            this.snapshotIds(resources);
+            nodePosted = true;
         }catch(e:any){
-            SyncLog.log("error", "NMOS Node Registration", "Initial registration failed: " + (e?.message || e));
-            // Heartbeat-Re-Register-on-404 will pick up the slack once the
-            // registry comes back; no need to crash here.
+            SyncLog.log("error", "NMOS Node Registration", "Initial node POST failed (heartbeat 404 path will retry): " + (e?.message || e));
         }
 
         if(myGen !== this.gen) return;   // stop() was called mid-flight
         this.scheduleHeartbeat(myGen);
+
+        // Best-effort POST of the dependent resources. Individual failures
+        // are logged but don't abort the rest — the periodic safety re-sync
+        // inside the heartbeat will refill any gaps that the registry has.
+        try{
+            if(nodePosted){
+                await this.postResource(url, "device", resources.device);
+                for(let s of resources.sources) await this.postResource(url, "source", s);
+                for(let f of resources.flows)   await this.postResource(url, "flow",   f);
+                for(let s of resources.senders) await this.postResource(url, "sender", s);
+                this.snapshotIds(resources);
+            }
+        }catch(e:any){
+            SyncLog.log("warn", "NMOS Node Registration", "Dependent-resource POST failed during initial registration (safety re-sync will retry): " + (e?.message || e));
+        }
     }
 
 
@@ -134,17 +162,25 @@ export class NmosNodeRegistration {
 
     /** Re-POST every resource AND DELETE any whose id has since disappeared
      *  from settings. Cheaper than a stop()+start() round-trip and is what
-     *  we want when the operator added/removed/renamed a virtual sender. */
+     *  we want when the operator added/removed/renamed a virtual sender,
+     *  or when the periodic safety re-sync inside the heartbeat fires.
+     *
+     *  Guarded by `syncInFlight` so the three callers (heartbeat 404,
+     *  periodic safety re-sync, setupConfig POST) can't interleave two
+     *  POST sequences against the same registry.
+     */
     public async syncResources(){
         if(!this.running){
             return this.start();
         }
+        if(this.syncInFlight) return;
         let api = NmosNodeApi.instance;
         let url = this.apiBase();
         if(!api || !url) return;
         let resources = api.getResources();
         if(!resources.node) return;
 
+        this.syncInFlight = true;
         let myGen = this.gen;
         try{
             // 1) DELETE resources that vanished between this sync and the
@@ -164,6 +200,8 @@ export class NmosNodeRegistration {
             }
 
             // 2) POST every currently-known resource (idempotent → update).
+            //    Node FIRST — if it's missing in the registry, every
+            //    dependent POST below would return 404 otherwise.
             await this.postResource(url, "node", resources.node);
             await this.postResource(url, "device", resources.device);
             for(let s of resources.sources) await this.postResource(url, "source", s);
@@ -175,6 +213,8 @@ export class NmosNodeRegistration {
             SyncLog.log("info", "NMOS Node Registration", "Re-synchronised virtual sender resources to registry.");
         }catch(e:any){
             SyncLog.log("warn", "NMOS Node Registration", "Sync failed: " + (e?.message || e));
+        }finally{
+            this.syncInFlight = false;
         }
     }
 
@@ -238,6 +278,7 @@ export class NmosNodeRegistration {
 
 
     private scheduleHeartbeat(myGen:number){
+        let tickCount = 0;
         if(this.heartbeatTimer){ clearInterval(this.heartbeatTimer); }
         this.heartbeatTimer = setInterval(async () => {
             if(myGen !== this.gen) return;
@@ -246,19 +287,38 @@ export class NmosNodeRegistration {
             if(!api || !url) return;
             let node = api.getNode();
             if(!node) return;
+
+            tickCount++;
+            let triggeredResync = false;
+
             try{
                 await axios.post(url + "/health/nodes/" + node.id);
             }catch(e:any){
                 if(myGen !== this.gen) return;  // stop() raced us — drop it
                 if(e?.response?.status === 404){
-                    // Registry forgot about us (restart, garbage-collect …)
-                    // — re-publish everything to recover. syncResources()
-                    // itself rechecks this.gen so a stop() landing between
-                    // the 404 and the POSTs still wins.
+                    // Registry forgot the node entirely (restart,
+                    // garbage-collect …). Re-publish everything from
+                    // scratch — syncResources() itself rechecks this.gen so
+                    // a stop() landing between the 404 and the POSTs still
+                    // wins.
                     SyncLog.log("warn", "NMOS Node Registration", "Heartbeat returned 404 — re-registering.");
                     this.syncResources().catch(()=>{});
+                    triggeredResync = true;
                 }
                 // Any other error: just try again next tick.
+            }
+
+            // Safety re-sync. Without this, if /health/nodes returns 200
+            // (node is healthy) but the registry has lost or never
+            // received one of our dependent resources (device, source,
+            // flow, sender — happens when a partial registration was
+            // interrupted, or the registry garbage-collected stale
+            // resources), we would never notice. POSTs are idempotent, so
+            // running syncResources every safetyResyncEveryNTicks ticks is
+            // cheap and self-healing.
+            if(!triggeredResync && tickCount % this.safetyResyncEveryNTicks === 0){
+                SyncLog.log("verbose", "NMOS Node Registration", "Periodic safety re-sync of all resources.");
+                this.syncResources().catch(()=>{});
             }
         }, this.heartbeatMs);
     }

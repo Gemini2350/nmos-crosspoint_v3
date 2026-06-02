@@ -5,6 +5,16 @@
 
 
 const fs = require("fs");
+const path = require("path");
+
+// Build-version string for the UI's Setup page. Single source of truth is
+// server/package.json — bump the version there for each release and the
+// number shows up in the Setup header automatically. Compiled to
+// dist/server.js, so we walk one directory up to find package.json.
+let CROSSPOINT_VERSION = "unknown";
+try{
+    CROSSPOINT_VERSION = require(path.join(__dirname, "..", "package.json")).version || "unknown";
+}catch(e){}
 
 import {MdnsService} from "./lib/mdnsService"
 
@@ -388,7 +398,11 @@ function getSetupConfigState() {
         multicastStats,
         dnsPush,
         auth: { users: authUsers },
-        restartRequired: false
+        restartRequired: false,
+        // Build version (from server/package.json). UI renders it in the
+        // Setup page header so the operator can tell deploys apart at a
+        // glance.
+        version: CROSSPOINT_VERSION
     };
 }
 const setupConfigSync: SyncObject = new SyncObject("setupConfig", getSetupConfigState());

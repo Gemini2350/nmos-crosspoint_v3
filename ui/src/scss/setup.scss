@@ -98,6 +98,21 @@
         font-size: 1.6rem;
         font-weight: 700;
         margin-bottom: 4px;
+        // Build-version badge next to the page title. Small, muted —
+        // there for the operator's "which build am I on?" question, not
+        // for emphasis.
+        .setup-version {
+            display: inline-block;
+            margin-left: 10px;
+            padding: 2px 8px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            font-family: 'Roboto Mono', monospace;
+            color: theme('colors.slate.300');
+            background-color: theme('colors.base-300');
+            border-radius: 4px;
+            vertical-align: middle;
+        }
     }
     .setup-subtitle {
         color: theme('colors.slate.400');

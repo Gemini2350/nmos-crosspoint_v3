@@ -1229,15 +1229,18 @@ export class NmosRegistryConnector {
             throw new Error(senderInfo.error);
         }
 
+        // IS-05 v1.x: `requested_time` MUST NOT be supplied for
+        // `activate_immediate` activations. Sending `null` works on most
+        // devices but strict implementations (Merging Anubis) reject the
+        // whole PATCH with HTTP 500. So we leave it absent.
         let patch: any = {
-            activation: { 
+            activation: {
                 mode: "activate_immediate",
-                requested_time: null,
              },
             transport_params: [],
         };
 
-        
+
 
         if(senderInfo.senderId == "disconnect"){
             //
@@ -1251,9 +1254,9 @@ export class NmosRegistryConnector {
         }
 
         let deviceId
-        let device 
-        let nodeId 
-        let node 
+        let device
+        let nodeId
+        let node
         let receiver
         try{
             receiver = this.nmosState.receivers[receiverId]
@@ -1275,33 +1278,67 @@ export class NmosRegistryConnector {
             })
         });
 
-        
+        // Parse the SDP so we can build EXPLICIT transport_params per leg
+        // (multicast_ip / destination_port / source_ip). Some receivers
+        // (Anubis among them) reject `{interface_ip:"auto"}` when the SDP
+        // has fewer media blocks than the receiver has interface_bindings,
+        // so we MUST also disable the surplus legs with rtp_enabled:false.
+        let sdpLegs: Array<{ multicast_ip:string, destination_port:number, source_ip:string }> = [];
+        if(senderInfo.transport == "rtp.mcast" || senderInfo.transport == "rtp"){
+            try{
+                let parsedSdp:any = sdpTransform.parse(senderInfo.manifestFile || "");
+                if(parsedSdp && Array.isArray(parsedSdp.media)){
+                    sdpLegs = parsedSdp.media.map((m:any) => {
+                        let destIp = "";
+                        let srcIp  = "";
+                        try{
+                            if(m.sourceFilter && m.sourceFilter.destAddress){
+                                destIp = "" + m.sourceFilter.destAddress;
+                                srcIp  = "" + (m.sourceFilter.srcList || "");
+                            }else if(m.connection && m.connection.ip){
+                                destIp = ("" + m.connection.ip).split("/")[0];
+                            }else if(parsedSdp.connection && parsedSdp.connection.ip){
+                                destIp = ("" + parsedSdp.connection.ip).split("/")[0];
+                            }
+                        }catch(e){}
+                        let port = (typeof m.port === "number" && m.port > 0) ? m.port : 5004;
+                        return { multicast_ip: destIp, destination_port: port, source_ip: srcIp };
+                    });
+                }
+            }catch(e){
+                SyncLog.log("warning", "NMOS Connect", "Could not parse SDP for transport_params: " + (e?.message || e));
+            }
+        }
 
-
-        let interfaceCount = Math.min(senderInfo.interfaces.length, interfaces.length);
-        let i = 0;
-
-        for (i = 0; i < interfaceCount; i++) {
+        let receiverLegCount = receiver.interface_bindings.length;
+        for(let i = 0; i < receiverLegCount; i++){
+            if(senderInfo.senderId == "disconnect"){
+                patch.transport_params.push({ rtp_enabled: false });
+                continue;
+            }
             if(senderInfo.transport == "rtp.mcast" || senderInfo.transport == "rtp"){
-                patch.transport_params.push({interface_ip:"auto",rtp_enabled:true});
-            }else if(senderInfo.transport == "websocket"){
-                // TODO Websocket / MQTT
-                patch.transport_params.push({});
-            }else if(senderInfo.transport == "mqtt"){
+                // The SDP has exactly one transport entry per `m=` block.
+                // Receiver legs without a matching media block must be
+                // explicitly disabled — leaving them as `{rtp_enabled:true,
+                // interface_ip:"auto"}` makes strict receivers reject the
+                // whole PATCH because there's no media to bind to.
+                if(i < sdpLegs.length && sdpLegs[i].multicast_ip){
+                    let leg:any = {
+                        multicast_ip:     sdpLegs[i].multicast_ip,
+                        destination_port: sdpLegs[i].destination_port,
+                        rtp_enabled:      true
+                    };
+                    if(sdpLegs[i].source_ip){ leg.source_ip = sdpLegs[i].source_ip; }
+                    patch.transport_params.push(leg);
+                }else{
+                    patch.transport_params.push({ rtp_enabled: false });
+                }
+            }else if(senderInfo.transport == "websocket" || senderInfo.transport == "mqtt"){
                 // TODO Websocket / MQTT
                 patch.transport_params.push({});
             }else{
                 SyncLog.log("warning", "NMOS Connect", "Sender has no transport Information.");
                 throw new Error("Transport Type missing.");
-            }
-        }
-
-        interfaceCount = receiver.interface_bindings.length;
-        for (i = i; i < interfaceCount; i++) {
-            if(senderInfo.senderId == "disconnect"){
-                patch.transport_params.push({ rtp_enabled: false });
-            }else{
-                patch.transport_params.push({});
             }
         }
 
