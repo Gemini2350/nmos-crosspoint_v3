@@ -208,20 +208,15 @@
         }
 
         // Server-side enrichment (CrosspointAbstraction.enrichCrosspointState)
-        // already attaches nodeLabel / gmid / deviceUrl per device, and legs /
-        // codec / connectedSenderLabel per flow. No raw NMOS parsing happens
-        // in the UI any more.
+        // already attaches the final display name + tooltip (displayLabel /
+        // displayTooltip), plus nodeLabel / gmid / deviceUrl per device and
+        // legs / codec / connectedSenderLabel per flow. No label logic or raw
+        // NMOS parsing happens in the UI any more. nodeLabel is still read
+        // for the token-search (operators search by node name too).
         let nodeLabel:string = dev.nodeLabel || "";
         let deviceAlias = dev.alias || dev.name || "";
-        let deviceName = dev.name || deviceAlias;
-        let sameLabel = !!nodeLabel && (
-            nodeLabel.toLowerCase() === deviceAlias.toLowerCase() ||
-            nodeLabel.toLowerCase() === deviceName.toLowerCase()
-        );
-        let combinedLabel = (nodeLabel && !sameLabel) ? (nodeLabel + " - " + deviceAlias) : deviceAlias;
-        let tooltipStr = (nodeLabel && !sameLabel)
-            ? ("Node: " + nodeLabel + " | Device: " + deviceName)
-            : deviceName;
+        let combinedLabel = dev.displayLabel || deviceAlias;
+        let tooltipStr = dev.displayTooltip || combinedLabel;
 
 
         // Build sender rows

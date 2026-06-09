@@ -42,22 +42,13 @@
     let flowTypes = ["video", "audio", "data", "mqtt", "websocket", "audiochannel", "unknown"];
 
 
-    // Build a "Node - Device" label. The NMOS node label is already attached
-    // to every device by the server (CrosspointAbstraction.enrichCrosspointState
-    // → dev.nodeLabel), so no client-side NMOS walk is needed — the label
-    // arrives in the same crosspoint patch as the rest of the device, and
-    // there is no flash of "alias only" while a second `nmos` sync is being
-    // applied. When node label and alias match, the prefix is dropped so it
-    // doesn't read like "Anubis - Anubis".
+    // Display name is composed entirely on the server
+    // (CrosspointAbstraction.composeDeviceLabel → dev.displayLabel): it
+    // handles the "<Node> - <Device>" join, the operator-alias override and
+    // the offline node-label cache, identically for every UI page. We just
+    // render it; fall back to alias/name only if the field is missing.
     function deviceDisplayLabel(dev:any){
-      let baseAlias = dev?.alias || dev?.name || "";
-      let baseName  = dev?.name || baseAlias;
-      let nodeLabel = (dev?.nodeLabel || "").trim();
-      if(!nodeLabel) return baseAlias;
-      let same =
-          nodeLabel.toLowerCase() === (baseAlias||"").toLowerCase() ||
-          nodeLabel.toLowerCase() === (baseName ||"").toLowerCase();
-      return same ? baseAlias : (nodeLabel + " - " + baseAlias);
+      return dev?.displayLabel || dev?.alias || dev?.name || "";
     }
 
 

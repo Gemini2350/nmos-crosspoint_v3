@@ -1035,6 +1035,49 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         return "";
     }
 
+    // Last-known NMOS node label per crosspoint device id. Survives the
+    // device going offline (the live node disappears from nmosState) so the
+    // composed display name doesn't change when a device drops out. In-memory
+    // only — after a server restart a device that's still offline shows just
+    // its device name until it comes online once.
+    private nodeLabelCache: { [devId:string]: string } = {};
+
+    /**
+     * Compose the device's display name and tooltip from its NMOS node label,
+     * NMOS device name and the operator alias. Single source of truth for
+     * BOTH the Crosspoint matrix and the Details page — neither UI does any
+     * label logic of its own.
+     *
+     * Rules:
+     *   - If the operator set a custom alias (alias differs from the NMOS
+     *     name), that alias is the WHOLE name — no "<Node> - " prefix. This
+     *     matches the operator's intent: they renamed it, show their name.
+     *   - Otherwise, if a node label exists and differs from the device
+     *     name, show "<Node> - <Device>".
+     *   - Otherwise just the device name.
+     * Behaviour is identical whether the device is online or offline (the
+     * node label is cached across offline transitions, see nodeLabelCache).
+     */
+    private composeDeviceLabel(nodeLabel:string, name:string, alias:string): { label:string, tooltip:string } {
+        let nl   = (nodeLabel || "").trim();
+        let nm   = (name || "").trim();
+        let al   = (alias || "").trim();
+        let hasUserAlias = !!al && al.toLowerCase() !== nm.toLowerCase();
+
+        if(hasUserAlias){
+            // Operator-chosen name wins outright. Tooltip keeps the origin
+            // visible for reference.
+            let tip = nl ? ("Node: " + nl + " | Device: " + nm) : nm;
+            return { label: al, tooltip: tip };
+        }
+
+        let nodeDiffers = !!nl && nl.toLowerCase() !== nm.toLowerCase();
+        if(nodeDiffers){
+            return { label: nl + " - " + nm, tooltip: "Node: " + nl + " | Device: " + nm };
+        }
+        return { label: nm, tooltip: nm };
+    }
+
     // Find the NMOS node behind a crosspoint device id (handles nmos_<devId>,
     // nmosgrp_<hash> and the virtual_node placeholder).
     private resolveDeviceNodeInfo(dev:CrosspointDevice): { nmosDevId:string, nodeId:string, nodeLabel:string, nmosDevLabel:string } {
@@ -1140,15 +1183,34 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         let isVirtualByDev:    { [devId:string]: boolean } = {};
         for(let dev of this.crosspointState.devices){
             let info = this.resolveDeviceNodeInfo(dev);
-            nodeLabelByDev[dev.id] = info.nodeLabel;
+
+            // Offline devices have no live NMOS node, so resolveDeviceNodeInfo
+            // returns an empty nodeLabel. Cache the last-known node label per
+            // device id and reuse it while the device is offline so the
+            // displayed name stays "<Node> - <Device>" exactly as it was
+            // online (instead of collapsing to just the device name).
+            let nodeLabel = info.nodeLabel;
+            if(nodeLabel){
+                this.nodeLabelCache[dev.id] = nodeLabel;
+            }else if(this.nodeLabelCache[dev.id]){
+                nodeLabel = this.nodeLabelCache[dev.id];
+            }
+            nodeLabelByDev[dev.id] = nodeLabel;
+
             isVirtualByDev[dev.id] = !!virtualDeviceCpId && dev.id === virtualDeviceCpId;
             let gm = this.buildGmidFromNode(info.nodeId);
             let d = dev as CrosspointDevice;
-            d.nodeLabel  = info.nodeLabel;
+            d.nodeLabel  = nodeLabel;
             d.gmid       = gm.gmid;
             d.gmidLocked = gm.locked;
             d.deviceUrl  = this.buildDeviceUrl(info.nodeId);
             d.isVirtual  = isVirtualByDev[dev.id];
+
+            // Final display name + tooltip, computed once here so every UI
+            // page renders the same string (no per-page label logic).
+            let composed = this.composeDeviceLabel(d.nodeLabel, d.name, d.alias);
+            d.displayLabel   = composed.label;
+            d.displayTooltip = composed.tooltip;
         }
 
         // Pass 2: sender legs + codec, build {flowId → enriched-sender-info}
@@ -1341,7 +1403,11 @@ export interface CrosspointDevice {
     gmid?:string,
     gmidLocked?:boolean,
     deviceUrl?:string,
-    isVirtual?:boolean
+    isVirtual?:boolean,
+    // Final display name + tooltip — single source of truth for every UI
+    // page (see composeDeviceLabel). UI renders these verbatim.
+    displayLabel?:string,
+    displayTooltip?:string
   }
 export interface CrosspointTotals {
     devices:   { avail:number, total:number },
