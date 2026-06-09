@@ -97,7 +97,7 @@ export class NmosRegistryConnector {
                 }
 
             } catch (e) {}
-            this.syncNmos.setState(this.nmosState);
+            this.scheduleSyncNmos();
             this.updateCrosspoint();
         }
         // ----- dev cleanup
@@ -215,6 +215,25 @@ export class NmosRegistryConnector {
     // stale auto-reconnect aiming at A.
     private registryGen = 0;
 
+
+    // ----- syncNmos coalescing -----
+    // The registry can fire dozens of WebSocket grains per second on a busy
+    // network, and the raw flow used to call syncNmos.setState() on EVERY
+    // one of them. setState deep-clones the entire nmosState and runs a
+    // full JSON-patch diff against the previous copy — on a registry with
+    // thousands of senders/flows that's milliseconds of CPU per call, burnt
+    // even for a no-op version bump. We coalesce: every change schedules a
+    // single setState ~80 ms later, so a burst of N grains collapses into
+    // one clone+diff+broadcast. The published state is always the latest
+    // (we read this.nmosState at flush time, not at schedule time).
+    private syncNmosTimer:any = null;
+    private scheduleSyncNmos(){
+        if(this.syncNmosTimer != null) return;
+        this.syncNmosTimer = setTimeout(()=>{
+            this.syncNmosTimer = null;
+            try{ this.syncNmos.setState(this.nmosState); }catch(e){}
+        }, 80);
+    }
 
     updateCrosspointTimer:any = null;
     updateCrosspointLimit = 0;
@@ -402,6 +421,9 @@ export class NmosRegistryConnector {
             flows: {}, nodes: {}, senderActiveData: {}, channelmapping: {},
             sendersManifestDetail: {}
         };
+        // Cancel any pending coalesced sync and push the empty state right
+        // away so the UI clears immediately on a registry switch.
+        if(this.syncNmosTimer != null){ clearTimeout(this.syncNmosTimer); this.syncNmosTimer = null; }
         this.syncNmos.setState(this.nmosState);
         this.updateSyncConnectionState();
     }
@@ -560,7 +582,7 @@ export class NmosRegistryConnector {
         }
         // TODO
         //fs.writeFileSync("./state/devnmosstate/devnmosstate.json", JSON.stringify(this.nmosState));
-        this.syncNmos.setState(this.nmosState);
+        this.scheduleSyncNmos();
         if(newItem){
             if(this.updateNewNmosItemTimer){
                 clearTimeout(this.updateNewNmosItemTimer);
@@ -645,7 +667,7 @@ export class NmosRegistryConnector {
             }
         }
 
-        this.syncNmos.setState(this.nmosState);
+        this.scheduleSyncNmos();
         this.updateCrosspoint();
 
     }
@@ -717,7 +739,7 @@ export class NmosRegistryConnector {
                                     try{
                                         // TODO Test
                                         delete this.nmosState["sendersManifestDetail"][senderId];
-                                        this.syncNmos.setState(this.nmosState);
+                                        this.scheduleSyncNmos();
                                     }catch(e){}
                                 }else{
                                     if(this.nmosState["sendersManifestDetail"][senderId] && this.nmosState["sendersManifestDetail"][senderId]._RAWSDP && this.nmosState["sendersManifestDetail"][senderId]._RAWSDP.length > 10 ){
@@ -726,7 +748,7 @@ export class NmosRegistryConnector {
                                         }
                                     }
                                     this.nmosState["sendersManifestDetail"][senderId] = sdp;
-                                    this.syncNmos.setState(this.nmosState);
+                                    this.scheduleSyncNmos();
                                     this.updateCrosspoint();
                                 }
                             }else{
@@ -757,7 +779,7 @@ export class NmosRegistryConnector {
                     // remove element
                     try {
                         delete this.nmosState["sendersManifestDetail"][g.path];
-                        this.syncNmos.setState(this.nmosState);
+                        this.scheduleSyncNmos();
                         this.updateCrosspoint();
                     } catch (e) {}
                     
@@ -828,7 +850,7 @@ export class NmosRegistryConnector {
 
                     // Always publish the new state so the UI sees changes even
                     // for inactive senders (e.g. after setFlowMulticast).
-                    this.syncNmos.setState(this.nmosState);
+                    this.scheduleSyncNmos();
                     this.updateCrosspoint();
                     if(!gotData){
                         // no-op: kept for clarity
@@ -852,7 +874,7 @@ export class NmosRegistryConnector {
                     // remove element
                     try {
                         delete this.nmosState.senderActiveData[g.path];
-                        this.syncNmos.setState(this.nmosState);
+                        this.scheduleSyncNmos();
                         this.updateCrosspoint();
                     } catch (e) {}
                     
@@ -885,10 +907,23 @@ export class NmosRegistryConnector {
             list.push(entry);
         });
         this.syncConnectionState.setState({ registries: list });
-        setTimeout(()=>{
+
+        // Re-arm the periodic refresh as a SINGLE timer. This method is also
+        // called directly on connection open/close and on registry switch;
+        // without clearing the previous timer first, every such call used to
+        // spawn an additional independent 2 s loop, so the number of
+        // structuredClone()+setState passes per second grew without bound
+        // over the lifetime of the process. Keeping one handle caps it at
+        // exactly one refresh every 2 s.
+        if(this.connectionStateTimer != null){
+            clearTimeout(this.connectionStateTimer);
+        }
+        this.connectionStateTimer = setTimeout(()=>{
+            this.connectionStateTimer = null;
             this.updateSyncConnectionState();
-        },2000)
+        }, 2000);
     }
+    private connectionStateTimer:any = null;
 
 
     reconnectOnChanges(senderId:string){
