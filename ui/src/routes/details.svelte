@@ -683,10 +683,48 @@
       }
       sdpModal.showModal();
     }
+    // Feedback state for the Copy button — flips to "Copied!" briefly.
+    let sdpCopied:boolean = false;
     function copySdp(){
+      let ok = false;
+      // navigator.clipboard only exists in a secure context (HTTPS or
+      // localhost). NMOS Crosspoint is typically served over plain HTTP on
+      // a LAN IP, where navigator.clipboard is undefined — so we fall back
+      // to the legacy execCommand("copy") path via a hidden textarea, which
+      // works in non-secure contexts too.
       try{
-        navigator.clipboard.writeText(sdpModalContent);
+        if(navigator.clipboard && typeof navigator.clipboard.writeText === "function"){
+          navigator.clipboard.writeText(sdpModalContent)
+            .then(()=>{ flashCopied(); })
+            .catch(()=>{ ok = legacyCopy(sdpModalContent); if(ok) flashCopied(); });
+          return;
+        }
       }catch(e){}
+      ok = legacyCopy(sdpModalContent);
+      if(ok) flashCopied();
+    }
+    function legacyCopy(text:string):boolean{
+      try{
+        let ta = document.createElement("textarea");
+        ta.value = text;
+        // Keep it off-screen but still selectable.
+        ta.style.position = "fixed";
+        ta.style.top = "-1000px";
+        ta.style.left = "-1000px";
+        ta.setAttribute("readonly", "");
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        let ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      }catch(e){ return false; }
+    }
+    let sdpCopiedTimer:any = null;
+    function flashCopied(){
+      sdpCopied = true;
+      if(sdpCopiedTimer){ clearTimeout(sdpCopiedTimer); }
+      sdpCopiedTimer = setTimeout(()=>{ sdpCopied = false; }, 1500);
     }
 
   </script>
@@ -1044,7 +1082,7 @@
       <h3 class="font-bold text-lg">SDP – {sdpModalTitle}</h3>
       <pre class="det-sdp-content">{sdpModalContent}</pre>
       <div class="modal-action">
-        <button on:click={copySdp} class="btn">Copy</button>
+        <button on:click={copySdp} class="btn {sdpCopied ? "btn-success" : ""}">{sdpCopied ? "Copied!" : "Copy"}</button>
         <form method="dialog">
           <button class="btn">Close</button>
         </form>
