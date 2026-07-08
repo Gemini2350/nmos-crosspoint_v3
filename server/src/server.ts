@@ -29,7 +29,8 @@ import { CrosspointAbstraction } from "./lib/crosspointAbstraction";
 import { SyncObject } from "./lib/SyncServer/syncObject";
 import { parseSettings } from "./lib/parseSettings";
 import { MulticastLeaseManager } from "./lib/multicastLeaseManager";
-import { DnsPushService } from "./lib/dnsPushService";
+import { DdnsService } from "./lib/ddnsService";
+import { AudioMonitorService } from "./lib/audioMonitor";
 import { NmosNodeApi } from "./lib/NmosNode/NmosNodeApi";
 import { NmosNodeRegistration } from "./lib/NmosNode/NmosNodeRegistration";
 
@@ -135,8 +136,21 @@ if(users){
 const crosspoint = new CrosspointAbstraction(settings);
 const nmosConnector = new NmosRegistryConnector(settings);
 const multicastLeaseManager = new MulticastLeaseManager(settings);
-const dnsPushService = new DnsPushService();
-try { dnsPushService.setSettings(settings.dnsPush); } catch (e) {}
+const ddnsService = new DdnsService();
+try { ddnsService.setSettings(settings.ddns); } catch (e) {}
+
+// Audio monitor: IGMP-joins a sender's multicast on demand, transcodes the
+// PCM to Opus and streams it to the browser via WebRTC. Feature-gated by
+// settings.audioMonitor.enabled (Setup page).
+const audioMonitor = new AudioMonitorService();
+// Snap-disconnect: when the browser's WebSocket drops (tab closed, network
+// gone), tear down that client's audio listeners immediately — IGMP-leave +
+// PeerConnection close without waiting ~30 s for the DTLS timeout.
+try{
+    server.onClientDisconnect.push((c) => {
+        try{ audioMonitor.dropWsClient(c).catch(()=>{}); }catch(e){}
+    });
+}catch(e){}
 
 // Register the virtual NMOS Node with the configured registry. Slight delay
 // so the registry-side subscriptions in NmosRegistryConnector have a chance
@@ -185,12 +199,12 @@ if (_originalReconnect && NmosRegistryConnector.instance) {
 // Inventory of currently-pushed DNS entries, exposed to the Setup page.
 function getDnsPushedSnapshot() {
     return {
-        entries: dnsPushService.getPushedEntries(),
+        entries: ddnsService.getPushedEntries(),
         updatedAt: new Date().toISOString()
     };
 }
 const dnsPushedSync: SyncObject = new SyncObject("dnsPushed", getDnsPushedSnapshot());
-dnsPushService.setOnChange(() => {
+ddnsService.setOnChange(() => {
     try { dnsPushedSync.setState(getDnsPushedSnapshot()); } catch (e) {}
 });
 
@@ -257,19 +271,37 @@ function getMulticastLeaseSnapshot() {
     };
 }
 const multicastLeasesSync: SyncObject = new SyncObject("multicastLeases", getMulticastLeaseSnapshot());
-multicastLeaseManager.setOnChange(() => {
+
+// Change-detection for the lease snapshot. The snapshot carries an
+// `updatedAt` timestamp, so a naive setState on every crosspoint tick would
+// ALWAYS produce a non-empty JSON-patch (the timestamp differs) and
+// broadcast it to every client that has the Setup page open — up to 10×/s
+// of useless deep-clone + diff + WebSocket traffic. We compare the
+// meaningful payload (leases + stats, WITHOUT updatedAt) against the last
+// published version and skip the publish entirely when nothing changed.
+let lastLeasePayload = "";
+function publishLeaseSnapshotIfChanged() {
     try {
-        multicastLeasesSync.setState(getMulticastLeaseSnapshot());
+        let snap = getMulticastLeaseSnapshot();
+        let payload = JSON.stringify({ leases: snap.leases, stats: snap.stats });
+        if (payload === lastLeasePayload) return;
+        lastLeasePayload = payload;
+        multicastLeasesSync.setState(snap);
     } catch (e) {}
+}
+
+multicastLeaseManager.setOnChange(() => {
+    publishLeaseSnapshotIfChanged();
 });
 
 // The lease snapshot's liveStatus + bitrate are sourced from the crosspoint
 // state, so we need to republish whenever that state changes (e.g. a sender
 // becomes active or its bitrate is recomputed). The lease manager itself
-// doesn't see these transitions.
+// doesn't see these transitions. publishLeaseSnapshotIfChanged makes this
+// a no-op unless something lease-visible actually changed.
 try {
     crosspoint.onStateUpdated = () => {
-        try { multicastLeasesSync.setState(getMulticastLeaseSnapshot()); } catch (e) {}
+        publishLeaseSnapshotIfChanged();
     };
 } catch (e) {}
 
@@ -349,19 +381,20 @@ function getSetupConfigState() {
         ? MulticastLeaseManager.instance.getStats()
         : { pool:{used:0,total:0}, audio:{used:0,total:0}, video:{used:0,total:0} });
 
-    // DNS Push settings — the API key is never sent back to the client.
-    // `apiKeySet` lets the UI show a placeholder so the user knows a key is
-    // configured without leaking the actual value.
-    let dnsPushCfg:any = (settings.dnsPush && typeof settings.dnsPush === "object") ? settings.dnsPush : {};
-    let dnsPush = {
-        enabled:     !!dnsPushCfg.enabled,
-        serverIp:    (typeof dnsPushCfg.serverIp === "string")   ? dnsPushCfg.serverIp : "",
-        serverPort:  (typeof dnsPushCfg.serverPort === "number") ? dnsPushCfg.serverPort : 443,
-        protocol:    dnsPushCfg.protocol === "http" ? "http" : "https",
-        apiKey:      "",
-        apiKeySet:   !!(typeof dnsPushCfg.apiKey === "string" && dnsPushCfg.apiKey.length > 0),
-        domain:      (typeof dnsPushCfg.domain === "string" && dnsPushCfg.domain) ? dnsPushCfg.domain : "local",
-        insecureTLS: dnsPushCfg.insecureTLS !== false,
+    // DDNS settings (RFC 2136) — the TSIG secret is never sent back to the
+    // client. `keySecretSet` lets the UI show a placeholder so the user
+    // knows a secret is configured without leaking the actual value.
+    let ddnsCfg:any = (settings.ddns && typeof settings.ddns === "object") ? settings.ddns : {};
+    let ddns = {
+        enabled:      !!ddnsCfg.enabled,
+        server:       (typeof ddnsCfg.server === "string") ? ddnsCfg.server : "",
+        port:         (typeof ddnsCfg.port === "number") ? ddnsCfg.port : 53,
+        zone:         (typeof ddnsCfg.zone === "string") ? ddnsCfg.zone : "",
+        ttl:          (typeof ddnsCfg.ttl === "number") ? ddnsCfg.ttl : 300,
+        keyName:      (typeof ddnsCfg.keyName === "string") ? ddnsCfg.keyName : "",
+        keySecret:    "",
+        keySecretSet: !!(typeof ddnsCfg.keySecret === "string" && ddnsCfg.keySecret.length > 0),
+        keyAlgorithm: (typeof ddnsCfg.keyAlgorithm === "string" && ddnsCfg.keyAlgorithm) ? ddnsCfg.keyAlgorithm : "hmac-sha256",
     };
 
     // Auth snapshot — just the configured username(s) so the UI can show
@@ -381,9 +414,15 @@ function getSetupConfigState() {
     // IS-05, the IP comes straight from the operator-pasted SDP).
     let virtualNodeCfg = (settings.virtualNode && typeof settings.virtualNode === "object") ? settings.virtualNode : {};
     let virtualNode = {
-        enabled:  virtualNodeCfg.enabled !== false,
+        enabled:  virtualNodeCfg.enabled === true,
         deviceId: (typeof virtualNodeCfg.deviceId === "string") ? virtualNodeCfg.deviceId : "",
         nodeId:   (typeof virtualNodeCfg.nodeId   === "string") ? virtualNodeCfg.nodeId   : ""
+    };
+
+    // Audio monitor: master toggle for the headphone button on the
+    // Details page (WebRTC listen-in on audio senders).
+    let audioMonitorCfg = {
+        enabled: !!(settings.audioMonitor && settings.audioMonitor.enabled)
     };
 
     return {
@@ -392,11 +431,12 @@ function getSetupConfigState() {
         vendorProfiles,
         virtualSenders,
         virtualNode,
+        audioMonitor: audioMonitorCfg,
         multicastRange,
         autoMulticast,
         autoActivateInactiveSender,
         multicastStats,
-        dnsPush,
+        ddns,
         auth: { users: authUsers },
         restartRequired: false,
         // Build version (from server/package.json). UI renders it in the
@@ -433,7 +473,7 @@ try{
  * given a user alias, that alias wins; otherwise we use the node label.
  *
  * Returns an array of `{nodeId, displayName, ip}` ready for
- * DnsPushService.scheduleNodePush / syncAll.
+ * DdnsService.scheduleNodePush / syncAll.
  */
 function collectDnsPushNodes(): { nodeId:string, displayName:string, ip:string }[] {
     let out: { nodeId:string, displayName:string, ip:string }[] = [];
@@ -593,24 +633,32 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 if(typeof postData.autoActivateInactiveSender === "boolean"){
                     next.autoActivateInactiveSender = postData.autoActivateInactiveSender;
                 }
-                if(postData.dnsPush && typeof postData.dnsPush === "object"){
-                    let d = postData.dnsPush;
-                    if(typeof d.enabled === "boolean"){ next.dnsPush.enabled = d.enabled; }
-                    if(typeof d.serverIp === "string"){ next.dnsPush.serverIp = d.serverIp.trim(); }
-                    if(d.serverPort !== undefined){
-                        let p = parseInt(""+d.serverPort);
-                        if(!isNaN(p) && p > 0 && p < 65536){ next.dnsPush.serverPort = p; }
+                if(postData.ddns && typeof postData.ddns === "object"){
+                    let d = postData.ddns;
+                    if(typeof d.enabled === "boolean"){ next.ddns.enabled = d.enabled; }
+                    if(typeof d.server === "string"){ next.ddns.server = d.server.trim(); }
+                    if(d.port !== undefined){
+                        let p = parseInt(""+d.port);
+                        if(!isNaN(p) && p > 0 && p < 65536){ next.ddns.port = p; }
                     }
-                    if(d.protocol === "http" || d.protocol === "https"){ next.dnsPush.protocol = d.protocol; }
-                    // Empty/undefined apiKey means "keep the existing one" —
-                    // we never send the real value out, so the UI couldn't
+                    if(typeof d.zone === "string"){ next.ddns.zone = d.zone.trim().replace(/\.+$/, ""); }
+                    if(d.ttl !== undefined){
+                        let t = parseInt(""+d.ttl);
+                        if(!isNaN(t) && t > 0){ next.ddns.ttl = t; }
+                    }
+                    if(typeof d.keyName === "string"){ next.ddns.keyName = d.keyName.trim().replace(/\.+$/, ""); }
+                    // Empty/undefined keySecret means "keep the existing one"
+                    // — we never send the real value out, so the UI couldn't
                     // round-trip it on save. Any non-empty string replaces it.
-                    if(typeof d.apiKey === "string" && d.apiKey.length > 0){
-                        next.dnsPush.apiKey = d.apiKey;
-                        next.dnsPush.apiKeySet = true;
+                    if(typeof d.keySecret === "string" && d.keySecret.length > 0){
+                        next.ddns.keySecret = d.keySecret.trim();
+                        next.ddns.keySecretSet = true;
                     }
-                    if(typeof d.domain === "string" && d.domain.trim()){ next.dnsPush.domain = d.domain.trim(); }
-                    if(typeof d.insecureTLS === "boolean"){ next.dnsPush.insecureTLS = d.insecureTLS; }
+                    // "none" = unsigned RFC 2136 updates (server authorises
+                    // by source IP instead of a TSIG key).
+                    if(typeof d.keyAlgorithm === "string" && ["hmac-sha256","hmac-sha512","hmac-sha1","hmac-md5","none"].includes(d.keyAlgorithm)){
+                        next.ddns.keyAlgorithm = d.keyAlgorithm;
+                    }
                 }
                 if(Array.isArray(postData.vendorProfiles)){
                     next.vendorProfiles = postData.vendorProfiles
@@ -672,6 +720,11 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                         next.virtualNode.enabled = postData.virtualNode.enabled;
                     }
                 }
+                if(postData.audioMonitor && typeof postData.audioMonitor === "object" && typeof postData.audioMonitor.enabled === "boolean"){
+                    if(next.audioMonitor){
+                        next.audioMonitor.enabled = postData.audioMonitor.enabled;
+                    }
+                }
             }
 
             // Reflect into the in-memory settings object
@@ -696,7 +749,7 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             // the master enable toggle). If yes, rebuild + re-POST below.
             let virtualSendersChanged = Array.isArray(next.virtualSenders);
             let gmidChanged           = prevAcceptableGmid !== settings.acceptableGmid;
-            let prevVirtualEnabled    = !settings.virtualNode || settings.virtualNode.enabled !== false;
+            let prevVirtualEnabled    = !!(settings.virtualNode && settings.virtualNode.enabled === true);
             let nextVirtualEnabled    = (next.virtualNode && typeof next.virtualNode.enabled === "boolean")
                                             ? next.virtualNode.enabled
                                             : prevVirtualEnabled;
@@ -766,6 +819,15 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             settings.autoMulticast = { enabled: !!next.autoMulticast.enabled };
             settings.reconnectReceiversOnSenderChange = !!next.autoMulticast.reconnectReceiversOnSenderChange;
             settings.autoActivateInactiveSender = !!next.autoActivateInactiveSender;
+
+            // Audio monitor toggle. When the operator just turned the feature
+            // OFF, tear down any active producers immediately — don't wait
+            // for the UI to unsubscribe its listeners.
+            let audioMonWas = !!(settings.audioMonitor && settings.audioMonitor.enabled);
+            settings.audioMonitor = { enabled: !!(next.audioMonitor && next.audioMonitor.enabled) };
+            if(audioMonWas && !settings.audioMonitor.enabled){
+                try{ audioMonitor.shutdownAll().catch(()=>{}); }catch(e){}
+            }
             // Strip the obsolete in-memory field too so the next settings.json
             // write doesn't carry it forward.
             if(settings.hasOwnProperty("reconnectReceiversOnMulticastChange")){
@@ -777,23 +839,23 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 }
             }catch(e){}
 
-            // ----- DNS Push settings -----
-            // Preserve the existing API key if the form sent us an empty one.
-            let dnsPushWasEnabled = !!(settings.dnsPush && settings.dnsPush.enabled);
-            let prevApiKey = (settings.dnsPush && typeof settings.dnsPush.apiKey === "string") ? settings.dnsPush.apiKey : "";
-            let newApiKey = next.dnsPush.apiKey || prevApiKey;
-            settings.dnsPush = {
-                enabled:     !!next.dnsPush.enabled,
-                serverIp:    next.dnsPush.serverIp,
-                serverPort:  next.dnsPush.serverPort,
-                protocol:    next.dnsPush.protocol,
-                apiKey:      newApiKey,
-                domain:      next.dnsPush.domain,
-                insecureTLS: !!next.dnsPush.insecureTLS,
+            // ----- DDNS settings (RFC 2136) -----
+            // Preserve the existing TSIG secret if the form sent us an empty one.
+            let prevKeySecret = (settings.ddns && typeof settings.ddns.keySecret === "string") ? settings.ddns.keySecret : "";
+            let newKeySecret = next.ddns.keySecret || prevKeySecret;
+            settings.ddns = {
+                enabled:      !!next.ddns.enabled,
+                server:       next.ddns.server,
+                port:         next.ddns.port,
+                zone:         next.ddns.zone,
+                ttl:          next.ddns.ttl,
+                keyName:      next.ddns.keyName,
+                keySecret:    newKeySecret,
+                keyAlgorithm: next.ddns.keyAlgorithm,
             };
             try{
-                if(DnsPushService.instance){
-                    DnsPushService.instance.setSettings(settings.dnsPush);
+                if(DdnsService.instance){
+                    DdnsService.instance.setSettings(settings.ddns);
                 }
             }catch(e){}
             // Adopt-vs-Renew sweep. Fires in two cases:
@@ -821,21 +883,17 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 }catch(e){}
             }
 
-            // If DNS Push was just enabled (or any field changed while
-            // enabled), push every currently known NMOS node so the user
-            // doesn't have to wait for a node-update event to see entries
-            // appear.
+            // If DDNS was just enabled (or any field changed while enabled),
+            // push every currently known NMOS node so the user doesn't have
+            // to wait for a node-update event to see records appear.
             try{
-                if(settings.dnsPush.enabled && DnsPushService.instance){
+                if(settings.ddns.enabled && DdnsService.instance){
                     let nodes = collectDnsPushNodes();
                     if(nodes.length > 0){
-                        DnsPushService.instance.syncAll(nodes).catch(()=>{});
+                        DdnsService.instance.syncAll(nodes).catch(()=>{});
                     }
                 }
             }catch(e){}
-            // Silence unused-warning — kept for potential future use (e.g.
-            // logging "DNS Push enabled" only on the off→on transition).
-            void dnsPushWasEnabled;
 
             // Persist to settings.json
             try{
@@ -854,14 +912,14 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 }
             }catch(e){}
 
-            // Scrub the DNS Push password from the response — the version of
-            // `next` we built above carries the cleartext password the user
+            // Scrub the TSIG secret from the response — the version of
+            // `next` we built above carries the cleartext secret the user
             // just typed, which must never make it back over the wire. The
             // canonical "what the UI is allowed to see" shape comes from
-            // getSetupConfigState() (password is always "" there).
+            // getSetupConfigState() (keySecret is always "" there).
             try{
-                let safeDnsPush = getSetupConfigState().dnsPush;
-                next.dnsPush = safeDnsPush;
+                let safeDdns = getSetupConfigState().ddns;
+                next.ddns = safeDdns;
             }catch(e){}
 
             // A registry change is hot-applied: tear down every active query
@@ -1098,6 +1156,109 @@ server.addRoute("POST", "setMulticast","global", (client: WebsocketClient, query
 
 
 
+
+
+// ----- Audio Monitor (WebRTC listen-in on audio senders) -----
+//
+// One subscribe call per browser tab: opens (or reuses) a multicast UDP
+// receiver on the server, returns a WebRTC SDP offer carrying an Opus
+// audio track. The browser answers, exchanges trickled ICE, then plays
+// the Opus stream through <audio>. Unsubscribe tears the consumer down;
+// the producer's IGMP join is released when its last listener leaves.
+//
+// `listenerId` is `<wsClientId>:<browserUuid>` so the dropClient cleanup
+// on disconnect can find every consumer that belonged to that tab.
+
+server.addRoute("POST", "audioMonitorSubscribe","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            // Gate: feature must be enabled in Setup.
+            if(!(settings.audioMonitor && settings.audioMonitor.enabled)){
+                reject({message:"Audio monitor is disabled in Setup."});
+                return;
+            }
+            let senderId   = (typeof postData?.senderId   === "string") ? postData.senderId   : "";
+            let listenerId = (typeof postData?.listenerId === "string") ? postData.listenerId : "";
+            let sdp        = (typeof postData?.sdp        === "string") ? postData.sdp        : "";
+            if(!senderId || !listenerId || !sdp){
+                reject({message:"audioMonitorSubscribe: senderId, listenerId and sdp are required"});
+                return;
+            }
+            audioMonitor.subscribe({
+                senderId, listenerId, sdp,
+                channels: Array.isArray(postData?.channels) ? postData.channels : undefined,
+                iface: (typeof postData?.iface === "string") ? postData.iface : undefined
+            }).then((res:any) => {
+                if(res && res.ok){
+                    // Track which WS client owns this listener, so we
+                    // can tear it down quickly on tab close.
+                    try{ audioMonitor.registerListenerForClient(client, listenerId); }catch(e){}
+                    resolve({message:200, data:{ offer: res.offer }});
+                }else{
+                    reject({message: res?.error || "audioMonitorSubscribe failed"});
+                }
+            }).catch((e:any) => reject({message: e?.message || "audioMonitorSubscribe error"}));
+        }catch(e:any){ reject({message: e?.message || "audioMonitorSubscribe error"}); }
+    });
+});
+
+server.addRoute("POST", "audioMonitorAnswer","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            let listenerId = (typeof postData?.listenerId === "string") ? postData.listenerId : "";
+            let answer     = postData?.answer;
+            if(!listenerId || !answer){
+                reject({message:"audioMonitorAnswer: listenerId and answer required"});
+                return;
+            }
+            audioMonitor.answer(listenerId, answer).then((r:any) => {
+                if(r.ok) resolve({message:200, data:{}});
+                else     reject({message: r.error || "audioMonitorAnswer failed"});
+            }).catch((e:any) => reject({message: e?.message || "audioMonitorAnswer error"}));
+        }catch(e:any){ reject({message: e?.message || "audioMonitorAnswer error"}); }
+    });
+});
+
+server.addRoute("POST", "audioMonitorIce","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve) => {
+        try{
+            let listenerId = (typeof postData?.listenerId === "string") ? postData.listenerId : "";
+            let candidate  = postData?.candidate;
+            if(listenerId && candidate){
+                audioMonitor.ice(listenerId, candidate).catch(()=>{});
+            }
+            resolve({message:200, data:{}});
+        }catch(e){ resolve({message:200, data:{}}); }
+    });
+});
+
+server.addRoute("POST", "audioMonitorSetChannels","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            let listenerId = (typeof postData?.listenerId === "string") ? postData.listenerId : "";
+            let channels  = postData?.channels;
+            if(!listenerId || !Array.isArray(channels) || channels.length !== 2){
+                reject({message:"audioMonitorSetChannels: listenerId + channels[2] required"});
+                return;
+            }
+            let ok = audioMonitor.setChannels(listenerId, [Number(channels[0])|0, Number(channels[1])|0]);
+            if(ok) resolve({message:200, data:{}});
+            else   reject({message:"no such listener / producer"});
+        }catch(e:any){ reject({message: e?.message || "audioMonitorSetChannels error"}); }
+    });
+});
+
+server.addRoute("POST", "audioMonitorUnsubscribe","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve) => {
+        try{
+            let listenerId = (typeof postData?.listenerId === "string") ? postData.listenerId : "";
+            if(listenerId){
+                audioMonitor.unsubscribe(listenerId).catch(()=>{});
+            }
+            resolve({message:200, data:{}});
+        }catch(e){ resolve({message:200, data:{}}); }
+    });
+});
 
 
 server.addRoute("POST", "togglehidden","global", (client: WebsocketClient, query:string[], postData: any) => {

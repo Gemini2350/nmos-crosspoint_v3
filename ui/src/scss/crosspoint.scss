@@ -3,7 +3,9 @@ $cp-padding: 4px;
 $cp-round: 6px;
 $cp-sizePP: 32px;
 $cp-textLength: 160px;
-$cp-headerSize: 232px;    /* 160 +padding + padding + 32 +32  text+expander + info */ 
+$cp-headerSize: 232px;    /* 160 +padding + padding + 32 +32  text+expander + info */
+$cp-bandSize: 24px;       /* slim node band above sender columns */
+$cp-vbandSize: 20px;      /* vertical node strip left of the receiver rows */
 
 $cp-color-grey:#aaaaaa;
 $cp-color-dark-grey:#333333;
@@ -11,10 +13,15 @@ $cp-color-video: theme('colors.green.500');
 $cp-color-audio:theme('colors.amber.500');
 $cp-color-data:theme('colors.blue.500');
 
+// Connection-state colours (broadcast convention):
+//   green  = active, confirmed by NMOS — everything is fine
+//   violet = prepared / preview / hover — staged, nothing on the wire yet
+//   orange = working / pending — command sent, waiting for confirmation
+//   red    = reserved for ERRORS only
 $cp-color-green:#46aa14;
+$cp-color-violet:#8b5cf6;
+$cp-color-orange:#f97316;
 $cp-color-red:#e21e1e;
-$cp-color-warn:#b45a01;
-$cp-color-blue:#006dd2;
 
 
 
@@ -156,18 +163,18 @@ $cp-border: 1px solid transparent;
             }
             &.prepareddisconnect {
                 svg {
-                    color:theme('colors.red.700');
+                    color:theme('colors.violet.500');
                 }
             }
             &.workingdisconnect {
                 svg {
-                    color:theme('colors.green.700');
+                    color:theme('colors.orange.500');
                 }
             }
 
             &.previewdisconnect {
                 svg {
-                    color:theme('colors.red.700');
+                    color:theme('colors.violet.500');
                 }
             }
 
@@ -262,7 +269,7 @@ $cp-border: 1px solid transparent;
             padding-bottom:4px;
             .cp-label {
             border-radius: 0px 0px $cp-round $cp-round;
-            
+
         }}
 
         
@@ -420,6 +427,111 @@ $cp-border: 1px solid transparent;
             }
         }
 
+        // ----- Node bands: devices grouped by their NMOS node -----
+        // Slim, deliberately subtle: muted text + a thin bracket line, no
+        // filled pill — the bands are orientation aids, not primary content.
+        .cp-table thead tr.cp-node-band-row th {
+            position: sticky;
+            top: 0;
+            z-index: 9;
+            height: $cp-bandSize;
+            min-height: $cp-bandSize;
+            max-height: $cp-bandSize;
+            min-width: 0;
+            max-width: none;
+            padding: 0;
+            vertical-align: bottom;
+            background-color: theme('colors.base-100');
+
+            &.cp-node-band-corner {
+                left: 0;
+                z-index: 11;
+                min-width: $cp-headerSize;
+                max-width: $cp-headerSize;
+            }
+        }
+
+        .cp-node-band-label {
+            display: block;
+            margin: 0 8px;
+            padding: 1px 8px 2px 8px;
+            font-size: 11px;
+            font-weight: 500;
+            line-height: 15px;
+            color: theme('colors.slate.500');
+            border-bottom: 1px solid rgba(150, 150, 150, 0.3);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            text-align: center;
+            cursor: default;
+        }
+
+        // Narrow extra column hosting the vertical node strip (only rendered
+        // while at least one receiver group exists).
+        .cp-table thead th.cp-node-vcol {
+            min-width: $cp-vbandSize;
+            max-width: $cp-vbandSize;
+            background-color: theme('colors.base-100');
+        }
+        .cp-table thead th.cp-corner {
+            min-width: $cp-headerSize;
+            max-width: $cp-headerSize;
+        }
+        // The strip itself: one rowspan cell per node group (single-device
+        // nodes included), vertical text bracketing the node's receiver rows.
+        .cp-table tbody td.cp-node-vband {
+            min-width: $cp-vbandSize;
+            max-width: $cp-vbandSize;
+            position: sticky;
+            left: 0;
+            z-index: 9;
+            background-color: theme('colors.base-100');
+
+            .cp-node-vband-label {
+                position: absolute;
+                top: 3px;
+                bottom: 3px;
+                left: 2px;
+                writing-mode: vertical-rl;
+                text-orientation: mixed;
+                font-size: 11px;
+                font-weight: 500;
+                color: theme('colors.slate.500');
+                border-left: 1px solid rgba(150, 150, 150, 0.3);
+                padding-left: 2px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                cursor: default;
+            }
+        }
+
+        // With the band row present the whole header grows by $cp-bandSize:
+        // the device header row sticks below the band row and the corner
+        // cross covers the taller intersection.
+        &.cp-has-node-bands {
+            .cp-header-cross {
+                height: calc(#{$cp-headerSize} + #{$cp-bandSize});
+            }
+            .cp-table thead tr:not(.cp-node-band-row) th {
+                top: $cp-bandSize;
+            }
+        }
+        // With the vertical strip column present everything sticky-left
+        // shifts right by its width.
+        &.cp-has-node-vbands {
+            .cp-header-cross {
+                width: calc(#{$cp-headerSize} + #{$cp-vbandSize});
+            }
+            .cp-table tbody tr td.cp-line-stick {
+                left: $cp-vbandSize;
+            }
+            .cp-table thead tr.cp-node-band-row th.cp-node-band-corner {
+                left: $cp-vbandSize;
+            }
+        }
+
         .cp-connect-flow {
             div {
                 background-color: rgba(150,150,150,0.05);
@@ -481,26 +593,39 @@ $cp-border: 1px solid transparent;
                     cursor: pointer;
                     
                     &.active {
-                        background-color: $cp-color-blue;
-                    }
-                    
-                    &.prepared {
-                        background-color: $cp-color-red;
-                    }
-                    &.error {
-                        background-color:$cp-color-warn;
-                    }
-
-                    &.preview {
-                        background-color:$cp-color-red;
-                    }
-
-                    &.working {
                         background-color: $cp-color-green;
                     }
 
-                    &:hover {
+                    &.prepared {
+                        background-color: $cp-color-violet;
+                    }
+                    &.error {
                         background-color:$cp-color-red;
+                    }
+
+                    &.preview {
+                        background-color:$cp-color-violet;
+                    }
+
+                    &.working {
+                        background-color: $cp-color-orange;
+                    }
+
+                    // Active connection staged for disconnect (AutoTake
+                    // off): the wire is still up — faded green fill — but
+                    // the dashed ring announces the teardown on TAKE
+                    // (violet = prepared, orange = working after TAKE).
+                    &.cp-disc-prepared {
+                        background-color: rgba(70, 170, 20, 0.35);
+                        border: 2px dashed $cp-color-violet;
+                    }
+                    &.cp-disc-working {
+                        background-color: rgba(70, 170, 20, 0.35);
+                        border: 2px dashed $cp-color-orange;
+                    }
+
+                    &:hover {
+                        background-color:$cp-color-violet;
                     }
 
                 }
@@ -519,7 +644,7 @@ $cp-border: 1px solid transparent;
         .cp-connect-device {
             span {
                 &.active {
-                    background-color: $cp-color-blue;
+                    background-color: $cp-color-green;
                     top: 8px;
                     left: 8px;
                     border-radius: 8px;
@@ -599,18 +724,18 @@ html[data-theme="light"] {
                 }
                 &.prepareddisconnect {
                     svg {
-                        color:theme('colors.red.700');
+                        color:theme('colors.violet.600');
                     }
                 }
                 &.workingdisconnect {
                     svg {
-                        color:theme('colors.green.700');
+                        color:theme('colors.orange.600');
                     }
                 }
     
                 &.previewdisconnect {
                     svg {
-                        color:theme('colors.red.700');
+                        color:theme('colors.violet.600');
                     }
                 }
     
@@ -696,15 +821,15 @@ html[data-theme="light"] {
             .cp-connect-device {
                 span {
                     &.active {
-                        background-color: $cp-color-blue;
+                        background-color: $cp-color-green;
                     }
-    
-                    
+
+
                 }
             }
-    
-            
-    
+
+
+
         }
     }
 }

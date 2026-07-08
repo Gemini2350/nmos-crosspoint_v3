@@ -3,7 +3,7 @@ import { LoggedError, SyncLog } from "./syncLog";
 import { error } from "console";
 import { NmosRegistryConnector } from "./nmosConnector";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
-import { DnsPushService } from "./dnsPushService";
+import { DdnsService } from "./ddnsService";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -28,7 +28,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         SyncLog.info("crosspoint", "Starting Worker thread.");
         this.worker = new Worker(__dirname + '/crosspointUpdateThread.js');
         this.worker.on('message', (message)=>{
-            let data = JSON.parse(message);
+            // Hot-path messages (full crosspointState every tick) are posted
+            // as plain objects and arrive via the worker's built-in
+            // structured clone — no JSON round-trip. Legacy string messages
+            // (small command acks) are still parsed for compatibility.
+            let data = (typeof message === "string") ? JSON.parse(message) : message;
             this.updateReturn(data);
         });
         this.worker.on('error', (error)=>{
@@ -198,11 +202,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                         // groups (grouphint-derived devices don't map 1:1 to a
                         // single node).
                         try{
-                            if(DnsPushService.instance && typeof dev.id === "string" && dev.id.startsWith("nmos_")){
+                            if(DdnsService.instance && typeof dev.id === "string" && dev.id.startsWith("nmos_")){
                                 let nmosDevId = dev.id.slice(5);
                                 let nmosDev:any = this.nmosState?.devices?.[nmosDevId];
                                 if(nmosDev && nmosDev.node_id){
-                                    DnsPushService.instance.removeNode(nmosDev.node_id).catch(()=>{});
+                                    DdnsService.instance.removeNode(nmosDev.node_id).catch(()=>{});
                                 }
                             }
                         }catch(e:any){
@@ -247,7 +251,61 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     }
 
 
+    // Operator-set display names for whole NMOS nodes (the node band /
+    // group header in the UI). Kept here — not in the worker — because the
+    // node label is an enrichment-time concept. Persisted across restarts.
+    private nodeAliases: { [nodeId:string]: string } = (() => {
+        try{
+            const fs = require("fs");
+            let parsed = JSON.parse(fs.readFileSync("./state/nodeAliases.json"));
+            if(parsed && typeof parsed === "object" && !Array.isArray(parsed)){ return parsed; }
+        }catch(e){}
+        return {};
+    })();
+    private persistNodeAliases(){
+        try{
+            const fs = require("fs");
+            fs.writeFileSync("./state/nodeAliases.json", JSON.stringify(this.nodeAliases, null, 4));
+        }catch(e:any){
+            SyncLog.log("warn", "Crosspoint", "Could not persist node aliases: " + (e?.message || e));
+        }
+    }
+
+    changeNodeAlias(nodeId:string, alias:string){
+        return new Promise((resolve) => {
+            let val = (alias && alias.trim()) ? alias.trim() : "";
+            if(val){ this.nodeAliases[nodeId] = val; }
+            else{ delete this.nodeAliases[nodeId]; }
+            this.persistNodeAliases();
+            // Worker round-trip → enrichment re-applies labels with the new
+            // alias and the sync object broadcasts the change to every UI.
+            this.update();
+            // DDNS: re-publish the node under its new display name.
+            try{
+                if(DdnsService.instance){
+                    let node:any = this.nmosState?.nodes?.[nodeId];
+                    let ip = "";
+                    try{
+                        if(node && typeof node.href === "string" && node.href){
+                            ip = new URL(node.href).hostname;
+                        }
+                    }catch(e){}
+                    let displayName = val || node?.label || "";
+                    if(ip && displayName){
+                        DdnsService.instance.scheduleNodePush(nodeId, displayName, ip);
+                    }
+                }
+            }catch(e){}
+            resolve({});
+        });
+    }
+
     changeAlias(id:string, alias:string){
+        // "node_<nodeId>" ids rename the NMOS node's display name (band /
+        // group header) instead of a single crosspoint device.
+        if(typeof id === "string" && id.startsWith("node_")){
+            return this.changeNodeAlias(id.slice(5), alias);
+        }
         return new Promise((resolve, reject) => {
             this.worker.postMessage(JSON.stringify({
                 changeAlias:{id:id, alias:alias}
@@ -286,12 +344,12 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             // without waiting for the next NMOS node update. Empty alias
             // falls back to the node label.
             try{
-                if(DnsPushService.instance){
+                if(DdnsService.instance){
                     let targets = this.resolveDnsNodesForCrosspointId(id);
                     for(let t of targets){
                         let displayName = (alias && alias.trim()) ? alias.trim() : (t.nodeLabel || "");
                         if(t.nodeIp && displayName){
-                            DnsPushService.instance.scheduleNodePush(t.nodeId, displayName, t.nodeIp);
+                            DdnsService.instance.scheduleNodePush(t.nodeId, displayName, t.nodeIp);
                         }
                     }
                 }
@@ -835,10 +893,15 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     }
 
     update(){
-        this.worker.postMessage(JSON.stringify({
+        // Post the object directly — worker_threads transfers it via V8
+        // structured clone, which is both faster than JSON.stringify+parse
+        // and avoids materialising a multi-megabyte intermediate string on
+        // every tick (the nmosState of a large registry easily exceeds
+        // several MB; this used to run up to 10×/second).
+        this.worker.postMessage({
             nmosState:this.nmosState,
             virtualSenders:this.virtualSenders
-        }))
+        })
     }
 
     updateReturn(data:any){
@@ -1041,6 +1104,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     // only — after a server restart a device that's still offline shows just
     // its device name until it comes online once.
     private nodeLabelCache: { [devId:string]: string } = {};
+    // Same idea for the node ID: keeps devices grouped under their node on
+    // the Details page even while they are offline.
+    private nodeIdCache: { [devId:string]: string } = {};
 
     /**
      * Compose the device's display name and tooltip from its NMOS node label,
@@ -1058,24 +1124,38 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
      * Behaviour is identical whether the device is online or offline (the
      * node label is cached across offline transitions, see nodeLabelCache).
      */
-    private composeDeviceLabel(nodeLabel:string, name:string, alias:string): { label:string, tooltip:string } {
+    private composeDeviceLabel(nodeLabel:string, name:string, alias:string): { label:string, tooltip:string, short:string } {
         let nl   = (nodeLabel || "").trim();
         let nm   = (name || "").trim();
         let al   = (alias || "").trim();
         let hasUserAlias = !!al && al.toLowerCase() !== nm.toLowerCase();
 
+        // Grouphint groups (BCP-002-01) arrive from the worker named
+        // "<NMOS-Device> - <Group>". When that device part just repeats the
+        // node label (the common one-device-per-node case), drop it — the
+        // node name is already shown by the node band / "<Node> - " prefix,
+        // so the entry reads "<Group>" instead of "<Node> - <Node> - <Group>".
+        let nmShort = nm;
+        if(nl && nm.toLowerCase().startsWith(nl.toLowerCase() + " - ")){
+            let rest = nm.substring(nl.length + 3).trim();
+            if(rest){ nmShort = rest; }
+        }
+
+        // `short` is the device-only name — used by the Details page and the
+        // Crosspoint matrix inside a node group, where the node label
+        // already sits in the group header.
         if(hasUserAlias){
             // Operator-chosen name wins outright. Tooltip keeps the origin
             // visible for reference.
             let tip = nl ? ("Node: " + nl + " | Device: " + nm) : nm;
-            return { label: al, tooltip: tip };
+            return { label: al, tooltip: tip, short: al };
         }
 
-        let nodeDiffers = !!nl && nl.toLowerCase() !== nm.toLowerCase();
+        let nodeDiffers = !!nl && nl.toLowerCase() !== nmShort.toLowerCase();
         if(nodeDiffers){
-            return { label: nl + " - " + nm, tooltip: "Node: " + nl + " | Device: " + nm };
+            return { label: nl + " - " + nmShort, tooltip: "Node: " + nl + " | Device: " + nm, short: nmShort };
         }
-        return { label: nm, tooltip: nm };
+        return { label: nmShort, tooltip: nm, short: nmShort };
     }
 
     // Find the NMOS node behind a crosspoint device id (handles nmos_<devId>,
@@ -1197,10 +1277,28 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             }
             nodeLabelByDev[dev.id] = nodeLabel;
 
+            // Node id, cached across offline transitions just like the
+            // label, so node grouping on the Details page stays stable.
+            let nodeId = info.nodeId;
+            if(nodeId){
+                this.nodeIdCache[dev.id] = nodeId;
+            }else if(this.nodeIdCache[dev.id]){
+                nodeId = this.nodeIdCache[dev.id];
+            }
+
+            // Operator rename of the whole node: keep the raw registry label
+            // around for the rename modal, then let the alias win everywhere.
+            let nodeLabelRaw = nodeLabel;
+            let nodeAlias = nodeId ? (this.nodeAliases[nodeId] || "") : "";
+            if(nodeAlias){ nodeLabel = nodeAlias; }
+
             isVirtualByDev[dev.id] = !!virtualDeviceCpId && dev.id === virtualDeviceCpId;
             let gm = this.buildGmidFromNode(info.nodeId);
             let d = dev as CrosspointDevice;
             d.nodeLabel  = nodeLabel;
+            d.nodeLabelRaw = nodeLabelRaw;
+            d.nodeAlias  = nodeAlias;
+            d.nodeId     = nodeId;
             d.gmid       = gm.gmid;
             d.gmidLocked = gm.locked;
             d.deviceUrl  = this.buildDeviceUrl(info.nodeId);
@@ -1209,8 +1307,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             // Final display name + tooltip, computed once here so every UI
             // page renders the same string (no per-page label logic).
             let composed = this.composeDeviceLabel(d.nodeLabel, d.name, d.alias);
-            d.displayLabel   = composed.label;
-            d.displayTooltip = composed.tooltip;
+            d.displayLabel      = composed.label;
+            d.displayTooltip    = composed.tooltip;
+            d.displayLabelShort = composed.short;
         }
 
         // Pass 2: sender legs + codec, build {flowId → enriched-sender-info}
@@ -1400,6 +1499,13 @@ export interface CrosspointDevice {
     // Optional so the worker thread, which constructs the bare device
     // record, doesn't need to know about the post-enrichment fields.
     nodeLabel?:string,
+    // Raw registry node label + operator node alias — the rename modal
+    // shows the origin, nodeLabel above already has the alias applied.
+    nodeLabelRaw?:string,
+    nodeAlias?:string,
+    // NMOS Node id backing this device (cached across offline transitions).
+    // The Details page groups devices that share a node under one header.
+    nodeId?:string,
     gmid?:string,
     gmidLocked?:boolean,
     deviceUrl?:string,
@@ -1407,7 +1513,10 @@ export interface CrosspointDevice {
     // Final display name + tooltip — single source of truth for every UI
     // page (see composeDeviceLabel). UI renders these verbatim.
     displayLabel?:string,
-    displayTooltip?:string
+    displayTooltip?:string,
+    // Device-only name (no "<Node> - " prefix) for use where the node
+    // label is already shown as a group header on the Details page.
+    displayLabelShort?:string
   }
 export interface CrosspointTotals {
     devices:   { avail:number, total:number },

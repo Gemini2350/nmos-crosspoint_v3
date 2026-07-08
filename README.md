@@ -24,7 +24,7 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 
 ![Forget badge on an offline sender](Screenshots/Screenshot%202026-05-22%20at%2001.38.13.png)
 - **Web-UI links.** One click opens the device's own configuration page in a new tab.
-- **DNS hostname push.** Each device's name lands as a `host_override` on your pfSense DNS resolver, so `Camera1.simplexity.training` resolves automatically. (option)
+- **DDNS hostname push.** Each device's name lands as an A record on your DNS server via standard RFC 2136 Dynamic Updates (TSIG-signed) — works with BIND9, Knot, PowerDNS, Windows DNS —, so `Camera1.media.example.net` resolves automatically. (option)
 - **Aliases.** Rename a device or a single flow to whatever your operators call it; the original NMOS label is still visible as a tooltip. NMOS IS-13 is planned to push  the Aliases back to the Device.
 - **Virtual Senders.** Want do use your old Devices without NMOS Support? Use them as Virtual-Sender in the Crosspoint Matrix by adding their SDP's in the Setup. 
 - **PTP health.** Tell Crosspoint which Grand-Master ID is the "correct" one and every device shows a green / yellow / red dot at a glance. 
@@ -66,8 +66,8 @@ Setup Virtual Senders by adding their SDP. An Sender_ID is automatically generat
 
 ![Setup Virtual Senders](Screenshots/Screenshot%202026-05-22%20at%2009.58.22.png)
 
-**Push Names to DNS**
-Publish every device's name as a DNS entry on your pfSense Unbound resolver via the [pfRest](https://pfrest.org) API. Manual DNS entries on the same server are never touched — Crosspoint tags everything it owns. Forgetting a device also removes its DNS entry.
+**Push Names to DNS (DDNS)**
+Publish every device's name as an A record via RFC 2136 Dynamic Updates with a TSIG key. Point it at any updates-capable DNS server (BIND9, Knot, PowerDNS, Windows DNS), name the zone and paste the key — Crosspoint keeps a local inventory of the records it created and only ever touches those. Forgetting a device also removes its DNS record.
 
 ![Push names to DNS](Screenshots/Screenshot%202026-05-22%20at%2000.56.32.png)
 
@@ -113,7 +113,7 @@ That starts the Crosspoint container. Point a browser at the host IP on port 80.
 
 | Path                    | What's in it                                                          |
 | ----------------------- | --------------------------------------------------------------------- |
-| `./server/config`       | `settings.json` (registry, multicast pool, vendor profiles, DNS Push, …) and `users.json`. |
+| `./server/config`       | `settings.json` (registry, multicast pool, vendor profiles, DDNS, …) and `users.json`. |
 | `./server/state`        | Multicast lease history, crosspoint shadow, hidden-flag list.         |
 
 The default account is `admin / admin`. Change it from Setup → "Change Login & Password" on first run.
@@ -126,7 +126,7 @@ flowchart TD
     server["NMOS Crosspoint\nServer"] <-- WebSocket\nupdates, commands --> client["Web UI"]
     node1["NMOS Node\n(Device)"]
     node2["NMOS Node\n(Device)"]
-    pfsense["pfSense\n(DNS Resolver)"]
+    dns["DNS Server\n(BIND9 / Knot / ...)"]
 
     registry["NMOS\nRegistry"] -- WebSocket --> server
     node1 -- Updates --> registry
@@ -134,7 +134,7 @@ flowchart TD
 
     server -- "REST / NMOS IS-05\nGET SDP, connect (PATCH)" --> node1
     server -- "REST / NMOS IS-05\nGET SDP, connect (PATCH)" --> node2
-    server -- "REST (pfRest)\nhost_override push" --> pfsense
+    server -- "RFC 2136\nDynamic Update (TSIG)" --> dns
 ```
 
 
@@ -149,11 +149,7 @@ flowchart TD
 
 ## Development
 
-```shell
-docker-compose up nmos-crosspoint-dev
-```
+In `/server` and `/ui` each run `npm install && npm run dev` — the server restarts on change (tsc-watch), the UI hot-reloads (vite) and proxies its WebSocket to the local server.
 
-Live-reloading Node server. Alternatively, in `/server` and `/ui` run `npm install && npm run dev` for a local session.
-
-The debug routes `http://<host>/debug` (full live state) and `http://<host>/log` (server log stream) are useful when tracing connection or patch behaviour.
+The **Logs** page in the nav shows the live server log stream; `http://<host>/debug` exposes the full live state for tracing connection or patch behaviour.
 

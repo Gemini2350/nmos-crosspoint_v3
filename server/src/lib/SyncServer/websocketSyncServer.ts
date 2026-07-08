@@ -159,10 +159,19 @@ export class WebsocketSyncServer {
         }
     }
 
+    // Subscribers fired when a WS client disconnects. Used by the audio
+    // monitor to tear down per-client RTC peer connections immediately
+    // when the browser tab closes — otherwise the producer keeps
+    // running for ~30 s until werift's DTLS keep-alives time out.
+    public onClientDisconnect: ((client: WebsocketClient) => void)[] = [];
+
     disconnectClient(client: WebsocketClient) {
         const index = this.clientList.indexOf(client);
         if (index > -1) {
             this.clientList.splice(index, 1);
+        }
+        for (const cb of this.onClientDisconnect) {
+            try { cb(client); } catch (e) {}
         }
     }
 

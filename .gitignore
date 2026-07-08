@@ -6,3 +6,6 @@ server/state/*
 server/public/*
 server/log/*
 _tempFiles/*
+.DS_Store
+**/.DS_Store
+ui/node_modules/

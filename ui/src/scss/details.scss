@@ -5,288 +5,272 @@ $det-color-data:  theme('colors.blue.500');
 
 .details-page {
 
-    // Fixed table layout so column widths come purely from <colgroup> and
-    // cannot shift when an inner row (Forget button, edit form, …) grows.
-    .details-tree {
+    // ----- Card layout -----
+    // One card per device instead of a single giant table. Cards live inside
+    // the ScrollArea; card headers stick to the top while scrolling through
+    // a long device.
+    .det-cards {
+        padding: 4px 10px 24px 2px;
+    }
+
+    .det-card {
+        background-color: theme('colors.base-200');
+        border: 1px solid theme('colors.base-300');
+        border-radius: 10px;
+        margin-bottom: 10px;
+        overflow: visible;
+
+        &.det-card-offline {
+            opacity: 0.75;
+        }
+    }
+
+    // ----- Node grouping -----
+    // Devices sharing an NMOS node sit under one node header. Standalone
+    // devices are wrapped too (uniform markup) but display:contents makes
+    // the wrapper invisible to layout — they render exactly as before.
+    .det-node-single { display: contents; }
+
+    .det-node-group {
+        border: 1px solid theme('colors.base-300');
+        border-radius: 12px;
+        margin-bottom: 10px;
+        padding: 0 8px 2px 8px;
+        overflow: visible;
+
+        .det-card {
+            margin-bottom: 8px;
+            &:last-child { margin-bottom: 8px; }
+        }
+    }
+
+    .det-node-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 6px;
+        cursor: pointer;
+        // Sticks above the device-card headers while scrolling the group.
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        background-color: theme('colors.base-100');
+        border-radius: 12px 12px 0 0;
+
+        &:hover .det-node-name { color: theme('colors.slate.100'); }
+    }
+
+    .det-node-name {
+        font-weight: 700;
+        font-size: 0.95rem;
+        color: theme('colors.slate.300');
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .det-card-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        cursor: pointer;
+        position: sticky;
+        top: 0;
+        z-index: 4;
+        background-color: theme('colors.base-200');
+        border-radius: 10px;
+
+        &:hover {
+            background-color: theme('colors.base-300');
+        }
+    }
+    // Inside a node group the node header is sticky at top:0 — the device
+    // card headers stick right below it instead of colliding.
+    .det-card-in-group .det-card-head {
+        top: 38px;
+    }
+
+    .det-chevron {
+        display: inline-flex;
+        width: 18px;
+        flex: 0 0 18px;
+        svg {
+            width: 16px;
+            height: 16px;
+            color: theme('colors.slate.400');
+            transition: transform 0.12s ease;
+        }
+        &.det-chevron-open svg {
+            transform: rotate(90deg);
+        }
+    }
+
+    .det-card-title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    // Small PTP clock icon — replaces the old "Locked to GMID …" text line.
+    // Green = locked (to the accepted GM when one is configured), amber =
+    // present but unlocked / wrong GM. Full GMID lives in the tooltip.
+    .det-ptp {
+        display: inline-flex;
+        flex: 0 0 auto;
+        svg { width: 15px; height: 15px; }
+        &.det-ptp-ok   svg { color: theme('colors.success'); }
+        &.det-ptp-warn svg { color: theme('colors.warning'); }
+    }
+
+    .det-head-spacer { flex: 1; }
+
+    .det-device-counts {
+        color: theme('colors.slate.400');
+        font-size: 0.78rem;
+        font-family: 'Roboto Mono', monospace;
+        white-space: nowrap;
+    }
+
+    // Status dot (device online / PTP state)
+    .det-device-dot {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        flex: 0 0 9px;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
+    }
+    .det-device-dot-success { background-color: theme('colors.success'); }
+    .det-device-dot-warning { background-color: theme('colors.warning'); }
+    .det-device-dot-error   { background-color: theme('colors.error');   }
+
+    // ----- Hover-revealed actions -----
+    // Pencils / SDP / web-UI link only appear while the pointer is over the
+    // row (or the element has keyboard focus). On touch devices there is no
+    // hover, so they stay faintly visible instead.
+    .det-hover {
+        opacity: 0;
+        transition: opacity 0.12s ease;
+    }
+    .det-card-head:hover .det-hover,
+    .det-card-head:focus-within .det-hover,
+    .det-node-head:hover .det-hover,
+    .det-node-head:focus-within .det-hover,
+    tr.det-flow:hover .det-hover,
+    tr.det-flow:focus-within .det-hover {
+        opacity: 1;
+    }
+    @media (hover: none) {
+        .det-hover { opacity: 0.6; }
+    }
+
+    // Uniform small icon button used for all inline actions.
+    .det-icon-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        flex: 0 0 22px;
+        border-radius: 4px;
+        color: theme('colors.slate.300');
+        cursor: pointer;
+        background: none;
+        border: none;
+        padding: 0;
+
+        svg { width: 14px; height: 14px; }
+
+        &:hover {
+            background-color: theme('colors.base-100');
+            color: theme('colors.slate.100');
+        }
+    }
+    .det-icon-link { color: theme('colors.sky.400'); }
+
+    // 🎧 audio-monitor listen button — an emoji, not an SVG icon. While a
+    // player is open the button stays visible (no det-hover) and gets a
+    // green "active" tint, matching the colour scheme (green = active).
+    .det-listen-btn {
+        font-size: 13px;
+        line-height: 1;
+
+        &.is-active {
+            opacity: 1;
+            background-color: rgba(70, 170, 20, 0.18);
+            box-shadow: 0 0 0 1px rgba(70, 170, 20, 0.6) inset;
+        }
+    }
+
+    // Actions sit flush right; keep 🎧 + SDP on one line. The player
+    // itself is a zero-size anchor whose overlay floats to the left.
+    .det-cell-actions {
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .det-head-actions {
+        display: inline-flex;
+        gap: 2px;
+    }
+
+    // ----- Section labels ("Senders · 4") -----
+    .det-sec {
+        padding: 8px 14px 4px 16px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        border-top: 1px solid theme('colors.base-300');
+    }
+    .det-sec-tx { color: theme('colors.green.400'); }
+    .det-sec-rx { color: theme('colors.sky.400');   }
+
+    // ----- Flow rows -----
+    .det-rows {
         table-layout: fixed;
         width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
 
-        // Apply overflow/ellipsis only to cells that actually carry long text.
-        // The chevron column is fixed at 40px and only holds an icon — the
-        // global td padding (16px each side) + 24px chevron overflows by 16px,
-        // which used to trigger ellipsis and render as ".." (the `…` glyph in
-        // the current font) just right of the chevron.
-        td:not(:first-child) {
+        td {
+            padding: 5px 8px;
+            vertical-align: top;
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        td:first-child {
-            overflow: visible;
-        }
-        // Cells that contain the inline edit form or a sticky inner column
-        // need to allow inner wrap/overflow.
-        tr.det-flow td {
-            white-space: nowrap;
-        }
+        td.det-cell-type { padding-left: 14px; overflow: visible; }
     }
 
-    // No fixed thead anymore – sticky group/section rows take over the role
-    // of the column header. Heights here match the CSS top offsets below.
-    $det-device-row-height: 56px;
+    tr.det-flow {
+        border-bottom: 1px solid theme('colors.base-300');
+        &:last-child { border-bottom: none; }
+        &:hover { background-color: theme('colors.base-300'); }
 
-    // Device row (top level)
-    tr.det-device {
-        background-color: theme('colors.base-300') !important;
-        cursor: pointer;
+        // Slim direction stripe (green = TX, sky = RX) as a scanning aid
+        // when scrolled deep into a device.
+        &.det-flow-tx td.det-cell-type { box-shadow: inset 3px 0 0 0 rgba(34, 197, 94, 0.55); }
+        &.det-flow-rx td.det-cell-type { box-shadow: inset 3px 0 0 0 rgba(56, 189, 248, 0.55); }
 
-        // Stays visible while scrolling through its expanded content
-        td {
-            position: sticky;
-            top: 0;
-            z-index: 4;
-            background-color: theme('colors.base-300') !important;
-            padding-top: 12px;
-            padding-bottom: 12px;
-        }
-
-        // Coloured status dot to the left of the device label — encodes the
-        // online / PTP-lock state. The expand chevron stays neutral.
-        .det-device-dot {
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            flex: 0 0 10px;
-            box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
-        }
-        .det-device-dot-success { background-color: theme('colors.success'); }
-        .det-device-dot-warning { background-color: theme('colors.warning'); }
-        .det-device-dot-error   { background-color: theme('colors.error');   }
-
-        // The td itself stays as a regular table-cell so position:sticky
-        // works reliably. The flex layout sits inside a wrapper div.
-        .det-device-label {
-            // intentionally no display:flex here
-        }
-        .det-device-label-inner {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-
-            strong {
-                font-size: 1.0rem;
-            }
-        }
-        .det-device-label-text {
-            display: flex;
-            flex-direction: column;
-            line-height: 1.15;
-            gap: 1px;
-        }
-        .det-device-name-row {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .det-device-edit {
-            // Pencil sits directly next to the name, always visible (not just
-            // on hover). Sized small enough so it never overruns the GMID
-            // mono-text line below.
-            visibility: visible !important;
-            position: static !important;
-            padding: 1px !important;
-            margin: 0 !important;
-            min-height: 0 !important;
-            height: 16px !important;
-            width: 16px !important;
-            line-height: 1 !important;
-            opacity: 0.55;
-            &:hover { opacity: 1; }
-            svg { width: 11px !important; height: 11px !important; }
-        }
-        .det-device-link {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 22px;
-            height: 22px;
-            border-radius: 4px;
-            color: theme('colors.sky.400');
-            opacity: 0.7;
-            transition: opacity 0.1s, background-color 0.1s;
-
-            svg { width: 14px; height: 14px; }
-
-            &:hover {
-                opacity: 1;
-                background-color: theme('colors.base-200');
-            }
-        }
-        .det-device-gmid {
-            font-family: 'Roboto Mono', monospace;
-            font-size: 0.7rem;
-            color: theme('colors.slate.400');
-            letter-spacing: 0.02em;
-
-            &.det-device-gmid-warn {
-                color: theme('colors.amber.500');
-                font-weight: 600;
-            }
-        }
-        .det-device-counts {
-            margin-left: auto;
-            color: theme('colors.slate.400');
-            font-size: 0.8rem;
-        }
-        // Forget button: appears on the right edge only when the device is offline.
-        .det-device-forget {
-            margin-left: 8px;
-            min-height: 28px;
-            height: 28px;
-            padding: 0 10px;
-            font-size: 0.78rem;
-            font-weight: 600;
-            border: 1px solid theme('colors.red.700');
-            background-color: rgba(220, 38, 38, 0.12);
-            color: theme('colors.red.400');
-
-            &:hover {
-                background-color: rgba(220, 38, 38, 0.25);
-                color: theme('colors.red.300');
-            }
-        }
+        &.is-inactive td { color: theme('colors.slate.500'); }
+        &.is-unavailable td { opacity: 0.65; }
     }
 
-
-    // Forget confirmation dialog content
-    .det-forget-text {
-        margin-top: 4px;
-    }
-    .det-forget-list {
-        margin: 10px 0;
-        padding-left: 22px;
-        list-style: disc;
-        color: theme('colors.slate.300');
-        font-size: 0.9rem;
-        line-height: 1.5;
-    }
-
-    // Section header inside an expanded device ("SENDERS" / "RECEIVERS")
-    // Doubles as the column legend (Type/Codec/…/Manifest).
-    tr.det-section {
-        cursor: pointer;
-        td {
-            // Sticks just below the device row when scrolling
-            position: sticky;
-            top: $det-device-row-height;
-            z-index: 3;
-
-            padding: 8px 16px 8px 12px;
-            font-size: 0.7rem;
-            letter-spacing: 0.06em;
-            color: theme('colors.slate.300');
-            text-transform: uppercase;
-            background-color: theme('colors.base-200') !important;
-            border-top: 1px solid theme('colors.base-300');
-            border-bottom: 1px solid theme('colors.base-300');
-        }
-        .det-section-title {
-            font-weight: 700;
-            letter-spacing: 0.12em;
-        }
-        .det-section-count {
-            color: theme('colors.slate.500');
-            font-weight: 400;
-            margin-left: 4px;
-        }
-        .data-table-expand {
-            display: inline-block;
-            width: 22px;
-            svg {
-                width: 16px;
-                height: 16px;
-                color: theme('colors.slate.400');
-            }
-            &.data-table-expand-active svg {
-                transform: rotate(90deg);
-            }
-        }
-        &.det-section-receivers .det-section-title {
-            color: theme('colors.sky.400');
-        }
-        &.det-section-senders .det-section-title {
-            color: theme('colors.green.400');
-        }
-        &:hover td {
-            background-color: theme('colors.base-300') !important;
-        }
-    }
-
-    // Receiver-side: small note showing the connected sender. Renders on
-    // its own line below the receiver name so the name column can stay slim.
-    tr.det-flow-rx {
-        .det-recv-source {
-            display: block;
-            margin-top: 2px;
-            margin-left: 0;
-            color: theme('colors.slate.400');
-            font-size: 0.75rem;
-            font-style: italic;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-    }
-
-    // ----- TX / RX optical distinction -----
-    // Senders → green accent, receivers → sky-blue. Matches the colours on
-    // the SENDERS / RECEIVERS section headers. To make the direction obvious
-    // at a glance we apply: (a) a meaningful row tint, (b) a 4 px coloured
-    // left border on the row, and (c) the same coloured border on the
-    // section header so the whole block reads as a single coloured stripe.
-    tr.det-flow-tx {
-        background-color: rgba(34, 197, 94, 0.10);     // green tint
-        td:first-child {
-            box-shadow: inset 4px 0 0 0 theme('colors.green.500');
-        }
-        &:hover { background-color: rgba(34, 197, 94, 0.18); }
-        &.is-active td { /* no extra tint */ }
-    }
-    tr.det-flow-rx {
-        background-color: rgba(56, 189, 248, 0.10);    // sky tint
-        td:first-child {
-            box-shadow: inset 4px 0 0 0 theme('colors.sky.500');
-        }
-        &:hover { background-color: rgba(56, 189, 248, 0.18); }
-    }
-    // Section header carries the same accent stripe so the eye groups all
-    // following TX-rows / RX-rows together at a glance.
-    tr.det-section.det-section-senders td:first-child {
-        box-shadow: inset 4px 0 0 0 theme('colors.green.500');
-    }
-    tr.det-section.det-section-receivers td:first-child {
-        box-shadow: inset 4px 0 0 0 theme('colors.sky.500');
-    }
-    // Unavailable rows: keep the direction colour visible but soften it so
-    // the overall row reads as muted.
-    tr.det-flow.is-unavailable {
-        &.det-flow-tx { background-color: rgba(34, 197, 94, 0.04); }
-        &.det-flow-rx { background-color: rgba(56, 189, 248, 0.04); }
-    }
-    // Flex row for the name + pencil button, keeps them on one line.
     .det-flow-name {
         display: flex;
         align-items: center;
-        gap: 4px;
+        gap: 5px;
+        min-height: 28px;
         .det-flow-name-text {
             overflow: hidden;
             text-overflow: ellipsis;
+            white-space: nowrap;
         }
     }
 
-    // Status dot for individual sender/receiver — only shown when the flow
-    // is no longer present in the NMOS registry (orphan / unavailable).
-    // Smaller than the device-level dot so the row stays compact.
     .det-flow-dot {
         display: inline-block;
         width: 8px;
@@ -295,11 +279,183 @@ $det-color-data:  theme('colors.blue.500');
         flex: 0 0 8px;
         box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25) inset;
     }
-    .det-flow-dot-error   { background-color: theme('colors.error');   }
+    .det-flow-dot-error { background-color: theme('colors.error'); }
 
-    // Forget button for an individual sender/receiver row — only shown when
-    // unavailable. Smaller than the device-level Forget so it fits in the
-    // narrow name column without pushing other columns around.
+    // Receiver: the connected sender lives in the activate/deactivate
+    // toggle's tooltip (second line) — no extra row content, so the row
+    // height stays constant.
+
+    // Merged media column ("24 Bit LPCM · 48kHz·2ch · 2.4 Mbit/s")
+    .det-cell-media {
+        color: theme('colors.slate.300');
+        line-height: 28px;
+        white-space: nowrap;
+    }
+    .det-media-bitrate  { color: theme('colors.slate.500'); }
+    .det-media-inactive { color: theme('colors.warning'); }
+    .det-media-muted    { color: theme('colors.slate.500'); }
+
+    // ----- Legs (destination multicast + port) -----
+    // Both legs sit SIDE BY SIDE on one line (wrapping only when the cell
+    // gets too narrow or the inline edit form is open). The edit pencil is
+    // left of the value and hover-revealed; since det-hover only animates
+    // opacity, the value never shifts when the pencil appears.
+    .det-legs {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 2px 18px;
+    }
+
+    .det-leg {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 1px 6px 1px 0;
+        border-radius: 4px;
+        min-height: 24px;
+
+        .det-leg-label {
+            color: theme('colors.slate.400');
+            font-size: 0.75rem;
+        }
+        .det-leg-colon {
+            color: theme('colors.slate.400');
+        }
+        .det-leg-value {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.82rem;
+            white-space: nowrap;
+        }
+        .det-leg-src {
+            color: theme('colors.slate.500');
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.72rem;
+            white-space: nowrap;
+        }
+        .det-leg-input {
+            font-family: 'Roboto Mono', monospace;
+            background-color: theme('colors.base-100');
+            border: 1px solid theme('colors.base-300');
+            border-radius: 3px;
+            padding: 1px 6px;
+            color: inherit;
+            font-size: 0.85rem;
+
+            &:focus {
+                outline: none;
+                border-color: theme('colors.info');
+            }
+        }
+        .det-leg-input-port { width: 5.5em; }
+        .det-leg-btn {
+            padding: 0 6px;
+            min-height: 22px;
+            height: 22px;
+            margin-left: 2px;
+        }
+        .det-leg-error {
+            margin-left: 6px;
+            font-size: 0.7rem;
+        }
+        .det-leg-warning {
+            margin-left: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: theme('colors.amber.400');
+        }
+        .det-leg-input-warn {
+            border-color: theme('colors.amber.500') !important;
+            background-color: rgba(245, 158, 11, 0.08);
+        }
+        .det-dup-hint {
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 1px 5px;
+            background: theme('colors.red.700');
+            color: white;
+            border-radius: 3px;
+        }
+    }
+    .det-leg-duplicate {
+        background-color: rgba(226, 30, 30, 0.25);
+        outline: 1px solid theme('colors.red.600');
+    }
+    // Receiver legs have no edit pencil in front of the multicast — pad by
+    // the pencil's footprint (22px button + 6px gap) so sender and receiver
+    // multicast addresses line up on the same vertical edge.
+    .det-leg-readonly {
+        color: inherit;
+        padding-left: 28px;
+    }
+
+    // "Virtual" badge next to the sender name.
+    .det-virtual-badge {
+        font-size: 0.68rem;
+        font-weight: 600;
+        padding: 1px 5px;
+        background: theme('colors.violet.700');
+        color: white;
+        border-radius: 3px;
+        flex: 0 0 auto;
+    }
+
+    // ----- Type toggle pill (same look as the crosspoint matrix) -----
+    tr.det-flow .cp-type {
+        display: inline-block;
+        position: relative;
+        padding: 4px;
+        height: 28px;
+        width: 28px;
+        border-radius: 6px;
+        vertical-align: middle;
+        background-color: theme('colors.neutral-600');
+
+        svg {
+            width: 18px;
+            height: 18px;
+            color: theme('colors.neutral-400');
+        }
+
+        &.cp-type-video svg { color: $det-color-video; }
+        &.cp-type-audio svg { color: $det-color-audio; }
+        &.cp-type-data  svg { color: $det-color-data;  }
+
+        &.active {
+            &.cp-type-video { background-color: $det-color-video; }
+            &.cp-type-audio { background-color: $det-color-audio; }
+            &.cp-type-data  { background-color: $det-color-data;  }
+            svg { color: #ffffff; }
+        }
+
+        &.det-toggle-active {
+            cursor: pointer;
+            transition: transform 0.08s ease-in-out, box-shadow 0.08s ease-in-out;
+            &:hover {
+                transform: scale(1.08);
+                box-shadow: 0 0 0 2px rgba(255,255,255,0.12);
+            }
+            &:active { transform: scale(0.95); }
+        }
+    }
+
+    // ----- Forget buttons -----
+    .det-device-forget {
+        margin-left: 8px;
+        min-height: 28px;
+        height: 28px;
+        padding: 0 10px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        border: 1px solid theme('colors.red.700');
+        background-color: rgba(220, 38, 38, 0.12);
+        color: theme('colors.red.400');
+
+        &:hover {
+            background-color: rgba(220, 38, 38, 0.25);
+            color: theme('colors.red.300');
+        }
+    }
     .det-flow-forget {
         margin-left: 6px;
         min-height: 22px;
@@ -318,205 +474,60 @@ $det-color-data:  theme('colors.blue.500');
         }
     }
 
-    // Visually mute an unavailable flow row so the user can scan offline
-    // items at a glance without the row looking active.
-    tr.det-flow.is-unavailable {
-        td {
-            opacity: 0.7;
-        }
+    // ----- Expand-all button in the filter bar -----
+    .det-expand-all {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8rem;
+        padding: 8px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        color: theme('colors.slate.300');
+        svg { width: 16px; height: 16px; }
+        &:hover { background-color: theme('colors.base-300'); }
     }
 
-    // The leg-edit pencil is now always visible (no longer hover-only) and
-    // sits inline between the "Leg N:" label and the IP. Used to be absolute-
-    // positioned via .btn-hover, which stacked the pencils of multiple legs
-    // at the same cell corner — so clicking the visible one always edited the
-    // last leg.
+    // Empty state
+    .det-empty {
+        text-align: center;
+        padding: 32px;
+        color: theme('colors.slate.400');
+    }
 
-    // Sender row (second level) — same look as crosspoint type pill
-    tr.det-flow {
-
-        .cp-type {
-            display: inline-block;
-            position: relative;
-            padding: 4px;
-            margin: 2px 4px 2px 0;
-            height: 28px;
-            width: 28px;
-            border-radius: 6px;
-            vertical-align: middle;
-
-            background-color: theme('colors.neutral-600');
-
-            svg {
-                width: 18px;
-                height: 18px;
-                color: theme('colors.neutral-400');
-            }
-
-            &.cp-type-video svg { color: $det-color-video; }
-            &.cp-type-audio svg { color: $det-color-audio; }
-            &.cp-type-data  svg { color: $det-color-data;  }
-
-            &.active {
-                &.cp-type-video { background-color: $det-color-video; }
-                &.cp-type-audio { background-color: $det-color-audio; }
-                &.cp-type-data  { background-color: $det-color-data;  }
-                svg { color: #ffffff; }
-            }
-
-            // Clickable activation toggle
-            &.det-toggle-active {
-                cursor: pointer;
-                transition: transform 0.08s ease-in-out, box-shadow 0.08s ease-in-out;
-
-                &:hover {
-                    transform: scale(1.08);
-                    box-shadow: 0 0 0 2px rgba(255,255,255,0.12);
-                }
-                &:active {
-                    transform: scale(0.95);
-                }
-            }
-        }
-
-        .det-flow-type-label {
-            text-transform: uppercase;
-            font-size: 0.8rem;
-            color: theme('colors.slate.400');
-            vertical-align: middle;
-        }
-
-        &.is-inactive {
-            td {
-                color: theme('colors.slate.500');
-            }
-        }
-
-        // Destination IP / port group
-        .det-leg {
-            display: flex;
-            align-items: center;
-            gap: 4px;
-            padding: 2px 6px;
-            border-radius: 4px;
-            margin: 2px 0;
-
-            .det-leg-label {
-                color: theme('colors.slate.400');
-                font-size: 0.75rem;
-                min-width: 44px;
-            }
-            // Edit pencil sits inline, right of the "Leg N:" label and before
-            // the IP value. Always visible so each leg has its own clearly
-            // targetable affordance — previously they were absolute-positioned
-            // and overlapped.
-            .det-leg-edit {
-                visibility: visible !important;
-                position: static !important;
-                opacity: 0.55;
-                padding: 1px !important;
-                margin: 0 2px 0 0 !important;
-                min-height: 0 !important;
-                height: 16px !important;
-                width: 16px !important;
-                line-height: 1 !important;
-                svg { width: 11px !important; height: 11px !important; }
-                &:hover { opacity: 1; }
-            }
-            .det-leg-colon {
-                color: theme('colors.slate.400');
-                margin: 0 2px;
-            }
-            .det-leg-value {
-                font-family: 'Roboto Mono', monospace;
-            }
-            .det-leg-input {
-                font-family: 'Roboto Mono', monospace;
-                background-color: theme('colors.base-200');
-                border: 1px solid theme('colors.base-300');
-                border-radius: 3px;
-                padding: 1px 6px;
-                color: inherit;
-                font-size: 0.9rem;
-
-                &:focus {
-                    outline: none;
-                    border-color: theme('colors.info');
-                }
-            }
-            .det-leg-input-port {
-                width: 5.5em;
-            }
-            .det-leg-btn {
-                padding: 0 6px;
-                min-height: 22px;
-                height: 22px;
-                margin-left: 4px;
-            }
-            .det-leg-error {
-                margin-left: 6px;
-                font-size: 0.7rem;
-            }
-            // Live warning when the typed IP matches another active sender on the same leg
-            .det-leg-warning {
-                margin-left: 6px;
-                font-size: 0.75rem;
-                font-weight: 600;
-                color: theme('colors.amber.400');
-            }
-            .det-leg-input-warn {
-                border-color: theme('colors.amber.500') !important;
-                background-color: rgba(245, 158, 11, 0.08);
-            }
-            .det-dup-hint {
-                font-size: 0.7rem;
-                font-weight: 600;
-                margin-left: 6px;
-                padding: 1px 4px;
-                background: theme('colors.red.700');
-                color: white;
-                border-radius: 3px;
-            }
-            // "Virtual" badge for senders that live on our own virtual NMOS
-            // device — signals to the operator that the multicast comes from
-            // the SDP on the Setup page and isn't editable here.
-            .det-virtual-badge {
-                font-size: 0.7rem;
-                font-weight: 600;
-                margin-left: 6px;
-                padding: 1px 4px;
-                background: theme('colors.indigo.700');
-                color: white;
-                border-radius: 3px;
-            }
-        }
-
-        // Duplicate Multicast IP highlight
-        .det-leg-duplicate {
-            background-color: rgba(226, 30, 30, 0.25);
-            border: 1px solid theme('colors.red.600');
-        }
-
-        // Receiver legs are display-only — but keep the colour/weight the
-        // same as the editable sender legs so the rows look consistent.
-        .det-leg-readonly {
-            color: inherit;
-        }
+    // Forget confirmation dialog content
+    .det-forget-text { margin-top: 4px; }
+    .det-forget-list {
+        margin: 10px 0;
+        padding-left: 22px;
+        list-style: disc;
+        color: theme('colors.slate.300');
+        font-size: 0.9rem;
+        line-height: 1.5;
     }
 }
 
 html[data-theme="light"] {
     .details-page {
-        tr.det-flow.is-inactive td {
+        .det-card { background-color: theme('colors.base-100'); }
+        .det-card-head { background-color: theme('colors.base-100');
+            &:hover { background-color: theme('colors.base-200'); }
+        }
+        tr.det-flow:hover { background-color: theme('colors.base-200'); }
+        tr.det-flow.is-inactive td { color: theme('colors.slate.500'); }
+        .det-leg-duplicate { background-color: rgba(226, 30, 30, 0.15); }
+        .det-cell-media { color: theme('colors.slate.600'); }
+        .det-icon-btn {
             color: theme('colors.slate.500');
+            &:hover { background-color: theme('colors.base-300'); color: theme('colors.slate.700'); }
         }
-        tr.det-flow .det-leg-duplicate {
-            background-color: rgba(226, 30, 30, 0.18);
-        }
+        .det-expand-all { color: theme('colors.slate.600'); }
+        .det-sec-tx { color: theme('colors.green.600'); }
+        .det-sec-rx { color: theme('colors.sky.600');   }
+        .det-node-name { color: theme('colors.slate.600'); }
+        .det-node-head:hover .det-node-name { color: theme('colors.slate.800'); }
     }
 }
-
-// (.det-counters removed — counter moved to the global widget in App.svelte)
 
 
 // SDP viewer modal
@@ -538,13 +549,3 @@ html[data-theme="light"] {
         margin-top: 12px;
     }
 }
-
-// SDP action button (in sender row Actions column)
-.details-page tr.det-flow .data-table-action-buttons .btn {
-    .det-action-label {
-        margin-left: 4px;
-        font-size: 0.8rem;
-    }
-    svg { width: 18px; height: 18px; }
-}
-

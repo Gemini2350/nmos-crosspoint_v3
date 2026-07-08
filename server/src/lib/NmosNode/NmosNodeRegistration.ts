@@ -89,12 +89,12 @@ export class NmosNodeRegistration {
     /** POST every resource (node first, then dependents). Idempotent — the
      *  registry treats a re-POST of an existing resource as an update.
      *
-     *  When `settings.virtualNode.enabled` is false this is a no-op — the
-     *  operator has explicitly disabled the virtual-node feature.
+     *  Only runs when `settings.virtualNode.enabled` is explicitly true —
+     *  the feature is opt-in (default off in parseSettings).
      */
     public async start(){
         if(this.running) return;
-        if(this.settings?.virtualNode?.enabled === false){
+        if(this.settings?.virtualNode?.enabled !== true){
             SyncLog.log("info", "NMOS Node Registration", "Virtual Node feature disabled in settings — skipping registration.");
             return;
         }
