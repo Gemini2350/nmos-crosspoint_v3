@@ -130,6 +130,18 @@
       return rows;
     }
 
+    // Force a matrix re-render. The template renders rows/columns from the
+    // GROUP arrays and connect cells from the flat arrays — every state
+    // change that must repaint cells (prepared / working / preview / active
+    // / dashed disconnect markers) has to reassign ALL of them; reassigning
+    // only `receivers` (the pre-grouping idiom) no longer reaches the rows.
+    function refreshMatrix(){
+      senders = [...senders];
+      receivers = [...receivers];
+      senderGroups = [...senderGroups];
+      receiverGroups = [...receiverGroups];
+    }
+
     // Single-device node whose band text would just repeat the device label
     // right next to it → leave the band empty (geometry stays uniform, no
     // duplicated name). Grouped nodes always show their label.
@@ -451,10 +463,7 @@
       }
       
       saveFilter();
-      senders = [...senders]
-      // Re-render the grouped header row too (band colspans depend on the
-      // expansion state).
-      senderGroups = [...senderGroups]
+      refreshMatrix();
     }
 
     function toggleExpandReceiver(id:string){
@@ -470,8 +479,7 @@
         filter.expanded.receivers.splice(index,1);
       }
       saveFilter();
-      receivers = [...receivers]
-      receiverGroups = [...receiverGroups]
+      refreshMatrix();
 
     }
 
@@ -509,7 +517,7 @@
               cleanPreparedConnections([{ srcDev: null, src: null, dstDev, dst }]);
               if(autoTake) takeConnect();
             }
-            receivers = [...receivers]; updateGlobalTake(); return;
+            refreshMatrix(); updateGlobalTake(); return;
           }
           // Prepared Punkt → Toggle Unprepare
           let idx = preparedConnectList.findIndex(c => c.src?.id === src.id && c.dst?.id === dst.id);
@@ -518,7 +526,7 @@
             cleanPreparedConnections([{ srcDev, src, dstDev, dst }]);
             if(autoTake) takeConnect();
           }
-          receivers = [...receivers]; updateGlobalTake();
+          refreshMatrix(); updateGlobalTake();
         }else{
           let srcString = getDevcieNameString(srcDev,src);
           let dstString = getDevcieNameString(dstDev,dst);
@@ -543,7 +551,7 @@
               cleanPreparedConnections(newList);
               if(autoTake) takeConnect();
             }
-            receivers = [...receivers]; updateGlobalTake();
+            refreshMatrix(); updateGlobalTake();
           }).catch((e)=>{
             // TODO, error handling
             ServerConnector.addFeedback({
@@ -560,7 +568,7 @@
       doConnect(preparedConnectList);
       workingConnectList = preparedConnectList;
       preparedConnectList = [];
-      receivers = [...receivers]
+      refreshMatrix();
       updateGlobalTake();
     }
 
@@ -575,7 +583,7 @@
     export function clearConnect( dstId : string = ""){
       if(dstId == ""){
         preparedConnectList = [];
-        receivers = [...receivers];
+        refreshMatrix();
       }else{
         preparedConnectList = preparedConnectList.filter((c)=>{
           if(dstId == c.dst.id){
@@ -584,7 +592,7 @@
             return true
           }
         });
-        receivers = [...receivers];
+        refreshMatrix();
       }
       updateGlobalTake();
     }
@@ -627,7 +635,7 @@
       }else{
         if(previewConnectList.length > 0){
           previewConnectList = []
-          receivers = [...receivers]
+          refreshMatrix();
         }else{
           previewConnectList = []
         }
@@ -661,7 +669,7 @@
           previewConnectList.push({src:c.src, dst:c.dst})
 
         })
-        receivers = [...receivers]
+        refreshMatrix();
         updateGlobalTake();
       }).catch((e)=>{
         console.log(e)
@@ -684,10 +692,10 @@
       ServerConnector.post("makeconnection", {multiple:reducedList,preview:false}).then((response:any)=>{
         showConnectResponse(response.data);
         workingConnectList = [];
-        receivers = [...receivers];
+        refreshMatrix();
       }).catch((e)=>{
         workingConnectList = [];
-        receivers = [...receivers];
+        refreshMatrix();
       });
       // TODO error
     }
