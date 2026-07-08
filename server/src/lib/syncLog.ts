@@ -30,7 +30,26 @@ export class SyncLog extends SyncObject {
     }
 
     
+    // Canonical severity names as the UI knows them. Call sites across the
+    // codebase are inconsistent ("warn" vs "warning") — normalising HERE
+    // means the log stream only ever carries the canonical set, so the UI
+    // filter and badge logic can rely on exact matches. Anything unknown
+    // falls back to "info" instead of shipping an unfilterable category.
+    private static normaliseSeverity(severity: string): string {
+        switch (("" + severity).toLowerCase().trim()) {
+            case "error":    return "error";
+            case "warn":
+            case "warning":  return "warning";
+            case "success":  return "success";
+            case "info":     return "info";
+            case "verbose":  return "verbose";
+            case "debug":    return "debug";
+            default:         return "info";
+        }
+    }
+
     static log(severity: string,  topic: string,text: string, raw: any= null) {
+        severity = SyncLog.normaliseSeverity(severity);
         let time = new Date().getTime();
         let date = new Date(time).toISOString();
 

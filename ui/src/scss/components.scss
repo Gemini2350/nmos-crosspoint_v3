@@ -98,7 +98,7 @@ label svg { width:20px;}
 }
 
 .overlay-tooltip {
-        position:absolute; 
+        position:absolute;
         z-index : 999;
             span {
                 @apply menu shadow;
@@ -106,6 +106,9 @@ label svg { width:20px;}
                 color:theme('colors.neutral-100');
                 padding:2px 8px;
                 border-radius:4px;
+                // Allow multi-line tooltips via "\n" in data-tooltip
+                // (e.g. the receiver toggle's "Connected sender" line).
+                white-space: pre-line;
             }
 }
 

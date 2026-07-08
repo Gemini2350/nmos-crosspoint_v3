@@ -8,7 +8,7 @@
   import ServerConnector from "./lib/ServerConnector/ServerConnectorService";
   import OverlayMenuService from "./lib/OverlayMenu/OverlayMenuService";
 
-  import { Icon, Squares2x2, ListBullet, WrenchScrewdriver, LockOpen, LockClosed  } from "svelte-hero-icons";
+  import { Icon, Squares2x2, ListBullet, WrenchScrewdriver, LockOpen, LockClosed, DocumentText  } from "svelte-hero-icons";
 
 
   import Crosspoint from './routes/crosspoint.svelte';
@@ -27,6 +27,7 @@
         {label:"Crosspoint", icon:Squares2x2, link:"/crosspoint"},
         {label:"Details", icon:ListBullet, link:"/details"},
 
+        {label:"Logs", icon:DocumentText, link:"/logging"},
         {label:"Setup",  icon:WrenchScrewdriver, link:"/setup"},
     ];
 
@@ -298,11 +299,11 @@
       <ul class="global-take">
         {#if autoTake}
         <li>
-          <span class="text-small text-red-600">{(globalTakePreviewListCount > 0 ? "Affected: "+globalTakePreviewListCount : "")}</span>
+          <span class="text-small text-violet-400">{(globalTakePreviewListCount > 0 ? "Affected: "+globalTakePreviewListCount : "")}</span>
         </li>
         {:else}
         <li>
-          <span on:click={()=>{openGlobalTakeModal()}} class="text-small text-red-600">{(globalTakePreparedListCount > 0 ? "Prepared: "+globalTakePreparedListCount : "")}</span>
+          <span on:click={()=>{openGlobalTakeModal()}} class="text-small text-violet-400">{(globalTakePreparedListCount > 0 ? "Prepared: "+globalTakePreparedListCount : "")}</span>
         </li>
         {/if}
         <li>
@@ -312,9 +313,9 @@
         </li>
         <li>
           {#if !autoTake }
-            <a class="bg-red-600 text-white" on:click={()=>{doGlobalTake()}}><span>TAKE</span></a>
+            <a class="bg-violet-500 text-white" on:click={()=>{doGlobalTake()}}><span>TAKE</span></a>
           {:else}
-            <a class="bg-red-300 text-white" ><span>TAKE</span></a>
+            <a class="bg-violet-300 text-white" ><span>TAKE</span></a>
           {/if}
         </li>
       </ul>

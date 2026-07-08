@@ -128,6 +128,20 @@
             }
         }
         
+        // The middle menu section may grow taller than the viewport (it
+        // gained a Logs entry) — let IT shrink and scroll instead of pushing
+        // the TAKE/Autotake block below the fold. min-height:0 is required
+        // so a flex child is allowed to become smaller than its content.
+        ul.browser-nav-full {
+            flex-grow: 1;
+            flex-shrink: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        // TAKE / Autotake must ALWAYS be reachable — pinned at the bottom,
+        // never shrunk, never scrolled away.
         ul.global-take {
 
             flex-grow:0;

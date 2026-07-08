@@ -204,6 +204,18 @@ export function parseSettings(settings:any){
     }
 
 
+    // ----- Audio Monitor (listen to a sender in the browser) -----
+    // When enabled, the Details page shows a headphone button on audio
+    // senders; the server IGMP-joins the multicast, transcodes PCM → Opus
+    // and streams it to the browser via WebRTC. Fully off by default.
+    if(!settings.audioMonitor || typeof settings.audioMonitor !== "object"){
+        settings.audioMonitor = { enabled: false };
+    }
+    if(typeof settings.audioMonitor.enabled !== "boolean"){
+        settings.audioMonitor.enabled = false;
+    }
+
+
     // ----- Virtual NMOS Node identity -----
     // The Node + Device records (one of each, shared by ALL virtual senders)
     // we publish to the registry. UUIDs are persisted so the registry sees
@@ -212,10 +224,12 @@ export function parseSettings(settings:any){
         settings.virtualNode = {};
     }
     // Master switch — when false, NMOS Crosspoint does not register itself
-    // as an IS-04 Node and virtualSenders are inert. Default true for
-    // back-compat (existing installs keep working without touching settings).
+    // as an IS-04 Node and virtualSenders are inert. Default OFF — the
+    // feature registers resources in the operator's registry, so it should
+    // be an explicit opt-in on the Setup page. Installs that already saved
+    // an explicit `enabled: true` keep it.
     if(typeof settings.virtualNode.enabled !== "boolean"){
-        settings.virtualNode.enabled = true;
+        settings.virtualNode.enabled = false;
     }
     if(typeof settings.virtualNode.nodeId !== "string" || !uuidRe.test(settings.virtualNode.nodeId)){
         settings.virtualNode.nodeId = mkUuid();
@@ -233,40 +247,52 @@ export function parseSettings(settings:any){
     }
 
 
-    // ----- DNS Push (pfSense REST API) -----
-    // When enabled, NMOS node labels (or user aliases) are pushed as DNS
-    // host_overrides on the pfSense DNS forwarder via the pfrest API.
+    // ----- DDNS (RFC 2136 Dynamic Updates) -----
+    // When enabled, NMOS node labels (or user aliases) are pushed as A
+    // records into any DNS server that accepts standard RFC 2136 UPDATE
+    // messages with TSIG-key auth (BIND9, Knot, PowerDNS, Windows DNS, …).
     //
-    // Auth: API Key sent as the `X-API-Key` header.
-    //   See https://pfrest.org/AUTHENTICATION_AND_AUTHORIZATION/#api-key
-    //
-    // Endpoints used:
-    //   GET /api/v2/services/dns_forwarder/host_overrides   – list current entries
-    //   POST  …/host_override                              – create new
-    //   PATCH …/host_override                              – update existing
-    //   DELETE …/host_override?id=N                        – remove
-    //   POST  …/host_overrides/apply                       – apply pending changes
-    let defaultDns:any = {
+    // Schema: { enabled, server, port, zone, ttl, keyName, keySecret,
+    //           keyAlgorithm }. keySecret is the base64 TSIG shared secret.
+    // "none" = unsigned RFC 2136 updates — for servers that authorise by
+    // source IP (BIND allow-update { <ip>; };) instead of a TSIG key.
+    const DDNS_ALGORITHMS = ["hmac-sha256", "hmac-sha512", "hmac-sha1", "hmac-md5", "none"];
+    let defaultDdns:any = {
         enabled: false,
-        serverIp: "",
-        serverPort: 443,
-        protocol: "https",
-        apiKey: "",
-        domain: "local",
-        insecureTLS: true,
+        server: "",
+        port: 53,
+        zone: "",
+        ttl: 300,
+        keyName: "",
+        keySecret: "",
+        keyAlgorithm: "hmac-sha256",
     };
-    if(!settings.dnsPush || typeof settings.dnsPush !== "object"){
-        settings.dnsPush = defaultDns;
+    if(!settings.ddns || typeof settings.ddns !== "object"){
+        settings.ddns = { ...defaultDdns };
+        // One-time migration from the removed pfSense/pfRest "dnsPush"
+        // integration: carry over the server address and the domain (as the
+        // zone) so the operator doesn't have to retype them — but leave the
+        // feature DISABLED, because the pfRest API key is useless for TSIG
+        // and pushing with wrong credentials would just spam error logs.
+        if(settings.dnsPush && typeof settings.dnsPush === "object"){
+            if(typeof settings.dnsPush.serverIp === "string"){ settings.ddns.server = settings.dnsPush.serverIp.trim(); }
+            if(typeof settings.dnsPush.domain === "string" && settings.dnsPush.domain){ settings.ddns.zone = settings.dnsPush.domain.trim(); }
+        }
     }else{
-        settings.dnsPush = {
-            enabled:     !!settings.dnsPush.enabled,
-            serverIp:    (typeof settings.dnsPush.serverIp    === "string") ? settings.dnsPush.serverIp.trim() : "",
-            serverPort:  (typeof settings.dnsPush.serverPort  === "number" && settings.dnsPush.serverPort  > 0 && settings.dnsPush.serverPort  < 65536) ? settings.dnsPush.serverPort : 443,
-            protocol:    settings.dnsPush.protocol === "http" ? "http" : "https",
-            apiKey:      (typeof settings.dnsPush.apiKey      === "string") ? settings.dnsPush.apiKey : "",
-            domain:      (typeof settings.dnsPush.domain      === "string" && settings.dnsPush.domain) ? settings.dnsPush.domain.trim() : "local",
-            insecureTLS: settings.dnsPush.insecureTLS !== false,
+        settings.ddns = {
+            enabled:      !!settings.ddns.enabled,
+            server:       (typeof settings.ddns.server === "string") ? settings.ddns.server.trim() : "",
+            port:         (typeof settings.ddns.port === "number" && settings.ddns.port > 0 && settings.ddns.port < 65536) ? settings.ddns.port : 53,
+            zone:         (typeof settings.ddns.zone === "string") ? settings.ddns.zone.trim().replace(/\.+$/, "") : "",
+            ttl:          (typeof settings.ddns.ttl === "number" && settings.ddns.ttl > 0) ? settings.ddns.ttl : 300,
+            keyName:      (typeof settings.ddns.keyName === "string") ? settings.ddns.keyName.trim().replace(/\.+$/, "") : "",
+            keySecret:    (typeof settings.ddns.keySecret === "string") ? settings.ddns.keySecret.trim() : "",
+            keyAlgorithm: DDNS_ALGORITHMS.includes(settings.ddns.keyAlgorithm) ? settings.ddns.keyAlgorithm : "hmac-sha256",
         };
+    }
+    // Drop the obsolete pfSense config so it doesn't linger in settings.json.
+    if(settings.hasOwnProperty("dnsPush")){
+        delete settings.dnsPush;
     }
 
 

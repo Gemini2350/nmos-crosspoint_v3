@@ -50,6 +50,94 @@
     function deviceDisplayLabel(dev:any){
       return dev?.displayLabel || dev?.alias || dev?.name || "";
     }
+    // Device-only name (no "<Node> - " prefix) — used when the device sits
+    // inside a node band, where the node name is already shown in the band.
+    function deviceDisplayLabelShort(dev:any){
+      return dev?.displayLabelShort || deviceDisplayLabel(dev);
+    }
+
+    // ----- Node grouping (same rule as the Details page) -----
+    // Devices sharing an NMOS node are clustered next to each other and get
+    // a slim node band (header row above the sender columns / separator row
+    // before the receiver rows). Single-device nodes render exactly as
+    // before with the combined "<Node> - <Device>" label.
+    interface CpNodeGroup {
+      key:string;
+      label:string;
+      grouped:boolean;
+      devices:any[];
+    }
+    let senderGroups:CpNodeGroup[] = [];
+    let receiverGroups:CpNodeGroup[] = [];
+
+    function groupDevicesByNode(devs:any[]):CpNodeGroup[]{
+      let byKey:{[k:string]:CpNodeGroup} = {};
+      let groups:CpNodeGroup[] = [];
+      devs.forEach((dev:any)=>{
+        let key = dev.nodeId || dev.id;
+        let g = byKey[key];
+        if(!g){
+          g = { key, label: dev.nodeLabel || deviceDisplayLabel(dev), grouped:false, devices:[] };
+          byKey[key] = g;
+          groups.push(g);
+        }
+        if(dev.nodeLabel){ g.label = dev.nodeLabel; }
+        g.devices.push(dev);
+      });
+      groups.forEach((g)=>{ g.grouped = g.devices.length > 1; });
+      return groups;
+    }
+    function flattenGroups(groups:CpNodeGroup[]):any[]{
+      let out:any[] = [];
+      groups.forEach((g)=>{ out = out.concat(g.devices); });
+      return out;
+    }
+
+    // Number of matrix columns a sender device currently occupies — must
+    // mirror the thead markup exactly (1 device column + one column per
+    // flow while expanded).
+    function senderDevCols(dev:any):number{
+      let cols = 1;
+      if(isSenderExpanded(dev.id)){
+        flowTypes.forEach((t)=>{ cols += (dev.senders && Array.isArray(dev.senders[t])) ? dev.senders[t].length : 0; });
+      }
+      return cols;
+    }
+    function groupSenderCols(g:CpNodeGroup):number{
+      let cols = 0;
+      g.devices.forEach((d)=>{ cols += senderDevCols(d); });
+      return cols;
+    }
+    // Only render the band header row (and shift the sticky header down)
+    // when at least one node actually has multiple devices.
+    $: hasSenderBands = senderGroups.some(g => g.grouped);
+    // Same for the vertical node strip left of the receiver rows.
+    $: hasReceiverBands = receiverGroups.some(g => g.grouped);
+
+    // Row count of a receiver device (device row + one row per flow while
+    // expanded) — the vertical node strip spans the whole group via rowspan,
+    // so this must mirror the tbody markup exactly.
+    function receiverDevRows(dev:any):number{
+      let rows = 1;
+      if(isReceiverExpanded(dev.id)){
+        flowTypes.forEach((t)=>{ rows += (dev.receivers && Array.isArray(dev.receivers[t])) ? dev.receivers[t].length : 0; });
+      }
+      return rows;
+    }
+    function groupReceiverRows(g:CpNodeGroup):number{
+      let rows = 0;
+      g.devices.forEach((d)=>{ rows += receiverDevRows(d); });
+      return rows;
+    }
+
+    // Single-device node whose band text would just repeat the device label
+    // right next to it → leave the band empty (geometry stays uniform, no
+    // duplicated name). Grouped nodes always show their label.
+    function bandLabelVisible(g:CpNodeGroup):boolean{
+      if(g.grouped){ return true; }
+      let d = g.devices[0];
+      return !!d && g.label.toLowerCase() !== deviceDisplayLabelShort(d).toLowerCase();
+    }
 
 
     function getFlowTypeIcon(type:any, source=true){
@@ -109,9 +197,29 @@
       sync = ServerConnector.sync("crosspoint");
       sync.subscribe((obj:any)=>{
         sourceState = obj;
-        doFilter();
+        scheduleFilter();
       });
     });
+
+    // Coalesce sync patches into one doFilter per animation frame — the
+    // crosspoint SyncObject delivers a patch per upstream NMOS event, which
+    // on a busy registry means bursts of them. doFilter walks + copies every
+    // device, so running it once per frame instead of once per patch keeps
+    // the matrix responsive (same pattern as details.svelte's rebuild).
+    let filterScheduled = false;
+    function scheduleFilter(){
+      if(filterScheduled) return;
+      filterScheduled = true;
+      const run = () => {
+        filterScheduled = false;
+        try{ doFilter(); }catch(e){}
+      };
+      if(typeof requestAnimationFrame === "function"){
+        requestAnimationFrame(run);
+      }else{
+        setTimeout(run, 16);
+      }
+    }
 
     function changeFilter(){
       setTimeout(()=>{
@@ -119,6 +227,23 @@
 
       saveFilter();
     },10)
+    }
+
+    // Shallow-copy a device for the filter pipeline. The filters below only
+    // ever REPLACE the per-type flow arrays (dev.senders[type] = [...].filter),
+    // they never mutate the flow objects themselves — so copying the device
+    // record, the senders/receivers dicts and the arrays is enough. The old
+    // structuredClone(dev) deep-cloned every flow (legs, codecs, bitrates …)
+    // on every sync patch, which was the single biggest UI cost on large
+    // registries.
+    function shallowDeviceCopy(dev:any, kind:"senders"|"receivers"){
+      let d:any = {...dev};
+      let src = dev[kind] || {};
+      let copy:any = {};
+      flowTypes.forEach((type)=>{ copy[type] = Array.isArray(src[type]) ? [...src[type]] : []; });
+      d[kind] = copy;
+      d[kind === "senders" ? "receivers" : "senders"] = undefined;
+      return d;
     }
 
     function doFilter (){
@@ -134,9 +259,7 @@
             count+= dev.senders[type].length;
           })
           if(count > 0){
-            let d = structuredClone(dev);
-            d.receivers = undefined
-            senders.push(d);
+            senders.push(shallowDeviceCopy(dev, "senders"));
           }
         })
 
@@ -146,9 +269,7 @@
             count+= dev.receivers[type].length;
           })
           if(count > 0){
-            let d = structuredClone(dev)
-            d.senders = undefined
-            receivers.push(d);
+            receivers.push(shallowDeviceCopy(dev, "receivers"));
           }
         })
 
@@ -262,7 +383,7 @@
           senders = senders.filter((dev:any)=>{
             let flowFound = false;
             for(let type in dev.senders){
-              
+
               // TODO mybe add original Name to search fields?
               dev.senders[type].filter((send:any)=>{
                 let found = tokenSearch(send, searchTokens, ["alias", "name"]);
@@ -272,22 +393,31 @@
                 return found;
               });
 
-              
+
             }
             let self = tokenSearch(dev, searchTokens, ["alias", "name"]);
             if(flowFound && !self){
               searchExpandedSenders.push(dev.id);
             }
 
-            
+
             if(flowFound || self ){
               return true;
             }
             return false;
-          }); 
+          });
         }
+
+        // Cluster devices of the same node next to each other and rebuild
+        // the flat arrays in group order — the tbody connect-cell loops
+        // iterate the flat arrays, so their column/row sequence must match
+        // the grouped header markup exactly.
+        senderGroups = groupDevicesByNode(senders);
+        senders = flattenGroups(senderGroups);
+        receiverGroups = groupDevicesByNode(receivers);
+        receivers = flattenGroups(receiverGroups);
     }
-      
+
     }
     function isSenderExpanded(id:string){
       if(searchExpandedSenders.includes(id)){
@@ -322,6 +452,9 @@
       
       saveFilter();
       senders = [...senders]
+      // Re-render the grouped header row too (band colspans depend on the
+      // expansion state).
+      senderGroups = [...senderGroups]
     }
 
     function toggleExpandReceiver(id:string){
@@ -338,7 +471,8 @@
       }
       saveFilter();
       receivers = [...receivers]
-      
+      receiverGroups = [...receiverGroups]
+
     }
 
 
@@ -601,6 +735,20 @@
       return false
     }
 
+    // Is a disconnect staged for this receiver flow? Clicking an ACTIVE
+    // point with AutoTake off queues a {src:null, dst} entry — the wire
+    // stays up until TAKE, so the cell keeps its active look but gets a
+    // dashed ring (violet = prepared, orange = working after TAKE).
+    function disconnectStageFor(dstFlowId:string): ""|"prepared"|"working"{
+      for(let c of preparedConnectList){
+        if(!c.src && c.dst && c.dst.id === dstFlowId){ return "prepared"; }
+      }
+      for(let c of workingConnectList){
+        if(!c.src && c.dst && c.dst.id === dstFlowId){ return "working"; }
+      }
+      return "";
+    }
+
     function getConnectClass(srcDev:any,src:any,dstDev:any, dst:any){
       for(let c of preparedConnectList){
         if(c.src && c.dst){
@@ -662,15 +810,44 @@
 
       if(src && dst){
         if(src.id == dst.connectedFlow){
+          let stage = disconnectStageFor(dst.id);
+          if(stage === "prepared"){ return "active cp-disc-prepared"; }
+          if(stage === "working"){ return "active cp-disc-working"; }
           return "active"
         }
       }else{
+        // Device-level cell: dashed only when EVERY active connection
+        // between the two devices is staged for disconnect — if some stay
+        // up after TAKE, the aggregate dot keeps its solid active look.
+        let anyActive = false;
+        let anyUnstaged = false;
+        let sawPrepared = false;
+        let sawWorking = false;
         for(let type in srcDev.senders){
           for(let flow of srcDev.senders[type]){
             if(dstDev.connectedFlows.includes(flow.id)){
-              return "active"
+              anyActive = true;
+              let matched = false;
+              for(let rtype in dstDev.receivers){
+                for(let r of dstDev.receivers[rtype] || []){
+                  if(r.connectedFlow === flow.id){
+                    matched = true;
+                    let st = disconnectStageFor(r.id);
+                    if(st === "prepared"){ sawPrepared = true; }
+                    else if(st === "working"){ sawWorking = true; }
+                    else { anyUnstaged = true; }
+                  }
+                }
+              }
+              if(!matched){ anyUnstaged = true; }
             }
           }
+        }
+        if(anyActive){
+          if(!anyUnstaged && (sawPrepared || sawWorking)){
+            return sawPrepared ? "active cp-disc-prepared" : "active cp-disc-working";
+          }
+          return "active"
         }
       }
 
@@ -817,19 +994,34 @@
     </ul>
 
 
-    <div class="cp-container">
+    <div class="cp-container" class:cp-has-node-bands={hasSenderBands} class:cp-has-node-vbands={hasReceiverBands}>
       <div class="cp-limit-container">
-      
+
       <div class="cp-header-cross"></div>
 </div>
       <table class="cp-table">
         <thead>
+                {#if hasSenderBands}
+                <tr class="cp-node-band-row">
+                    {#if hasReceiverBands}<th class="cp-node-vcol"></th>{/if}
+                    <th class="cp-node-band-corner"></th>
+                    {#each senderGroups as sg}
+                      <th class="cp-node-band" colspan={groupSenderCols(sg)}>
+                        {#if bandLabelVisible(sg)}
+                          <span class="cp-node-band-label" use:OverlayMenuService.tooltip data-tooltip="NMOS Node: {sg.label}">{sg.label}</span>
+                        {/if}
+                      </th>
+                    {/each}
+                </tr>
+                {/if}
                 <tr>
-                    <th class=""></th>
-                    {#each senders as dev}
+                    {#if hasReceiverBands}<th class="cp-node-vcol"></th>{/if}
+                    <th class="cp-corner"></th>
+                    {#each senderGroups as sg}
+                    {#each sg.devices as dev}
                       <th class="cp-device" class:expanded={isSenderExpanded(dev.id)} on:click={()=>toggleExpandSender(dev.id)}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
-                        --><span class="cp-label {(dev.hidden?"hidden":"")}">{deviceDisplayLabel(dev)}<!--
+                        --><span class="cp-label {(dev.hidden?"hidden":"")}">{hasSenderBands ? deviceDisplayLabelShort(dev) : deviceDisplayLabel(dev)}<!--
                         --><span class="cp-edit">
                           <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                           <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
@@ -858,14 +1050,25 @@
                         {/each}
                       {/if}
                     {/each}
+                    {/each}
                 </tr>
             </thead>
             <tbody>
-              {#each receivers as dev}
+              {#each receiverGroups as rg}
+              {#each rg.devices as dev, devIdx}
                 <tr class="cp-device" class:expanded={isReceiverExpanded(dev.id)}>
+                  {#if hasReceiverBands && devIdx === 0}
+                    <!-- Every node group gets its vertical strip — including
+                         single-device nodes, so the left edge looks uniform. -->
+                    <td class="cp-node-vband" rowspan={groupReceiverRows(rg)}>
+                      {#if bandLabelVisible(rg)}
+                        <span class="cp-node-vband-label" use:OverlayMenuService.tooltip data-tooltip="NMOS Node: {rg.label}">{rg.label}</span>
+                      {/if}
+                    </td>
+                  {/if}
                   <td class="cp-line-stick" on:click={()=>toggleExpandReceiver(dev.id)}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
-                    --><span class="cp-label {(dev.hidden?"hidden":"")}">{deviceDisplayLabel(dev)}<!--
+                    --><span class="cp-label {(dev.hidden?"hidden":"")}">{hasReceiverBands ? deviceDisplayLabelShort(dev) : deviceDisplayLabel(dev)}<!--
                         --><span class="cp-edit">
                           <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                           <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
@@ -945,6 +1148,7 @@
                 {/each}
                 {/if}
               {/each}
+              {/each}
             </tbody>
     </table>
     
@@ -1017,7 +1221,7 @@
         <div class="modal-action">
           <form method="dialog">
             <!-- if there is a button in form, it will close the modal -->
-            <button class="btn bg-red-600 text-white" on:click={()=>{takeConnect()}} >Take</button>
+            <button class="btn bg-violet-500 text-white" on:click={()=>{takeConnect()}} >Take</button>
             <button on:click={()=>{clearConnect()}} class="btn" >Clear All</button>
             <button class="btn">Close</button>
           </form>

@@ -32,6 +32,14 @@ RUN npm run build
 FROM node:20 AS server-builder
 WORKDIR /build/server
 
+# Native build deps for @discordjs/opus (libopus headers + a C++ toolchain)
+# — needed by the audio-monitor feature. node:20 already ships Python.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential python3 \
+        libopus-dev libopus0 \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY server/package*.json ./
 RUN npm ci --no-audit --no-fund --prefer-offline
 
@@ -43,9 +51,17 @@ RUN npm run build
 FROM node:20-slim AS runtime
 WORKDIR /nmos-crosspoint/server
 
-# Production dependencies only — keeps the runtime image small.
+# Runtime needs libopus so @discordjs/opus's native binding can load.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libopus0 \
+ && rm -rf /var/lib/apt/lists/*
+
+# node_modules come straight from the builder stage — the native bindings
+# for @discordjs/opus/werift are compiled there against the same glibc as
+# this node:20-slim image, so no rebuild is needed at runtime.
 COPY server/package*.json ./
-RUN npm ci --omit=dev --no-audit --no-fund --prefer-offline \
+COPY --from=server-builder /build/server/node_modules ./node_modules
+RUN npm prune --omit=dev --no-audit --no-fund \
  && npm cache clean --force
 
 # Compiled JS and the UI bundle (from the two previous stages).

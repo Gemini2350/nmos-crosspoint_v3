@@ -20,7 +20,7 @@ import * as jsonpatch from 'fast-json-patch';
 import * as sdpTransform from 'sdp-transform';
 import { CrosspointAbstraction, CrosspointConnectionSenderInfo } from "./crosspointAbstraction";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
-import { DnsPushService } from "./dnsPushService";
+import { DdnsService } from "./ddnsService";
 
 const fs = require("fs");
 
@@ -550,8 +550,8 @@ export class NmosRegistryConnector {
                                             }
                                         }catch(e){}
                                         let displayName = this.resolveDnsDisplayName(g.path, postData.label || "");
-                                        if(DnsPushService.instance && ip && displayName){
-                                            DnsPushService.instance.scheduleNodePush(g.path, displayName, ip);
+                                        if(DdnsService.instance && ip && displayName){
+                                            DdnsService.instance.scheduleNodePush(g.path, displayName, ip);
                                         }
                                     }catch(e){}
                                 }
@@ -568,8 +568,8 @@ export class NmosRegistryConnector {
                                 // registry should not keep a stale DNS entry.
                                 if(type === "nodes"){
                                     try{
-                                        if(DnsPushService.instance){
-                                            DnsPushService.instance.removeNode(g.path).catch(()=>{});
+                                        if(DdnsService.instance){
+                                            DdnsService.instance.removeNode(g.path).catch(()=>{});
                                         }
                                     }catch(e){}
                                 }

@@ -22,15 +22,16 @@
       sdp: string;
     }
     interface LeaseStat { used: number; total: number }
-    interface DnsPush {
+    interface Ddns {
       enabled: boolean;
-      serverIp: string;
-      serverPort: number;
-      protocol: "http" | "https";
-      apiKey: string;       // server NEVER returns the real value
-      apiKeySet: boolean;   // server flag: an API key is configured
-      domain: string;
-      insecureTLS: boolean;
+      server: string;
+      port: number;
+      zone: string;
+      ttl: number;
+      keyName: string;
+      keySecret: string;      // server NEVER returns the real value
+      keySecretSet: boolean;  // server flag: a secret is configured
+      keyAlgorithm: string;
     }
     interface VirtualNodeCfg {
       enabled: boolean;
@@ -46,9 +47,10 @@
       multicastRange: string;
       autoMulticast: { enabled: boolean, reconnectReceiversOnSenderChange?: boolean };
       autoActivateInactiveSender: boolean;
+      audioMonitor: { enabled: boolean };
       // pool = the single-range counter; per-cat fields kept for back-compat
       multicastStats: { pool?: LeaseStat, audio?: LeaseStat, video?: LeaseStat };
-      dnsPush: DnsPush;
+      ddns: Ddns;
       auth: { users: string[] };
       restartRequired: boolean;
       version?: string;
@@ -59,12 +61,13 @@
       acceptableGmid: "",
       vendorProfiles: [],
       virtualSenders: [],
-      virtualNode: { enabled: true },
+      virtualNode: { enabled: false },
       multicastRange: "",
       autoMulticast: { enabled: false, reconnectReceiversOnSenderChange: false },
       autoActivateInactiveSender: false,
+      audioMonitor: { enabled: false },
       multicastStats: { pool:{used:0,total:0} },
-      dnsPush: { enabled:false, serverIp:"", serverPort:443, protocol:"https", apiKey:"", apiKeySet:false, domain:"local", insecureTLS:true },
+      ddns: { enabled:false, server:"", port:53, zone:"", ttl:300, keyName:"", keySecret:"", keySecretSet:false, keyAlgorithm:"hmac-sha256" },
       auth: { users: [] },
       restartRequired: false
     };
@@ -75,10 +78,11 @@
     let formGmid:string = "";
     let formProfiles:VendorProfile[] = [];
     let formVirtualSenders:VirtualSender[] = [];
-    let formVirtualNodeEnabled:boolean = true;
+    let formVirtualNodeEnabled:boolean = false;
     let formAutoMulticastEnabled:boolean = false;
     let formReconnectReceivers:boolean = false;
     let formAutoActivateSender:boolean = false;
+    let formAudioMonitorEnabled:boolean = false;
     let formMulticastRange:string = "";
 
     // Credentials form (independent of the main Save flow — saved via its own
@@ -93,15 +97,16 @@
     let credError:string   = "";
     let credSuccess:string = "";
 
-    // DNS Push form state
-    let formDnsEnabled:boolean    = false;
-    let formDnsServerIp:string    = "";
-    let formDnsServerPort:string  = "443";
-    let formDnsProtocol:"http"|"https" = "https";
-    let formDnsApiKey:string      = "";
-    let formDnsApiKeySet:boolean  = false;
-    let formDnsDomain:string      = "local";
-    let formDnsInsecureTLS:boolean = true;
+    // DDNS (RFC 2136) form state
+    let formDdnsEnabled:boolean     = false;
+    let formDdnsServer:string       = "";
+    let formDdnsPort:string         = "53";
+    let formDdnsZone:string         = "";
+    let formDdnsTtl:string          = "300";
+    let formDdnsKeyName:string      = "";
+    let formDdnsKeySecret:string    = "";
+    let formDdnsKeySecretSet:boolean = false;
+    let formDdnsKeyAlgorithm:string = "hmac-sha256";
 
     // Live preview of detected devices for the vendor table — the actual
     // list (label / match / url per node) is now built server-side and shipped
@@ -140,7 +145,7 @@
             formGmid = obj.acceptableGmid || "";
             formProfiles = Array.isArray(obj.vendorProfiles) ? obj.vendorProfiles.map((p:any) => ({...p})) : [];
             formVirtualSenders = Array.isArray(obj.virtualSenders) ? obj.virtualSenders.map((v:any) => ({...v})) : [];
-            formVirtualNodeEnabled = (obj.virtualNode && typeof obj.virtualNode.enabled === "boolean") ? obj.virtualNode.enabled : true;
+            formVirtualNodeEnabled = (obj.virtualNode && typeof obj.virtualNode.enabled === "boolean") ? obj.virtualNode.enabled : false;
             formAutoMulticastEnabled = !!(obj.autoMulticast && obj.autoMulticast.enabled);
             // `reconnectReceiversOnSenderChange` default is now FALSE, so we
             // take the stored value as-is (no "!== false" magic).
@@ -149,6 +154,7 @@
               obj.autoMulticast.reconnectReceiversOnMulticastChange
             ));
             formAutoActivateSender   = !!obj.autoActivateInactiveSender;
+            formAudioMonitorEnabled  = !!(obj.audioMonitor && obj.audioMonitor.enabled);
             formMulticastRange       = (typeof obj.multicastRange === "string") ? obj.multicastRange : "";
             // Pre-fill the credentials form with the first configured user
             // so the operator doesn't have to type their own username.
@@ -156,15 +162,16 @@
               formCredCurrentUser = obj.auth.users[0];
               if(!formCredNewUser){ formCredNewUser = obj.auth.users[0]; }
             }
-            if(obj.dnsPush){
-              formDnsEnabled     = !!obj.dnsPush.enabled;
-              formDnsServerIp    = obj.dnsPush.serverIp || "";
-              formDnsServerPort  = ""+(obj.dnsPush.serverPort || 443);
-              formDnsProtocol    = obj.dnsPush.protocol === "http" ? "http" : "https";
-              formDnsApiKey      = "";   // never round-trip the secret
-              formDnsApiKeySet   = !!obj.dnsPush.apiKeySet;
-              formDnsDomain      = obj.dnsPush.domain || "local";
-              formDnsInsecureTLS = obj.dnsPush.insecureTLS !== false;
+            if(obj.ddns){
+              formDdnsEnabled      = !!obj.ddns.enabled;
+              formDdnsServer       = obj.ddns.server || "";
+              formDdnsPort         = ""+(obj.ddns.port || 53);
+              formDdnsZone         = obj.ddns.zone || "";
+              formDdnsTtl          = ""+(obj.ddns.ttl || 300);
+              formDdnsKeyName      = obj.ddns.keyName || "";
+              formDdnsKeySecret    = "";   // never round-trip the secret
+              formDdnsKeySecretSet = !!obj.ddns.keySecretSet;
+              formDdnsKeyAlgorithm = obj.ddns.keyAlgorithm || "hmac-sha256";
             }
           }
         }
@@ -214,23 +221,25 @@
       formGmid = serverState.acceptableGmid || "";
       formProfiles = Array.isArray(serverState.vendorProfiles) ? serverState.vendorProfiles.map((p:any)=>({...p})) : [];
       formVirtualSenders = Array.isArray((serverState as any).virtualSenders) ? (serverState as any).virtualSenders.map((v:any)=>({...v})) : [];
-      formVirtualNodeEnabled = (serverState.virtualNode && typeof serverState.virtualNode.enabled === "boolean") ? serverState.virtualNode.enabled : true;
+      formVirtualNodeEnabled = (serverState.virtualNode && typeof serverState.virtualNode.enabled === "boolean") ? serverState.virtualNode.enabled : false;
       formAutoMulticastEnabled = !!(serverState.autoMulticast && serverState.autoMulticast.enabled);
       formReconnectReceivers   = !!(serverState.autoMulticast && (
         (serverState.autoMulticast as any).reconnectReceiversOnSenderChange ??
         (serverState.autoMulticast as any).reconnectReceiversOnMulticastChange
       ));
       formAutoActivateSender   = !!serverState.autoActivateInactiveSender;
+      formAudioMonitorEnabled  = !!(serverState.audioMonitor && serverState.audioMonitor.enabled);
       formMulticastRange       = serverState.multicastRange || "";
-      if(serverState.dnsPush){
-        formDnsEnabled     = !!serverState.dnsPush.enabled;
-        formDnsServerIp    = serverState.dnsPush.serverIp || "";
-        formDnsServerPort  = ""+(serverState.dnsPush.serverPort || 443);
-        formDnsProtocol    = serverState.dnsPush.protocol === "http" ? "http" : "https";
-        formDnsApiKey      = "";
-        formDnsApiKeySet   = !!serverState.dnsPush.apiKeySet;
-        formDnsDomain      = serverState.dnsPush.domain || "local";
-        formDnsInsecureTLS = serverState.dnsPush.insecureTLS !== false;
+      if(serverState.ddns){
+        formDdnsEnabled      = !!serverState.ddns.enabled;
+        formDdnsServer       = serverState.ddns.server || "";
+        formDdnsPort         = ""+(serverState.ddns.port || 53);
+        formDdnsZone         = serverState.ddns.zone || "";
+        formDdnsTtl          = ""+(serverState.ddns.ttl || 300);
+        formDdnsKeyName      = serverState.ddns.keyName || "";
+        formDdnsKeySecret    = "";
+        formDdnsKeySecretSet = !!serverState.ddns.keySecretSet;
+        formDdnsKeyAlgorithm = serverState.ddns.keyAlgorithm || "hmac-sha256";
       }
       dirty = false;
       saveError = "";
@@ -261,16 +270,25 @@
         return;
       }
 
-      // DNS Push validation
-      let dnsPort = parseInt(formDnsServerPort);
-      if(isNaN(dnsPort) || dnsPort <= 0 || dnsPort > 65535){
-        saveError = "DNS Push: Port must be between 1 and 65535.";
+      // DDNS validation
+      let ddnsPort = parseInt(formDdnsPort);
+      if(isNaN(ddnsPort) || ddnsPort <= 0 || ddnsPort > 65535){
+        saveError = "DDNS: Port must be between 1 and 65535.";
         return;
       }
-      if(formDnsEnabled){
-        if(!formDnsServerIp.trim()){ saveError = "DNS Push: Server address is required when enabled."; return; }
-        if(!formDnsApiKeySet && !formDnsApiKey){ saveError = "DNS Push: API Key is required when enabled."; return; }
-        if(!formDnsDomain.trim()){ saveError = "DNS Push: Domain (hostname suffix) is required."; return; }
+      let ddnsTtl = parseInt(formDdnsTtl);
+      if(isNaN(ddnsTtl) || ddnsTtl <= 0){
+        saveError = "DDNS: TTL must be a positive number of seconds.";
+        return;
+      }
+      if(formDdnsEnabled){
+        if(!formDdnsServer.trim()){ saveError = "DDNS: DNS server address is required when enabled."; return; }
+        if(!formDdnsZone.trim()){ saveError = "DDNS: Zone is required when enabled."; return; }
+        // Unsigned mode ("none") needs no TSIG key at all.
+        if(formDdnsKeyAlgorithm !== "none"){
+          if(!formDdnsKeyName.trim()){ saveError = "DDNS: TSIG key name is required when enabled."; return; }
+          if(!formDdnsKeySecretSet && !formDdnsKeySecret){ saveError = "DDNS: TSIG key secret is required when enabled."; return; }
+        }
       }
 
       let payload:any = {
@@ -285,15 +303,17 @@
           reconnectReceiversOnSenderChange: formReconnectReceivers
         },
         autoActivateInactiveSender: formAutoActivateSender,
-        dnsPush: {
-          enabled:     formDnsEnabled,
-          serverIp:    formDnsServerIp.trim(),
-          serverPort:  dnsPort,
-          protocol:    formDnsProtocol,
-          // Empty string means "keep the existing key" on the server.
-          apiKey:      formDnsApiKey,
-          domain:      formDnsDomain.trim(),
-          insecureTLS: formDnsInsecureTLS
+        audioMonitor: { enabled: formAudioMonitorEnabled },
+        ddns: {
+          enabled:      formDdnsEnabled,
+          server:       formDdnsServer.trim(),
+          port:         ddnsPort,
+          zone:         formDdnsZone.trim(),
+          ttl:          ddnsTtl,
+          keyName:      formDdnsKeyName.trim(),
+          // Empty string means "keep the existing secret" on the server.
+          keySecret:    formDdnsKeySecret,
+          keyAlgorithm: formDdnsKeyAlgorithm
         }
       };
 
@@ -802,6 +822,37 @@
 
 
     <section class="setup-section">
+      <h3>Audio Monitor (experimental)</h3>
+      <p class="setup-section-hint">
+        Adds a 🎧 button next to each audio sender on the Details page.
+        Clicking it makes the server join that sender's multicast on
+        demand, transcode the PCM to Opus 48 kHz stereo and stream it to
+        your browser via WebRTC — useful for quick monitoring without
+        needing a dedicated probe receiver. Only one sender is monitored
+        at a time per browser tab; multi-channel streams (8 ch / 16 ch
+        AES67) expose a channel-pair selector in the player overlay.
+        Off by default — the feature costs CPU per active monitor.
+        With this toggle off the 🎧 button is hidden entirely.
+      </p>
+      <p class="setup-section-hint">
+        <strong>Network requirement:</strong> the server must have access to
+        the multicast / media network to receive the streams (IGMP join on
+        the ST&nbsp;2110 VLAN). When running in Docker this means
+        <code>--network host</code> (or a macvlan/interface in the media
+        VLAN) — with the default bridge network the 🎧 button will connect
+        but stay silent.
+      </p>
+
+      <div class="setup-form">
+        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
+          <span class="label-text">Enable Audio Monitor</span>
+          <input type="checkbox" class="toggle" bind:checked={formAudioMonitorEnabled} on:change={markDirty} />
+        </label>
+      </div>
+    </section>
+
+
+    <section class="setup-section">
       <h3>Multicast DHCP</h3>
       <p class="setup-section-hint">
         When enabled, the server reserves a pair of consecutive multicast addresses per <strong>active</strong> sender
@@ -1138,27 +1189,31 @@
 
 
     <section class="setup-section">
-      <h3>Push Names to DNS</h3>
+      <h3>Push Names to DNS (DDNS)</h3>
       <p class="setup-section-hint">
-        Publishes each NMOS node as a host_override on the pfSense
-        <strong>DNS Resolver</strong> (Unbound) via the
-        <a href="https://pfrest.org/api-docs/" target="_blank" rel="noopener">pfRest</a> API.
-        After every batch <code>/api/v2/services/dns_resolver/apply</code> is called so
-        changes go live immediately.
+        Publishes each NMOS node as an <strong>A record</strong> via standard
+        <strong>RFC&nbsp;2136 Dynamic Updates</strong> — works with BIND9,
+        Knot&nbsp;DNS, PowerDNS, Windows DNS Server and any other server that
+        accepts <code>nsupdate</code>-style updates. Authentication is either a
+        <strong>TSIG key</strong> (the zone allows updates signed with the key
+        below, e.g. BIND: <code>update-policy &#123; grant &lt;keyname&gt; zonesub A; &#125;;</code>)
+        or — algorithm <strong>none&nbsp;(unsigned)</strong> — plain unauthenticated
+        updates for zones that authorise by source IP (e.g. BIND:
+        <code>allow-update &#123; &lt;server-ip&gt;; &#125;;</code>). Unsigned is fine on an
+        isolated management network; prefer TSIG whenever the DNS server supports it.
       </p>
       <p class="setup-section-hint">
         The hostname is the node label (or the device alias if you set one on the
         Crosspoint / Details page); the IP comes from the node's <code>href</code>.
-        Entries are tagged <code>NMOS-Crosspoint:&lt;nodeId&gt;</code> in their description so
-        the service only ever touches the entries it owns — manually-configured
-        overrides are left untouched. Deleting a device with the Forget button also
-        removes its DNS entry.
+        NMOS Crosspoint keeps a local inventory of the records it created, so it
+        only ever updates or deletes its own — deleting a device with the Forget
+        button also removes its DNS record.
       </p>
 
       <div class="setup-form">
         <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Enable DNS Push</span>
-          <input type="checkbox" class="toggle" bind:checked={formDnsEnabled} on:change={markDirty} />
+          <span class="label-text">Enable DDNS</span>
+          <input type="checkbox" class="toggle" bind:checked={formDdnsEnabled} on:change={markDirty} />
         </label>
       </div>
 
@@ -1166,53 +1221,64 @@
         <label class="setup-field">
           <span class="setup-label">DNS Server IP / Host</span>
           <input type="text" class="input input-bordered" placeholder="10.0.0.1"
-                 bind:value={formDnsServerIp} on:input={markDirty} />
+                 bind:value={formDdnsServer} on:input={markDirty} />
         </label>
         <label class="setup-field setup-field-narrow">
           <span class="setup-label">Port</span>
           <input type="number" class="input input-bordered" min="1" max="65535"
-                 bind:value={formDnsServerPort} on:input={markDirty} />
+                 bind:value={formDdnsPort} on:input={markDirty} />
         </label>
         <label class="setup-field setup-field-narrow">
-          <span class="setup-label">Protocol</span>
-          <select class="select select-bordered" bind:value={formDnsProtocol} on:change={markDirty}>
-            <option value="https">https</option>
-            <option value="http">http</option>
+          <span class="setup-label">TTL (s)</span>
+          <input type="number" class="input input-bordered" min="1"
+                 bind:value={formDdnsTtl} on:input={markDirty} />
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:8px;">
+        <label class="setup-field">
+          <span class="setup-label">Zone</span>
+          <input type="text" class="input input-bordered" placeholder="media.example.net"
+                 bind:value={formDdnsZone} on:input={markDirty} />
+        </label>
+      </div>
+
+      <div class="setup-form" style="margin-top:8px;">
+        <label class="setup-field setup-field-narrow">
+          <span class="setup-label">Authentication</span>
+          <select class="select select-bordered" bind:value={formDdnsKeyAlgorithm} on:change={markDirty}>
+            <option value="hmac-sha256">hmac-sha256</option>
+            <option value="hmac-sha512">hmac-sha512</option>
+            <option value="hmac-sha1">hmac-sha1</option>
+            <option value="hmac-md5">hmac-md5</option>
+            <option value="none">none (unsigned)</option>
           </select>
         </label>
+        <label class="setup-field">
+          <span class="setup-label">TSIG Key Name</span>
+          <input type="text" class="input input-bordered" placeholder="nmos-crosspoint"
+                 disabled={formDdnsKeyAlgorithm === "none"}
+                 bind:value={formDdnsKeyName} on:input={markDirty} />
+        </label>
       </div>
 
       <div class="setup-form" style="margin-top:8px;">
         <label class="setup-field">
-          <span class="setup-label">API Key</span>
+          <span class="setup-label">TSIG Key Secret (base64)</span>
           <input type="password" class="input input-bordered"
-                 placeholder={formDnsApiKeySet ? "•••••••• (stored — leave blank to keep)" : "Paste the pfRest API key"}
+                 placeholder={formDdnsKeyAlgorithm === "none" ? "not needed for unsigned updates" : (formDdnsKeySecretSet ? "•••••••• (stored — leave blank to keep)" : "Paste the base64 TSIG secret")}
                  autocomplete="new-password"
-                 bind:value={formDnsApiKey} on:input={markDirty} />
-        </label>
-      </div>
-
-      <div class="setup-form" style="margin-top:8px;">
-        <label class="setup-field">
-          <span class="setup-label">Domain (hostname suffix)</span>
-          <input type="text" class="input input-bordered" placeholder="local"
-                 bind:value={formDnsDomain} on:input={markDirty} />
-        </label>
-      </div>
-
-      <div class="setup-form" style="margin-top:8px;">
-        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Allow self-signed / invalid TLS certificate</span>
-          <input type="checkbox" class="toggle" bind:checked={formDnsInsecureTLS} on:change={markDirty} />
+                 disabled={formDdnsKeyAlgorithm === "none"}
+                 bind:value={formDdnsKeySecret} on:input={markDirty} />
         </label>
       </div>
 
 
-      <!-- Pushed Names Inventory — mirrors the Multicast Lease inventory.
-           Lists every DNS entry the server has successfully published to
-           pfSense. Updated live as new pushes / updates / removes happen. -->
+      <!-- Pushed Records Inventory — mirrors the Multicast Lease inventory.
+           Lists every A record the server has successfully published via
+           RFC 2136. Updated live as new pushes / updates / removes happen. -->
       <details class="lease-inventory">
-        <summary>Pushed DNS Entries ({(dnsPushedSnapshot.entries || []).length})</summary>
+        <summary>Pushed DNS Records ({(dnsPushedSnapshot.entries || []).length})</summary>
 
         <div class="lease-table-wrap">
           <table class="lease-table">
@@ -1235,7 +1301,7 @@
               {/each}
               {#if (dnsPushedSnapshot.entries || []).length === 0}
                 <tr><td colspan="4" class="vendor-empty">
-                  No DNS entries pushed yet. Enable DNS Push above and save.
+                  No DNS records pushed yet. Enable DDNS above and save.
                 </td></tr>
               {/if}
             </tbody>

@@ -25,13 +25,16 @@
     let uiList:any[] = [];
     let sync:Subject<any> ;
 
+    // version bumped: the stored filter used a misspelled `waring` key, so
+    // any persisted copy must be discarded or the Warning toggle stays dead.
     let filter = {
-        version:"346721",
+        version:"346722",
         searchTopic:"",
         search:"",
         severity:{
             error:true,
-            waring:true,
+            warning:true,
+            success:true,
             info:false,
             verbose:false,
             debug:false,
@@ -151,10 +154,15 @@
                     }
                 }
 
+                // Severities arrive normalised from the server (syncLog
+                // maps "warn" → "warning" etc.), so exact matches suffice.
                 if(log.severity == "error" && filter.severity.error == false){
                     return;
                 }
-                if(log.severity == "waring" && filter.severity.waring == false){
+                if(log.severity == "warning" && filter.severity.warning == false){
+                    return;
+                }
+                if(log.severity == "success" && filter.severity.success == false){
                     return;
                 }
                 if(log.severity == "info" && filter.severity.info == false){
@@ -264,14 +272,21 @@
 
       <li>
         <label class="label cursor-pointer gap-2">
-          <span class="label-text">Waring</span> 
-          <input on:input={()=>changeFilter()} bind:checked={filter.severity.waring} type="checkbox" class="toggle" />
+          <span class="label-text">Warning</span>
+          <input on:input={()=>changeFilter()} bind:checked={filter.severity.warning} type="checkbox" class="toggle" />
         </label>
       </li>
 
       <li>
         <label class="label cursor-pointer gap-2">
-          <span class="label-text">Info</span> 
+          <span class="label-text">Success</span>
+          <input on:input={()=>changeFilter()} bind:checked={filter.severity.success} type="checkbox" class="toggle" />
+        </label>
+      </li>
+
+      <li>
+        <label class="label cursor-pointer gap-2">
+          <span class="label-text">Info</span>
           <input on:input={()=>changeFilter()} bind:checked={filter.severity.info} type="checkbox" class="toggle" />
         </label>
       </li>
@@ -332,6 +347,10 @@
 
                                 {#if log.severity == "warning"}
                                     <div class="badge badge-warning badge-sm">Warning</div>
+                                {/if}
+
+                                {#if log.severity == "success"}
+                                    <div class="badge badge-success badge-sm">Success</div>
                                 {/if}
 
                                 {#if log.severity == "info"}

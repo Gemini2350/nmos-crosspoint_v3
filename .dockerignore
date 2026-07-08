@@ -1,2 +1,33 @@
+# Anything that doesn't need to be in the build context. Keeps the docker
+# build fast and avoids accidentally shipping host-installed node_modules
+# (incompatible with the container OS) into the image.
+
+# Local dev artefacts
+**/node_modules
+**/.DS_Store
+**/.vscode
+**/.idea
+**/.cache
+**/*.log
+
+# Build outputs — rebuilt inside the container
+ui/dist
+server/dist
+server/public
+
+# Runtime state — should come from the mounted volumes, not the image
+# (config.default/ stays IN the image — it seeds fresh volumes on first boot)
+server/config
+server/state
+server/log
+server/config_backups
+
+# Source-control / docs / dev-only files
 .git
+.github
 .gitignore
+.claude
+Screenshots
+README.md
+CHANGELOG.md
+_tempFiles

@@ -1,6 +1,6 @@
 {
     "name": "nmos_crosspoint_server",
-    "version": "3.36",
+    "version": "3.37",
     "author": "Johannes Grieb",
     "license": "MIT",
     "description": "",
@@ -13,15 +13,15 @@
         "test": "echo \"Error: no test specified\" && exit 1"
     },
     "dependencies": {
+        "@discordjs/opus": "^0.10.0",
         "axios": "^1.6.7",
         "express": "^4.18.2",
         "fast-json-patch": "^3.1.1",
-        "form-data": "^4.0.0",
         "multicast-dns": "^7.2.5",
-        "promise.any": "^2.0.6",
         "rfc6902": "^5.1.1",
         "rxjs": "^7.8.1",
         "sdp-transform": "^2.14.2",
+        "werift": "^0.23.0",
         "ws": "^8.16.0"
     },
     "devDependencies": {

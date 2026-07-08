@@ -49,7 +49,10 @@ class CrosspointUpdateThread{
 
 
         parentPort.on('message', (message) => {
-            let data = JSON.parse(message);
+            // The main thread posts plain objects (structured clone) on the
+            // hot path; tolerate legacy JSON strings for the small command
+            // messages that may still use them.
+            let data = (typeof message === "string") ? JSON.parse(message) : message;
             this.update(data);
         });
 
@@ -187,9 +190,11 @@ class CrosspointUpdateThread{
                 }
             }
 
-            parentPort.postMessage(JSON.stringify({
+            // Hot path: full state → main thread. Plain object = structured
+            // clone, no JSON string round-trip.
+            parentPort.postMessage({
                 crosspointState: this.crosspointState
-            }));
+            });
 
             try{
                 fs.writeFileSync("./state/hidden.json", JSON.stringify(this.crosspointHidden));
@@ -395,9 +400,13 @@ class CrosspointUpdateThread{
         this.updateShadow();
         this.updateState();
         this.updateRequest = 0;
-        parentPort.postMessage(JSON.stringify({
+        // Hot path: this runs on every worker tick (up to ~10×/s while the
+        // registry is busy). Posting the object directly uses structured
+        // clone instead of building + parsing a JSON string of the whole
+        // crosspoint state.
+        parentPort.postMessage({
             crosspointState: this.crosspointState
-        }));
+        });
 
         //let timeTaken = Date.now() - start;
         //console.log("- - - - - - - - Crosspoint Update -- Total time taken : " + timeTaken + " milliseconds");
