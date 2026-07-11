@@ -15,11 +15,11 @@ $cp-color-data:theme('colors.blue.500');
 
 // Connection-state colours (broadcast convention):
 //   green  = active, confirmed by NMOS — everything is fine
-//   violet = prepared / preview / hover — staged, nothing on the wire yet
+//   orange dashed OUTLINE = prepared / preview / hover — staged, nothing on the wire yet
+//   orange FILL = working / pending — command sent, waiting for confirmation
 //   orange = working / pending — command sent, waiting for confirmation
 //   red    = reserved for ERRORS only
 $cp-color-green:#46aa14;
-$cp-color-violet:#8b5cf6;
 $cp-color-orange:#f97316;
 $cp-color-red:#e21e1e;
 
@@ -29,7 +29,43 @@ $cp-color-red:#e21e1e;
 $cp-border: 1px solid transparent;
 
 .crosspoint {
-    
+
+    // BCP-008 status modal (click on the status symbol). Lives OUTSIDE
+    // .cp-container in the DOM, hence styled at this level.
+    .cp-monitor-overall {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        margin: 12px 0 4px 0;
+    }
+    .cp-monitor-state {
+        display: inline-block;
+        padding: 1px 10px;
+        border-radius: 10px;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        background-color: theme('colors.neutral-600');
+        &.cp-status-ok   { background-color: #46aa14; }
+        &.cp-status-warn { background-color: #f97316; }
+        &.cp-status-err  { background-color: #e21e1e; }
+    }
+    .cp-monitor-counter {
+        font-size: 13px;
+        color: theme('colors.slate.400');
+    }
+    .cp-monitor-message {
+        font-size: 13px;
+        color: theme('colors.slate.400');
+        margin: 4px 0;
+    }
+    .cp-monitor-table {
+        margin-top: 10px;
+        width: 100%;
+        td { padding: 4px 12px 4px 0; font-size: 13px; }
+        thead td { color: theme('colors.slate.500'); font-size: 12px; }
+    }
+
     .cp-container{
         margin-left:10px;
         width:100%;
@@ -112,6 +148,66 @@ $cp-border: 1px solid transparent;
             }
         }
 
+        // BCP-008 health badge next to sender/receiver labels: orange
+        // triangle = partially healthy, red circle = unhealthy. Green is
+        // deliberately unmarked — no news is good news. On device level a
+        // counter of affected flows sits next to the icon.
+        .cp-mon {
+            display: inline-flex;
+            align-items: center;
+            gap: 1px;
+            margin: 0 3px;
+            font-size: 11px;
+            font-weight: 700;
+            vertical-align: middle;
+            cursor: default;
+            svg { width: 14px; height: 14px; }
+            &.cp-mon-warn { color: $cp-color-orange; }
+            &.cp-mon-err  { color: $cp-color-red; }
+        }
+
+        // BCP-008 status symbol — same box style as the AUDIO/VIDEO/ANC
+        // type icons. Colour = CURRENT state (green/orange/red, grey =
+        // inactive); the little bubble is the summed transition counter
+        // (history since the last reset — NOT the current state). Click
+        // opens the detail modal with per-domain counters + reset.
+        .cp-status {
+            cursor: pointer;
+            background-color: theme('colors.neutral-600');
+            svg { color: theme('colors.white'); }
+
+            &.cp-status-ok       { background-color: $cp-color-green; }
+            &.cp-status-warn     { background-color: $cp-color-orange; }
+            &.cp-status-err      { background-color: $cp-color-red; }
+            &.cp-status-inactive { background-color: theme('colors.neutral-600'); }
+
+            // Device exposes NO BCP-008 monitor for this flow: greyed-out
+            // hollow symbol, not clickable — the tooltip explains why.
+            &.cp-status-none {
+                background: none;
+                cursor: default;
+                opacity: 0.55;
+                svg { color: theme('colors.neutral-500'); }
+            }
+
+            .cp-status-count {
+                position: absolute;
+                right: -5px;
+                bottom: -5px;
+                min-width: 14px;
+                height: 14px;
+                padding: 0 3px;
+                border-radius: 7px;
+                background-color: theme('colors.neutral-900');
+                color: theme('colors.white');
+                font-size: 9px;
+                line-height: 14px;
+                font-weight: 700;
+                text-align: center;
+                writing-mode: horizontal-tb;
+            }
+        }
+
         .cp-button {
             display:inline-block;
             width:$cp-size;
@@ -163,7 +259,7 @@ $cp-border: 1px solid transparent;
             }
             &.prepareddisconnect {
                 svg {
-                    color:theme('colors.violet.500');
+                    color:theme('colors.orange.500');
                 }
             }
             &.workingdisconnect {
@@ -174,7 +270,7 @@ $cp-border: 1px solid transparent;
 
             &.previewdisconnect {
                 svg {
-                    color:theme('colors.violet.500');
+                    color:theme('colors.orange.500');
                 }
             }
 
@@ -596,15 +692,20 @@ $cp-border: 1px solid transparent;
                         background-color: $cp-color-green;
                     }
 
+                    // Prepared: no colour of its own — the future state
+                    // (green = will be active) as a dashed OUTLINE only,
+                    // matching the staged-disconnect marker style.
                     &.prepared {
-                        background-color: $cp-color-violet;
+                        background: none;
+                        border: 2px dashed $cp-color-orange;
                     }
                     &.error {
                         background-color:$cp-color-red;
                     }
 
                     &.preview {
-                        background-color:$cp-color-violet;
+                        background: none;
+                        border: 2px dashed $cp-color-orange;
                     }
 
                     &.working {
@@ -614,18 +715,22 @@ $cp-border: 1px solid transparent;
                     // Active connection staged for disconnect (AutoTake
                     // off): the wire is still up — faded green fill — but
                     // the dashed ring announces the teardown on TAKE
-                    // (violet = prepared, orange = working after TAKE).
+                    // (dashed orange ring — staged and executing look alike here).
                     &.cp-disc-prepared {
                         background-color: rgba(70, 170, 20, 0.35);
-                        border: 2px dashed $cp-color-violet;
+                        border: 2px dashed $cp-color-orange;
                     }
                     &.cp-disc-working {
                         background-color: rgba(70, 170, 20, 0.35);
                         border: 2px dashed $cp-color-orange;
                     }
 
+                    // Hover = preview of what a click would prepare: same
+                    // dashed-green outline as a prepared point. Background is
+                    // left alone so an ACTIVE (filled green) cell keeps its
+                    // fill and just gains the ring.
                     &:hover {
-                        background-color:$cp-color-violet;
+                        border: 2px dashed $cp-color-orange;
                     }
 
                 }
@@ -724,7 +829,7 @@ html[data-theme="light"] {
                 }
                 &.prepareddisconnect {
                     svg {
-                        color:theme('colors.violet.600');
+                        color:theme('colors.orange.600');
                     }
                 }
                 &.workingdisconnect {
@@ -735,7 +840,7 @@ html[data-theme="light"] {
     
                 &.previewdisconnect {
                     svg {
-                        color:theme('colors.violet.600');
+                        color:theme('colors.orange.600');
                     }
                 }
     

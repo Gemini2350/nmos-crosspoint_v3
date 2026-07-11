@@ -5,7 +5,7 @@
       import { onDestroy, onMount } from "svelte";
       import { createEventDispatcher } from 'svelte';
 
-      import { Icon, ChevronRight, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle } from "svelte-hero-icons";
+      import { Icon, ChevronRight, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart } from "svelte-hero-icons";
     import { getSearchTokens, tokenSearch } from "../lib/functions";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
@@ -746,7 +746,7 @@
     // Is a disconnect staged for this receiver flow? Clicking an ACTIVE
     // point with AutoTake off queues a {src:null, dst} entry — the wire
     // stays up until TAKE, so the cell keeps its active look but gets a
-    // dashed ring (violet = prepared, orange = working after TAKE).
+    // dashed orange ring in the matrix.
     function disconnectStageFor(dstFlowId:string): ""|"prepared"|"working"{
       for(let c of preparedConnectList){
         if(!c.src && c.dst && c.dst.id === dstFlowId){ return "prepared"; }
@@ -924,8 +924,46 @@
       }).finally(()=>{})
     }
 
+    // Receiver hover detail: the backend condenses the BCP-004-01
+    // constraint sets into a short string (capLimits). Empty = the device
+    // publishes no capability information.
     function shortCaps(caps:any){
-      return "Limits: Unknown";
+      return (typeof caps === "string" && caps.length > 0) ? caps : "Limits: Unknown";
+    }
+
+    // BCP-008 status helpers. Colour always reflects the CURRENT state —
+    // the transition counters are history and only shown as numbers.
+    function monitorStateName(v:number){
+      return v === 1 ? "Healthy" : v === 2 ? "Partially healthy" : v === 3 ? "Unhealthy" : "Inactive";
+    }
+    function monitorClassVal(v:number){
+      return v === 1 ? "cp-status-ok" : v === 2 ? "cp-status-warn" : v === 3 ? "cp-status-err" : "cp-status-inactive";
+    }
+    function monitorClass(m:any){ return monitorClassVal(m.status); }
+
+    // Tooltip on the status symbol: overall status, optional device message,
+    // four-domain breakdown with the transition counters in parentheses.
+    function monitorText(m:any){
+      let t = "Status: " + monitorStateName(m.status) + (m.message ? " — " + m.message : "");
+      if(m.detail){ t += "\n" + m.detail; }
+      t += "\nClick for details / counter reset";
+      return t;
+    }
+
+    // Status modal (click on the symbol): full breakdown + counter reset.
+    let monitorModal:any;
+    let monitorModalFlow:any = null;
+    function openMonitorModal(flow:any){
+      monitorModalFlow = flow;
+      monitorModal.showModal();
+    }
+    function resetMonitorCounters(){
+      if(!monitorModalFlow) return;
+      ServerConnector.post("bcp008Reset", { id: monitorModalFlow.id }).then(()=>{
+        monitorModal.close();
+      }).catch((e:any)=>{
+        ServerConnector.addFeedback({ message: "Counter reset failed: " + (e?.message || e), level: "error" });
+      });
     }
 
     function shortFormat(format:any){
@@ -1030,6 +1068,9 @@
                       <th class="cp-device" class:expanded={isSenderExpanded(dev.id)} on:click={()=>toggleExpandSender(dev.id)}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                         --><span class="cp-label {(dev.hidden?"hidden":"")}">{hasSenderBands ? deviceDisplayLabelShort(dev) : deviceDisplayLabel(dev)}<!--
+                        -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
+                              use:OverlayMenuService.tooltip
+                              data-tooltip={"BCP-008: " + dev.monitorSummaryTx.count + (dev.monitorSummaryTx.count === 1 ? " sender " : " senders ") + (dev.monitorSummaryTx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryTx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryTx.count}</span>{/if}<!--
                         --><span class="cp-edit">
                           <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                           <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
@@ -1041,7 +1082,11 @@
                         {#each flowTypes as type}
                           {#each dev.senders[type] as flow}
                             <th class="cp-flow"><!--
-                              --><span class="cp-expand"></span><!--
+                              -->{#if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
+                                    on:click|stopPropagation={()=>openMonitorModal(flow)}
+                                    use:OverlayMenuService.tooltip data-tooltip={monitorText(flow.monitor)}><Icon src={Heart}></Icon>{#if (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}</span>{:else}<span class="cp-type cp-status cp-status-none"
+                                    use:OverlayMenuService.tooltip
+                                    data-tooltip={"No BCP-008 status — this device does not appear to support status monitoring\n(no IS-12 sender/receiver monitor advertised)."}><Icon src={Heart}></Icon></span>{/if}<!--
                               --><span class="cp-label {(flow.hidden?"hidden":"")}">{flow.alias}<!--
                                 --><span class="cp-edit">
                                   <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
@@ -1077,6 +1122,9 @@
                   <td class="cp-line-stick" on:click={()=>toggleExpandReceiver(dev.id)}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}">{hasReceiverBands ? deviceDisplayLabelShort(dev) : deviceDisplayLabel(dev)}<!--
+                    -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
+                          use:OverlayMenuService.tooltip
+                          data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryRx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryRx.count}</span>{/if}<!--
                         --><span class="cp-edit">
                           <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                           <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
@@ -1112,7 +1160,11 @@
                   {#each dev.receivers[type] as flow}
                     <tr class="cp-flow">
                       <td class="cp-line-stick">
-                        <span class="cp-expand"></span><!--
+                        {#if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
+                              on:click|stopPropagation={()=>openMonitorModal(flow)}
+                              use:OverlayMenuService.tooltip data-tooltip={monitorText(flow.monitor)}><Icon src={Heart}></Icon>{#if (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}</span>{:else}<span class="cp-type cp-status cp-status-none"
+                                    use:OverlayMenuService.tooltip
+                                    data-tooltip={"No BCP-008 status — this device does not appear to support status monitoring\n(no IS-12 sender/receiver monitor advertised)."}><Icon src={Heart}></Icon></span>{/if}<!--
                         --><span class="cp-label {(flow.hidden?"hidden":"")}">{flow.alias}<!--
                         --><span class="cp-edit">
                           <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
@@ -1185,6 +1237,39 @@
       </div>
     </dialog>
 
+    <dialog bind:this={monitorModal} class="modal">
+      <div class="modal-box">
+        <form method="dialog">
+          <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+        </form>
+        <h3 class="font-bold text-lg">Status – {monitorModalFlow ? (monitorModalFlow.alias || monitorModalFlow.name || monitorModalFlow.id) : ""}</h3>
+        {#if monitorModalFlow && monitorModalFlow.monitor}
+          {@const m = monitorModalFlow.monitor}
+          <div class="cp-monitor-overall">
+            <span class={"cp-monitor-state " + monitorClassVal(m.status)}>{monitorStateName(m.status)}</span>
+            <span class="cp-monitor-counter">Transitions total: {m.counter || 0}</span>
+          </div>
+          {#if m.message}<p class="cp-monitor-message">{m.message}</p>{/if}
+          <table class="cp-monitor-table">
+            <thead><tr><td>Domain</td><td>State</td><td>Transitions</td></tr></thead>
+            <tbody>
+              {#each (m.domains || []) as d}
+                <tr>
+                  <td>{d.label}</td>
+                  <td><span class={"cp-monitor-state " + monitorClassVal(d.status)}>{monitorStateName(d.status)}</span></td>
+                  <td>{d.counter}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+        <div class="modal-action">
+          <button class="btn" on:click={resetMonitorCounters}>Reset counters &amp; messages</button>
+          <form method="dialog"><button class="btn">Close</button></form>
+        </div>
+      </div>
+    </dialog>
+
     <dialog bind:this={preparedModal} class="modal">
       <div class="modal-box" style="max-width:80%;">
         <form method="dialog">
@@ -1229,7 +1314,7 @@
         <div class="modal-action">
           <form method="dialog">
             <!-- if there is a button in form, it will close the modal -->
-            <button class="btn bg-violet-500 text-white" on:click={()=>{takeConnect()}} >Take</button>
+            <button class="btn bg-red-600 text-white" on:click={()=>{takeConnect()}} >Take</button>
             <button on:click={()=>{clearConnect()}} class="btn" >Clear All</button>
             <button class="btn">Close</button>
           </form>

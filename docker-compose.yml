@@ -7,10 +7,10 @@ services:
   nmos-crosspoint:
     build:
       context: ./
-    image: nmos-crosspoint-responsive:test
+    image: nmos-crosspoint-bcp008:test
 
-    container_name: nmos-crosspoint_responsive
-    hostname: nmos-crosspoint_responsive
+    container_name: nmos-crosspoint_bcp008
+    hostname: nmos-crosspoint_bcp008
     domainname: local
 
     network_mode: host

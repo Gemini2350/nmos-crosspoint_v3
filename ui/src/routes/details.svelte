@@ -1144,7 +1144,7 @@
                               {/if}
                               <span class="det-leg-value">{leg.dstIp || "—"}<span class="det-leg-colon">:</span>{leg.dstPort || "—"}</span>
                               {#if leg.srcIp}
-                                <span class="det-leg-src det-hover" use:OverlayMenuService.tooltip data-tooltip="Source IP (SSM filter)">src {leg.srcIp}</span>
+                                <span class="det-leg-src" use:OverlayMenuService.tooltip data-tooltip="Source IP (SSM filter)">src {leg.srcIp}</span>
                               {/if}
                               {#if isDup}
                                 <span class="text-error det-dup-hint" use:OverlayMenuService.tooltip data-tooltip="Multicast {leg.dstIp} (Leg {leg.index+1}) is also used by: {dupOwnersText(flow.id, leg.index, leg.dstIp)}">DUP</span>
@@ -1247,7 +1247,7 @@
                           <div class="det-leg det-leg-readonly">
                             <span class="det-leg-value">{leg.dstIp || "—"}{leg.dstPort ? ":"+leg.dstPort : ""}</span>
                             {#if leg.srcIp}
-                              <span class="det-leg-src det-hover" use:OverlayMenuService.tooltip data-tooltip="Source IP (SSM filter)">src {leg.srcIp}</span>
+                              <span class="det-leg-src" use:OverlayMenuService.tooltip data-tooltip="Source IP (SSM filter)">src {leg.srcIp}</span>
                             {/if}
                           </div>
                         {/each}

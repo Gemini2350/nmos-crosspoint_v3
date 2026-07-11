@@ -31,6 +31,7 @@ import { parseSettings } from "./lib/parseSettings";
 import { MulticastLeaseManager } from "./lib/multicastLeaseManager";
 import { DdnsService } from "./lib/ddnsService";
 import { AudioMonitorService } from "./lib/audioMonitor";
+import { Bcp008Monitor } from "./lib/bcp008Monitor";
 import { NmosNodeApi } from "./lib/NmosNode/NmosNodeApi";
 import { NmosNodeRegistration } from "./lib/NmosNode/NmosNodeRegistration";
 
@@ -1257,6 +1258,24 @@ server.addRoute("POST", "audioMonitorUnsubscribe","global", (client: WebsocketCl
             }
             resolve({message:200, data:{}});
         }catch(e){ resolve({message:200, data:{}}); }
+    });
+});
+
+
+// BCP-008: reset the status transition counters + messages of the
+// NcStatusMonitor watching this sender/receiver (IS-12 method 4m3).
+server.addRoute("POST", "bcp008Reset","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            let id = (typeof postData?.id === "string") ? postData.id : "";
+            let nmosId = id.startsWith("nmos_") ? id.substring(5) : id;
+            if(!nmosId){ reject({message:"bcp008Reset: id required"}); return; }
+            if(!Bcp008Monitor.instance){ reject({message:"BCP-008 monitoring not running."}); return; }
+            Bcp008Monitor.instance.resetCounters(nmosId).then((ok:boolean) => {
+                if(ok) resolve({message:200, data:{}});
+                else   reject({message:"No BCP-008 monitor connected for this flow."});
+            }).catch((e:any) => reject({message: e?.message || "bcp008Reset failed"}));
+        }catch(e:any){ reject({message: e?.message || "bcp008Reset failed"}); }
     });
 });
 

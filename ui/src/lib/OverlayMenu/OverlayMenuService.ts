@@ -59,6 +59,9 @@ class _OverlayMenuService {
 
         element.addEventListener("mouseover", (event:any) => {
             let text:string = element.getAttribute("data-tooltip");
+            // Empty tooltip = nothing to show. Allows templates to bind the
+            // attribute unconditionally and only fill it when data exists.
+            if(!text){ return; }
             let r = element.getBoundingClientRect();
             let y = 0;
             let x = 0;
