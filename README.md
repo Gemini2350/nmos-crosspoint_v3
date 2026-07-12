@@ -28,6 +28,8 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 - **Aliases.** Rename a device or a single flow to whatever your operators call it; the original NMOS label is still visible as a tooltip. NMOS IS-13 is planned to push  the Aliases back to the Device.
 - **Virtual Senders.** Want do use your old Devices without NMOS Support? Use them as Virtual-Sender in the Crosspoint Matrix by adding their SDP's in the Setup. 
 - **PTP health.** Tell Crosspoint which Grand-Master ID is the "correct" one and every device shows a green / yellow / red dot at a glance. 
+- **BCP-008 status monitoring.** For devices with an IS-12 control endpoint, Crosspoint subscribes to their NcSender-/NcReceiverMonitors and shows the live health as a heart per flow in the matrix: green / orange / red, with the four status domains (Link, Connection/Transmission, Sync, Stream/Essence), transition counters and a counter reset in a click-open status panel. Active crosspoints colour themselves when an endpoint degrades. Read-only on the network. (option, on by default)
+- **Audio monitor.** A headphone button next to each audio sender on the Details page: the server joins the multicast on demand, transcodes to Opus and streams it to your browser via WebRTC, with a channel-pair selector for multichannel AES67. (option, off by default; the server needs access to the media network)
 - **Bandwidth estimates.** Crosspoint computes a Mbit/s estimate per flow from the SDP.
 - **SDP viewer.** One-click on the `SDP` button next to a sender opens the raw SDP manifest in a modal.
 - **Search and filter.** Three independent search boxes on the Details page: by name (device or flow alias), by codec / format (e.g. `L24`, `JPEG-XS`, `1080i50`), and by IP (`239.77.0.85` finds the one sender or receiver that uses that address). Tokens are matched against every matching field — type `Anubis 48` to narrow down to Anubis flows running at 48 kHz. Filters compose so you can quickly locate exactly the one flow you're looking for.
@@ -142,8 +144,7 @@ flowchart TD
 
 - IS-07 
 - IS-08 
-- BCP-008
-- IS-12
+- IS-12 (generic device control; the read-only BCP-008 monitoring client is already in)
 - IS-13
 
 
