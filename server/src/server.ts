@@ -1278,6 +1278,23 @@ server.addRoute("POST", "audioMonitorUnsubscribe","global", (client: WebsocketCl
 });
 
 
+// BCP-008: live packet counters (lost/late resp. transmission errors) for
+// the status modal — fetched from the device on demand.
+server.addRoute("POST", "bcp008Counters","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            let id = (typeof postData?.id === "string") ? postData.id : "";
+            let nmosId = id.startsWith("nmos_") ? id.substring(5) : id;
+            if(!nmosId){ reject({message:"bcp008Counters: id required"}); return; }
+            if(!Bcp008Monitor.instance){ reject({message:"BCP-008 monitoring not running."}); return; }
+            Bcp008Monitor.instance.getPacketCounters(nmosId).then((groups:any) => {
+                if(groups) resolve({message:200, data:{ groups }});
+                else       reject({message:"No BCP-008 monitor connected for this flow."});
+            }).catch((e:any) => reject({message: e?.message || "bcp008Counters failed"}));
+        }catch(e:any){ reject({message: e?.message || "bcp008Counters failed"}); }
+    });
+});
+
 // BCP-008: reset the status transition counters + messages of the
 // NcStatusMonitor watching this sender/receiver (IS-12 method 4m3).
 server.addRoute("POST", "bcp008Reset","global", (client: WebsocketClient, query:string[], postData: any) => {

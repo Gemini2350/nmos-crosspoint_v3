@@ -945,11 +945,11 @@ html[data-theme="light"] {
 // .crosspoint root div, so any .crosspoint-scoped selector never matches
 // them (this is why the traffic lights were missing in the app while a
 // scoped test harness looked fine).
-.cp-monitor-overall {
+.cp-monitor-title {
     display: flex;
-    gap: 14px;
     align-items: center;
-    margin: 12px 0 4px 0;
+    gap: 12px;
+    padding-right: 40px;   // keep clear of the ✕ button
 }
 .cp-monitor-state {
     display: inline-block;
@@ -986,6 +986,29 @@ html[data-theme="light"] {
 .cp-monitor-counter {
     font-size: 13px;
     color: theme('colors.slate.400');
+    margin-top: 8px;
+}
+.cp-monitor-domain-message {
+    color: theme('colors.slate.400');
+}
+.cp-monitor-packets {
+    margin-top: 12px;
+    padding-top: 8px;
+    border-top: 1px solid theme('colors.base-300');
+    font-size: 13px;
+}
+.cp-monitor-packets-row {
+    display: flex;
+    gap: 14px;
+    padding: 2px 0;
+}
+.cp-monitor-packets-label {
+    flex: 0 0 160px;
+    color: theme('colors.slate.500');
+}
+.cp-monitor-packets-loading {
+    color: theme('colors.slate.500');
+    font-style: italic;
 }
 .cp-monitor-message {
     font-size: 13px;
@@ -998,9 +1021,10 @@ html[data-theme="light"] {
     // Fixed column split — padding alone kept collapsing, auto layout
     // was giving the surplus width to the Domain column.
     table-layout: fixed;
-    td { padding: 6px 12px 6px 0; font-size: 13px; }
-    td:nth-child(1) { width: 30%; }
-    td:nth-child(2) { width: 45%; }
-    td:nth-child(3) { width: 25%; }
+    td { padding: 6px 12px 6px 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+    td:nth-child(1) { width: 22%; }
+    td:nth-child(2) { width: 10%; }
+    td:nth-child(3) { width: 48%; }
+    td:nth-child(4) { width: 20%; }
     thead td { color: theme('colors.slate.500'); font-size: 12px; }
 }

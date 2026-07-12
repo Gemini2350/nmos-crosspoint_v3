@@ -1436,7 +1436,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
      *  `detail` breaks the four status domains down for the tooltip, e.g.
      *  "Link ✓ · Connection ⚠ · Sync ✓ · Stream ✗" (receiver) or
      *  "Link ✓ · Transmission ✓ · Sync ✓ · Essence ✓" (sender). */
-    private buildMonitorStatus(nmosId:string): { status:number, message:string, detail:string, counter:number, domains:Array<{label:string,status:number,counter:number}> } | undefined {
+    private buildMonitorStatus(nmosId:string): { status:number, message:string, detail:string, counter:number, domains:Array<{label:string,status:number,counter:number,message:string}> } | undefined {
         if(!nmosId) return undefined;
         try{
             let st = Bcp008Monitor.instance?.getStatus(nmosId);
@@ -1448,7 +1448,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             // 1 = fine, 2 = degraded, 3 = down, 0 = inactive/not used.
             const sym = (v:number) => v === 1 ? "✓" : v === 2 ? "⚠" : v === 3 ? "✗" : "–";
             let d:any = st.domains || {};
-            let domains:Array<{label:string,status:number,counter:number}> = [];
+            let domains:Array<{label:string,status:number,counter:number,message:string}> = [];
             // "Overall counter" = MAX of the domain counters, not the sum: a
             // single incident typically bumps ALL four domains at once and
             // should read as 1, not 4.
@@ -1459,7 +1459,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 if(!dv || typeof dv.s !== "number") continue;
                 let c = (typeof dv.c === "number") ? dv.c : 0;
                 counter = Math.max(counter, c);
-                domains.push({ label: l, status: dv.s, counter: c });
+                domains.push({ label: l, status: dv.s, counter: c, message: (typeof dv.m === "string") ? dv.m : "" });
                 // Colour = CURRENT state; the counter in parens is history
                 // (transitions since the last reset), not the state itself.
                 parts.push(l + " " + sym(dv.s) + " (" + c + ")");
@@ -1646,7 +1646,7 @@ export interface CrosspointFlow {
     // `detail` is the four-domain breakdown for the tooltip, `counter` the
     // summed transition counters (history, NOT current state), `domains`
     // the per-domain rows for the status modal.
-    monitor?:{ status:number, message:string, detail?:string, counter?:number, domains?:Array<{label:string,status:number,counter:number}> }
+    monitor?:{ status:number, message:string, detail?:string, counter?:number, domains?:Array<{label:string,status:number,counter:number,message:string}> }
 };
 
 

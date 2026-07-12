@@ -47,7 +47,7 @@ export interface MonitorStatus {
     domains: { link?: DomainVal, path?: DomainVal, sync?: DomainVal, payload?: DomainVal };
 }
 
-export interface DomainVal { s: number; c: number; }
+export interface DomainVal { s: number; c: number; m?: string; }
 
 // IS-12 message types
 const MT_COMMAND = 0;
@@ -66,17 +66,28 @@ const PROP_OVERALL_STATUS_MESSAGE = { level: 3, index: 2 };// NcStatusMonitor.ov
 // The four status domains, identical property layout on NcReceiverMonitor
 // and NcSenderMonitor (only the semantics of 4p4/4p11 differ). Verified
 // against the AMWA reference mock device (nmos-device-control-mock).
-const DOMAIN_PROPS: Array<{ key: "link"|"path"|"sync"|"payload", id: { level: number, index: number }, counterId: { level: number, index: number } }> = [
-    { key: "link",    id: { level: 4, index: 1 },  counterId: { level: 4, index: 3 } },
-    { key: "path",    id: { level: 4, index: 4 },  counterId: { level: 4, index: 6 } },
-    { key: "sync",    id: { level: 4, index: 7 },  counterId: { level: 4, index: 9 } },
-    { key: "payload", id: { level: 4, index: 11 }, counterId: { level: 4, index: 13 } },
+const DOMAIN_PROPS: Array<{ key: "link"|"path"|"sync"|"payload", id: { level: number, index: number }, msgId: { level: number, index: number }, counterId: { level: number, index: number } }> = [
+    { key: "link",    id: { level: 4, index: 1 },  msgId: { level: 4, index: 2 },  counterId: { level: 4, index: 3 } },
+    { key: "path",    id: { level: 4, index: 4 },  msgId: { level: 4, index: 5 },  counterId: { level: 4, index: 6 } },
+    { key: "sync",    id: { level: 4, index: 7 },  msgId: { level: 4, index: 8 },  counterId: { level: 4, index: 9 } },
+    { key: "payload", id: { level: 4, index: 11 }, msgId: { level: 4, index: 12 }, counterId: { level: 4, index: 13 } },
 ];
 // ResetCountersAndMessages lives at DIFFERENT method ids on the two
 // monitor classes (verified against the AMWA mock): the receiver monitor
 // has two Get methods before it (4m3), the sender monitor only one (4m2).
 const METHOD_RESET_RECEIVER = { level: 4, index: 3 };
 const METHOD_RESET_SENDER   = { level: 4, index: 2 };
+// Packet counter getters (fetched on demand when the status modal opens —
+// they tick continuously, so a subscription-time snapshot would go stale):
+//   receiver: 4m1 GetLostPacketCounters, 4m2 GetLatePacketCounters
+//   sender:   4m1 GetTransmissionErrorCounters
+const COUNTER_METHODS_RECEIVER = [
+    { label: "Lost packets", id: { level: 4, index: 1 } },
+    { label: "Late packets", id: { level: 4, index: 2 } },
+];
+const COUNTER_METHODS_SENDER = [
+    { label: "Transmission errors", id: { level: 4, index: 1 } },
+];
 
 const RECONNECT_MIN_MS = 5000;
 const RECONNECT_MAX_MS = 60000;
@@ -272,6 +283,10 @@ class DeviceMonitorConnection {
                 this.publish(mon, { domain: { key: dp.key, c: Number(n.eventData.value) | 0 } });
                 return;
             }
+            if (pid.level === dp.msgId.level && pid.index === dp.msgId.index) {
+                this.publish(mon, { domain: { key: dp.key, m: "" + (n.eventData.value ?? "") } });
+                return;
+            }
         }
     }
 
@@ -279,7 +294,7 @@ class DeviceMonitorConnection {
     // change without a new message, a single domain flip) merge instead of
     // clobbering the rest.
     private lastByOid: Map<number, { status: number, message: string, domains: any }> = new Map();
-    private publish(mon: MonitorRef, patch: { status?: number, message?: string, domain?: { key: string, s?: number, c?: number } }) {
+    private publish(mon: MonitorRef, patch: { status?: number, message?: string, domain?: { key: string, s?: number, c?: number, m?: string } }) {
         const prev = this.lastByOid.get(mon.oid) || { status: 1, message: "", domains: {} };
         const next = {
             status: (patch.status === undefined) ? prev.status : patch.status,
@@ -287,9 +302,10 @@ class DeviceMonitorConnection {
             domains: { ...prev.domains },
         };
         if (patch.domain) {
-            const d = { ...(next.domains[patch.domain.key] || { s: 1, c: 0 }) };
+            const d = { ...(next.domains[patch.domain.key] || { s: 1, c: 0, m: "" }) };
             if (patch.domain.s !== undefined) d.s = patch.domain.s;
             if (patch.domain.c !== undefined) d.c = patch.domain.c;
+            if (patch.domain.m !== undefined) d.m = patch.domain.m;
             next.domains[patch.domain.key] = d;
         }
         this.lastByOid.set(mon.oid, next);
@@ -425,13 +441,38 @@ class DeviceMonitorConnection {
                         if (v === null || v === undefined) continue;
                         let c = 0;
                         try { c = Number(await this.getProperty(m.oid, dp.counterId)) | 0; } catch (e) {}
-                        domains[dp.key] = { s: Number(v) | 0, c };
+                        let dm = "";
+                        try { dm = "" + ((await this.getProperty(m.oid, dp.msgId)) ?? ""); } catch (e) {}
+                        domains[dp.key] = { s: Number(v) | 0, c, m: dm };
                     } catch (e) { /* domain not implemented */ }
                 }
                 this.lastByOid.set(m.oid, { status: Number(status) | 0, message, domains });
                 this.publish(m, { status: Number(status) | 0 });
             } catch (e) { /* keep last known */ }
         }
+    }
+
+    /** Fetch the packet counters (NcMethodResultCounters) for the monitor
+     *  watching the given flow. Returns null when this connection has no
+     *  monitor for it; groups whose method the device doesn't implement
+     *  are simply omitted. */
+    async countersFor(flowId: string): Promise<Array<{ label: string, counters: Array<{ name: string, value: number }> }> | null> {
+        const mon = this.monitors.find(m => m.flowId === flowId);
+        if (!mon) return null;
+        const defs = mon.kind === "receiver" ? COUNTER_METHODS_RECEIVER : COUNTER_METHODS_SENDER;
+        const out: Array<{ label: string, counters: Array<{ name: string, value: number }> }> = [];
+        for (const d of defs) {
+            try {
+                const res: any = await this.command(mon.oid, d.id, {});
+                if (res && statusOk(res.status) && Array.isArray(res.value)) {
+                    out.push({
+                        label: d.label,
+                        counters: res.value.map((c: any) => ({ name: "" + (c?.name ?? ""), value: Number(c?.value) || 0 })),
+                    });
+                }
+            } catch (e) { /* method not implemented on this device */ }
+        }
+        return out;
     }
 
     /** Invoke ResetCountersAndMessages (4m3) on the monitor watching the
@@ -472,6 +513,15 @@ export class Bcp008Monitor {
     /** Status for one IS-04 sender/receiver UUID, or null. */
     getStatus(flowId: string): MonitorStatus | null {
         return this.statusByFlow[flowId] || null;
+    }
+
+    /** Packet counters for one flow's monitor (fetched live). */
+    async getPacketCounters(flowId: string): Promise<Array<{ label: string, counters: Array<{ name: string, value: number }> }> | null> {
+        for (const conn of Array.from(this.conns.values())) {
+            const r = await conn.countersFor(flowId);
+            if (r) return r;
+        }
+        return null;
     }
 
     /** Reset the transition counters + messages for one flow's monitor. */

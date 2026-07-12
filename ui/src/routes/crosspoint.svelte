@@ -982,9 +982,16 @@
     // Status modal (click on the symbol): full breakdown + counter reset.
     let monitorModal:any;
     let monitorModalFlow:any = null;
+    // Packet counters (lost/late resp. transmission errors) are IS-12
+    // METHODS, not subscribable properties — fetched live on modal open.
+    let monitorModalCounters:any = null;   // null = loading, [] = none
     function openMonitorModal(flow:any){
       monitorModalFlow = flow;
+      monitorModalCounters = null;
       monitorModal.showModal();
+      ServerConnector.post("bcp008Counters", { id: flow.id }).then((r:any)=>{
+        monitorModalCounters = (r && r.data && Array.isArray(r.data.groups)) ? r.data.groups : [];
+      }).catch(()=>{ monitorModalCounters = []; });
     }
     function resetMonitorCounters(){
       if(!monitorModalFlow) return;
@@ -1271,26 +1278,42 @@
         <form method="dialog">
           <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
         </form>
-        <h3 class="font-bold text-lg">Status – {monitorModalFlow ? (monitorModalFlow.alias || monitorModalFlow.name || monitorModalFlow.id) : ""}</h3>
         {#if monitorModalFlow && monitorModalFlow.monitor}
           {@const m = monitorModalFlow.monitor}
-          <div class="cp-monitor-overall">
-            <span class={"cp-monitor-state " + monitorClassVal(m.status)}>{monitorStateName(m.status)}</span>
-            <span class="cp-monitor-counter">Overall counter: {m.counter || 0}</span>
-          </div>
+          <h3 class="font-bold text-lg cp-monitor-title">Status – {monitorModalFlow.alias || monitorModalFlow.name || monitorModalFlow.id}
+            <span class={"cp-monitor-state " + monitorClassVal(m.status)}>{monitorStateName(m.status)}</span></h3>
+          <div class="cp-monitor-counter">Overall counter: {m.counter || 0}</div>
           {#if m.message}<p class="cp-monitor-message">{m.message}</p>{/if}
           <table class="cp-monitor-table">
-            <thead><tr><td>Domain</td><td>State</td><td>Transitions</td></tr></thead>
+            <thead><tr><td>Domain</td><td>State</td><td>Message</td><td>Transitions</td></tr></thead>
             <tbody>
               {#each (m.domains || []) as d}
                 <tr>
                   <td>{d.label}</td>
-                  <td><span class={"cp-monitor-dot " + monitorClassVal(d.status)}></span><span class="cp-monitor-dot-label">{monitorStateName(d.status)}</span></td>
+                  <td><span class={"cp-monitor-dot " + monitorClassVal(d.status)}
+                        use:OverlayMenuService.tooltip data-tooltip={monitorStateName(d.status)}></span></td>
+                  <td class="cp-monitor-domain-message">{d.message || ""}</td>
                   <td>{d.counter}</td>
                 </tr>
               {/each}
             </tbody>
           </table>
+          <div class="cp-monitor-packets">
+            {#if monitorModalCounters === null}
+              <span class="cp-monitor-packets-loading">Reading packet counters…</span>
+            {:else}
+              {#each monitorModalCounters as g}
+                <div class="cp-monitor-packets-row">
+                  <span class="cp-monitor-packets-label">{g.label}</span>
+                  <span class="cp-monitor-packets-values">
+                    {#if g.counters.length === 0}0{:else}{#each g.counters as c, i}{i > 0 ? " · " : ""}{c.name ? c.name + ": " : ""}{c.value}{/each}{/if}
+                  </span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        {:else}
+          <h3 class="font-bold text-lg">Status</h3>
         {/if}
         <div class="modal-action">
           <button class="btn" on:click={resetMonitorCounters}>Reset counters &amp; messages</button>
