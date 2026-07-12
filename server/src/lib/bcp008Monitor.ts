@@ -72,9 +72,11 @@ const DOMAIN_PROPS: Array<{ key: "link"|"path"|"sync"|"payload", id: { level: nu
     { key: "sync",    id: { level: 4, index: 7 },  counterId: { level: 4, index: 9 } },
     { key: "payload", id: { level: 4, index: 11 }, counterId: { level: 4, index: 13 } },
 ];
-// NcStatusMonitor method 4m3: ResetCountersAndMessages (resets ALL domain
-// transition counters and status messages on the monitor).
-const METHOD_RESET_COUNTERS = { level: 4, index: 3 };
+// ResetCountersAndMessages lives at DIFFERENT method ids on the two
+// monitor classes (verified against the AMWA mock): the receiver monitor
+// has two Get methods before it (4m3), the sender monitor only one (4m2).
+const METHOD_RESET_RECEIVER = { level: 4, index: 3 };
+const METHOD_RESET_SENDER   = { level: 4, index: 2 };
 
 const RECONNECT_MIN_MS = 5000;
 const RECONNECT_MAX_MS = 60000;
@@ -389,7 +391,8 @@ class DeviceMonitorConnection {
     async resetFor(flowId: string): Promise<boolean> {
         const mon = this.monitors.find(m => m.flowId === flowId);
         if (!mon) return false;
-        const result = await this.command(mon.oid, METHOD_RESET_COUNTERS, {});
+        const resetId = mon.kind === "sender" ? METHOD_RESET_SENDER : METHOD_RESET_RECEIVER;
+        const result = await this.command(mon.oid, resetId, {});
         if (!statusOk(result?.status)) {
             throw new Error("ResetCountersAndMessages failed (status " + result?.status +
                 (result?.errorMessage ? " — " + result.errorMessage : "") + ")");
@@ -406,6 +409,8 @@ export class Bcp008Monitor {
     private conns: Map<string, DeviceMonitorConnection> = new Map();   // deviceId → connection
     private statusByFlow: { [flowId: string]: MonitorStatus } = {};
     private changeTimer: any = null;
+    private enabled = true;
+    private lastNmosState: any = null;
 
     /** Fired (debounced) whenever any status changed — the crosspoint
      *  abstraction hooks this to re-publish its enriched state. */
@@ -428,8 +433,29 @@ export class Bcp008Monitor {
         return false;
     }
 
+    /** Master switch (Setup page). Disabling tears every connection down
+     *  and clears all statuses; re-enabling reconnects immediately from the
+     *  last known registry state. */
+    setEnabled(v: boolean) {
+        if (this.enabled === v) return;
+        this.enabled = v;
+        if (!v) {
+            SyncLog.log("info", "BCP-008", "Status monitoring disabled in Setup — closing all control connections.");
+            for (const conn of Array.from(this.conns.values())) { conn.dispose(); }
+            this.conns.clear();
+            this.statusByFlow = {};
+            try { if (this.onChange) this.onChange(); } catch (e) {}
+        } else {
+            SyncLog.log("info", "BCP-008", "Status monitoring enabled.");
+            if (this.lastNmosState) { this.updateFromNmos(this.lastNmosState); }
+        }
+    }
+    isEnabled(): boolean { return this.enabled; }
+
     /** Reconcile connections against the current registry state. */
     updateFromNmos(state: any) {
+        this.lastNmosState = state;
+        if (!this.enabled) return;
         const wanted: Map<string, string> = new Map();   // deviceId → ncp url
         try {
             const devices = state?.devices || {};
@@ -469,15 +495,21 @@ export class Bcp008Monitor {
             if (!prev) return;
             delete this.statusByFlow[flowId];
         } else {
-            if (prev && prev.status === st.status && prev.message === st.message) return;
+            // Compare EVERYTHING including domains + counters. Devices often
+            // notify overallStatus first and the domain/counter properties
+            // right after — comparing only status+message dropped those
+            // follow-ups and the UI lagged one transition behind.
+            if (prev && prev.status === st.status && prev.message === st.message
+                && JSON.stringify(prev.domains) === JSON.stringify(st.domains)) return;
             this.statusByFlow[flowId] = st;
         }
-        // Debounce: a burst of notifications (e.g. reconnect re-poll) folds
-        // into one crosspoint re-publish.
+        // Short debounce: folds a notification burst (one transition emits
+        // up to ~10 property changes) into one crosspoint re-publish without
+        // adding noticeable latency.
         if (this.changeTimer) return;
         this.changeTimer = setTimeout(() => {
             this.changeTimer = null;
             try { if (this.onChange) this.onChange(); } catch (e) {}
-        }, 1000);
+        }, 250);
     }
 }

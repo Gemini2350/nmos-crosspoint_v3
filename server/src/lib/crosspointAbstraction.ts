@@ -75,6 +75,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // service itself debounces bursts to one publish per second.
         new Bcp008Monitor();
         Bcp008Monitor.instance.onChange = () => { try{ this.update(); }catch(e){} };
+        try{ Bcp008Monitor.instance.setEnabled(this.settings?.bcp008?.enabled !== false); }catch(e){}
 
         this.syncCrosspoint = new SyncObject("crosspoint", this.crosspointState);
         this.update();
@@ -1426,6 +1427,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
         (this.crosspointState as CrosspointState).totals = totals;
         (this.crosspointState as CrosspointState).detectedDevices = this.buildDetectedDevices();
+        // Lets the matrix hide the status hearts entirely when the feature
+        // is switched off (vs. grey "device doesn't support it" hearts).
+        (this.crosspointState as any).bcp008Enabled = this.settings?.bcp008?.enabled !== false;
     }
 
     /** BCP-008 status for one flow, or undefined when nothing monitors it.
@@ -1445,13 +1449,16 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             const sym = (v:number) => v === 1 ? "✓" : v === 2 ? "⚠" : v === 3 ? "✗" : "–";
             let d:any = st.domains || {};
             let domains:Array<{label:string,status:number,counter:number}> = [];
-            let counter = 0;   // "overall counter" = sum of the domain transition counters
+            // "Overall counter" = MAX of the domain counters, not the sum: a
+            // single incident typically bumps ALL four domains at once and
+            // should read as 1, not 4.
+            let counter = 0;
             let parts:string[] = [];
             for(let [k, l] of labels){
                 let dv = d[k];
                 if(!dv || typeof dv.s !== "number") continue;
                 let c = (typeof dv.c === "number") ? dv.c : 0;
-                counter += c;
+                counter = Math.max(counter, c);
                 domains.push({ label: l, status: dv.s, counter: c });
                 // Colour = CURRENT state; the counter in parens is history
                 // (transitions since the last reset), not the state itself.

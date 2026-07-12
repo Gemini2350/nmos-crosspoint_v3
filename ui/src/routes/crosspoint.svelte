@@ -818,10 +818,15 @@
 
       if(src && dst){
         if(src.id == dst.connectedFlow){
+          let cls = "active";
           let stage = disconnectStageFor(dst.id);
-          if(stage === "prepared"){ return "active cp-disc-prepared"; }
-          if(stage === "working"){ return "active cp-disc-working"; }
-          return "active"
+          if(stage === "prepared"){ cls += " cp-disc-prepared"; }
+          else if(stage === "working"){ cls += " cp-disc-working"; }
+          // Solid health ring when either endpoint reports a BCP-008 problem.
+          let h = Math.max(flowHealth(src), flowHealth(dst));
+          if(h === 3){ cls += " cp-health-err"; }
+          else if(h === 2){ cls += " cp-health-warn"; }
+          return cls;
         }
       }else{
         // Device-level cell: dashed only when EVERY active connection
@@ -831,6 +836,10 @@
         let anyUnstaged = false;
         let sawPrepared = false;
         let sawWorking = false;
+        // Health of every ACTIVE connection this dot represents (max of the
+        // two endpoints each, 0 = fine). Uniform problem → solid fill,
+        // mixed states → ring, so the dot never lies about "all bad".
+        let healths:number[] = [];
         for(let type in srcDev.senders){
           for(let flow of srcDev.senders[type]){
             if(dstDev.connectedFlows.includes(flow.id)){
@@ -840,6 +849,7 @@
                 for(let r of dstDev.receivers[rtype] || []){
                   if(r.connectedFlow === flow.id){
                     matched = true;
+                    healths.push(Math.max(flowHealth(flow), flowHealth(r)));
                     let st = disconnectStageFor(r.id);
                     if(st === "prepared"){ sawPrepared = true; }
                     else if(st === "working"){ sawWorking = true; }
@@ -847,15 +857,22 @@
                   }
                 }
               }
-              if(!matched){ anyUnstaged = true; }
+              if(!matched){ anyUnstaged = true; healths.push(flowHealth(flow)); }
             }
           }
         }
         if(anyActive){
+          let cls = "active";
           if(!anyUnstaged && (sawPrepared || sawWorking)){
-            return sawPrepared ? "active cp-disc-prepared" : "active cp-disc-working";
+            cls += sawPrepared ? " cp-disc-prepared" : " cp-disc-working";
           }
-          return "active"
+          let worst = healths.length ? Math.max(...healths) : 0;
+          if(worst >= 2){
+            let allSame = healths.every(h => h === worst);
+            if(allSame){ cls += (worst === 3 ? " cp-health-err" : " cp-health-warn"); }
+            else{ cls += (worst === 3 ? " cp-health-err-ring" : " cp-health-warn-ring"); }
+          }
+          return cls;
         }
       }
 
@@ -931,6 +948,11 @@
       return (typeof caps === "string" && caps.length > 0) ? caps : "Limits: Unknown";
     }
 
+    // Feature toggle from the crosspoint state: when BCP-008 monitoring is
+    // switched off in Setup, the status hearts disappear entirely (instead
+    // of showing grey "unsupported" symbols everywhere).
+    $: bcp008On = !sourceState || sourceState.bcp008Enabled !== false;
+
     // BCP-008 status helpers. Colour always reflects the CURRENT state —
     // the transition counters are history and only shown as numbers.
     function monitorStateName(v:number){
@@ -941,12 +963,19 @@
     }
     function monitorClass(m:any){ return monitorClassVal(m.status); }
 
-    // Tooltip on the status symbol: overall status, optional device message,
-    // four-domain breakdown with the transition counters in parentheses.
+    // BCP-008 problem level of a flow for the crosspoint cells: 0 = fine
+    // (healthy, inactive or unmonitored), 2/3 = partially/unhealthy.
+    function flowHealth(f:any):number{
+      return (f && f.monitor && typeof f.monitor.status === "number" && f.monitor.status >= 2) ? f.monitor.status : 0;
+    }
+
+    // Tooltip on the status symbol: the CURRENT message only. The device
+    // keeps overallStatusMessage until the next reset, so on a healthy flow
+    // it would describe a PAST problem — show the plain state name instead.
+    // History (message + counters) lives in the click modal.
     function monitorText(m:any){
-      let t = "Status: " + monitorStateName(m.status) + (m.message ? " — " + m.message : "");
-      if(m.detail){ t += "\n" + m.detail; }
-      t += "\nClick for details / counter reset";
+      let t = (m.status >= 2 && m.message) ? m.message : monitorStateName(m.status);
+      t += "\nClick for details";
       return t;
     }
 
@@ -1082,7 +1111,7 @@
                         {#each flowTypes as type}
                           {#each dev.senders[type] as flow}
                             <th class="cp-flow"><!--
-                              -->{#if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
+                              -->{#if !bcp008On}<span class="cp-expand"></span>{:else if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
                                     on:click|stopPropagation={()=>openMonitorModal(flow)}
                                     use:OverlayMenuService.tooltip data-tooltip={monitorText(flow.monitor)}><Icon src={Heart}></Icon>{#if (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}</span>{:else}<span class="cp-type cp-status cp-status-none"
                                     use:OverlayMenuService.tooltip
@@ -1160,7 +1189,7 @@
                   {#each dev.receivers[type] as flow}
                     <tr class="cp-flow">
                       <td class="cp-line-stick">
-                        {#if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
+                        {#if !bcp008On}<span class="cp-expand"></span>{:else if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
                               on:click|stopPropagation={()=>openMonitorModal(flow)}
                               use:OverlayMenuService.tooltip data-tooltip={monitorText(flow.monitor)}><Icon src={Heart}></Icon>{#if (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}</span>{:else}<span class="cp-type cp-status cp-status-none"
                                     use:OverlayMenuService.tooltip
@@ -1247,7 +1276,7 @@
           {@const m = monitorModalFlow.monitor}
           <div class="cp-monitor-overall">
             <span class={"cp-monitor-state " + monitorClassVal(m.status)}>{monitorStateName(m.status)}</span>
-            <span class="cp-monitor-counter">Transitions total: {m.counter || 0}</span>
+            <span class="cp-monitor-counter">Overall counter: {m.counter || 0}</span>
           </div>
           {#if m.message}<p class="cp-monitor-message">{m.message}</p>{/if}
           <table class="cp-monitor-table">
@@ -1256,7 +1285,7 @@
               {#each (m.domains || []) as d}
                 <tr>
                   <td>{d.label}</td>
-                  <td><span class={"cp-monitor-state " + monitorClassVal(d.status)}>{monitorStateName(d.status)}</span></td>
+                  <td><span class={"cp-monitor-dot " + monitorClassVal(d.status)}></span><span class="cp-monitor-dot-label">{monitorStateName(d.status)}</span></td>
                   <td>{d.counter}</td>
                 </tr>
               {/each}

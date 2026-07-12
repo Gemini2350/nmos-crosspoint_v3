@@ -50,6 +50,26 @@ $cp-border: 1px solid transparent;
         &.cp-status-warn { background-color: #f97316; }
         &.cp-status-err  { background-color: #e21e1e; }
     }
+    // Domain state as a traffic-light dot (green / orange / red, grey =
+    // inactive), with the state name in muted text next to it.
+    .cp-monitor-dot {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        vertical-align: middle;
+        margin-right: 8px;
+        background-color: theme('colors.neutral-600');
+        &.cp-status-ok   { background-color: #46aa14; }
+        &.cp-status-warn { background-color: #f97316; }
+        &.cp-status-err  { background-color: #e21e1e; }
+    }
+    .cp-monitor-dot-label {
+        color: theme('colors.slate.500');
+        font-size: 12px;
+        vertical-align: middle;
+    }
+
     .cp-monitor-counter {
         font-size: 13px;
         color: theme('colors.slate.400');
@@ -62,7 +82,13 @@ $cp-border: 1px solid transparent;
     .cp-monitor-table {
         margin-top: 10px;
         width: 100%;
-        td { padding: 4px 12px 4px 0; font-size: 13px; }
+        // Fixed column split — padding alone kept collapsing, auto layout
+        // was giving the surplus width to the Domain column.
+        table-layout: fixed;
+        td { padding: 6px 12px 6px 0; font-size: 13px; }
+        td:nth-child(1) { width: 30%; }
+        td:nth-child(2) { width: 45%; }
+        td:nth-child(3) { width: 25%; }
         thead td { color: theme('colors.slate.500'); font-size: 12px; }
     }
 
@@ -171,23 +197,33 @@ $cp-border: 1px solid transparent;
         // inactive); the little bubble is the summed transition counter
         // (history since the last reset — NOT the current state). Click
         // opens the detail modal with per-domain counters + reset.
-        .cp-status {
+        // Written as .cp-type.cp-status so the plain heart overrides the
+        // .cp-type tile background regardless of source order.
+        .cp-type.cp-status {
             cursor: pointer;
-            background-color: theme('colors.neutral-600');
-            svg { color: theme('colors.white'); }
+            // The flow label overlaps the expander zone via negative margins
+            // (that's why .cp-expand carries z-index 11) — lift the status
+            // symbol above it, or it hides behind the label bar.
+            position: relative;
+            z-index: 11;
+            // Just the heart, no tile: the colour lives in the glyph itself.
+            // Kept deliberately small and slightly translucent so it reads
+            // as a quiet indicator, not another button.
+            background: none;
+            opacity: 0.8;
+            svg { width: 15px; height: 15px; color: theme('colors.neutral-500'); }
+            &:hover { opacity: 1; }
 
-            &.cp-status-ok       { background-color: $cp-color-green; }
-            &.cp-status-warn     { background-color: $cp-color-orange; }
-            &.cp-status-err      { background-color: $cp-color-red; }
-            &.cp-status-inactive { background-color: theme('colors.neutral-600'); }
+            &.cp-status-ok       svg { color: $cp-color-green; }
+            &.cp-status-warn     svg { color: $cp-color-orange; }
+            &.cp-status-err      svg { color: $cp-color-red; }
+            &.cp-status-inactive svg { color: theme('colors.neutral-500'); }
 
-            // Device exposes NO BCP-008 monitor for this flow: greyed-out
-            // hollow symbol, not clickable — the tooltip explains why.
+            // Device exposes NO BCP-008 monitor for this flow: dimmed grey
+            // heart, not clickable — the tooltip explains why.
             &.cp-status-none {
-                background: none;
                 cursor: default;
-                opacity: 0.55;
-                svg { color: theme('colors.neutral-500'); }
+                svg { color: theme('colors.neutral-600'); }
             }
 
             .cp-status-count {
@@ -725,8 +761,26 @@ $cp-border: 1px solid transparent;
                         border: 2px dashed $cp-color-orange;
                     }
 
+                    // BCP-008 endpoint health on ACTIVE connections: the
+                    // whole point turns orange (partially healthy) or red
+                    // (unhealthy). The -ring variants are used on the round
+                    // device dot when it represents MULTIPLE connections in
+                    // DIFFERENT states — solid ring, fill stays green.
+                    &.cp-health-warn {
+                        background-color: $cp-color-orange;
+                    }
+                    &.cp-health-err {
+                        background-color: $cp-color-red;
+                    }
+                    &.cp-health-warn-ring {
+                        box-shadow: 0 0 0 2px $cp-color-orange;
+                    }
+                    &.cp-health-err-ring {
+                        box-shadow: 0 0 0 2px $cp-color-red;
+                    }
+
                     // Hover = preview of what a click would prepare: same
-                    // dashed-green outline as a prepared point. Background is
+                    // dashed-orange outline as a prepared point. Background is
                     // left alone so an ACTIVE (filled green) cell keeps its
                     // fill and just gains the ring.
                     &:hover {
