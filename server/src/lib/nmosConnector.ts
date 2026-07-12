@@ -231,7 +231,14 @@ export class NmosRegistryConnector {
         if(this.syncNmosTimer != null) return;
         this.syncNmosTimer = setTimeout(()=>{
             this.syncNmosTimer = null;
-            try{ this.syncNmos.setState(this.nmosState); }catch(e){}
+            try{
+                // Publish WITHOUT sendersManifestDetail: the raw+parsed SDPs
+                // dominated the object's size (multi-MB init per client) and
+                // the UI now fetches single SDPs via the getSenderSdp route.
+                let pub:any = { ...this.nmosState };
+                delete pub.sendersManifestDetail;
+                this.syncNmos.setState(pub);
+            }catch(e){}
         }, 80);
     }
 

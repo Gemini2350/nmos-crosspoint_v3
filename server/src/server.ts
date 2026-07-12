@@ -1278,6 +1278,25 @@ server.addRoute("POST", "audioMonitorUnsubscribe","global", (client: WebsocketCl
 });
 
 
+// SDP on demand for the Details page viewer / audio monitor. Raw SDPs are
+// no longer part of the "nmos" sync object (they dominated its size); the
+// server keeps them in its manifest cache and hands out single files here.
+server.addRoute("POST", "getSenderSdp","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            let id = (typeof postData?.id === "string") ? postData.id : "";
+            let nmosId = id.startsWith("nmos_") ? id.substring(5) : id;
+            if(!nmosId){ reject({message:"getSenderSdp: id required"}); return; }
+            let raw = crosspoint?.nmosState?.sendersManifestDetail?.[nmosId]?._RAWSDP;
+            if(typeof raw === "string" && raw.length > 0){
+                resolve({message:200, data:{ sdp: raw }});
+            }else{
+                reject({message:"No SDP cached for this sender."});
+            }
+        }catch(e:any){ reject({message: e?.message || "getSenderSdp failed"}); }
+    });
+});
+
 // BCP-008: live packet counters (lost/late resp. transmission errors) for
 // the status modal — fetched from the device on demand.
 server.addRoute("POST", "bcp008Counters","global", (client: WebsocketClient, query:string[], postData: any) => {

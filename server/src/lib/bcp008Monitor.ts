@@ -92,6 +92,11 @@ const COUNTER_METHODS_SENDER = [
 const RECONNECT_MIN_MS = 5000;
 const RECONNECT_MAX_MS = 60000;
 const COMMAND_TIMEOUT_MS = 8000;
+// WS keepalive — same policy as the browser and registry sockets. Without
+// it a NAT/firewall idle-drop leaves a half-dead connection (and stale
+// hearts) undetected until TCP gives up.
+const PING_INTERVAL_MS = 15000;
+const PONG_TIMEOUT_MS = 30000;
 
 function classIdIsStatusMonitor(classId: any): boolean {
     return Array.isArray(classId) && classId.length >= 3
@@ -128,6 +133,8 @@ class DeviceMonitorConnection {
     private monitors: MonitorRef[] = [];
     private loggedNoMonitors = false;
     private loggedConnecting = false;
+    private pingTimer: any = null;
+    private lastPong = 0;
 
     constructor(
         public deviceId: string,
@@ -140,6 +147,7 @@ class DeviceMonitorConnection {
     dispose() {
         this.disposed = true;
         if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+        this.stopKeepalive();
         this.failAllPending(new Error("disposed"));
         try { if (this.ws) this.ws.close(); } catch (e) {}
         this.ws = null;
@@ -159,6 +167,7 @@ class DeviceMonitorConnection {
             this.ws = ws;
             ws.on("open", () => {
                 this.backoff = RECONNECT_MIN_MS;
+                this.startKeepalive(ws);
                 SyncLog.log("verbose", "BCP-008", "Connected to " + this.url + " — discovering device model.");
                 this.discover().catch((e: any) => {
                     SyncLog.log("verbose", "BCP-008", "Discovery failed on " + this.url + ": " + (e?.message || e));
@@ -173,8 +182,28 @@ class DeviceMonitorConnection {
         }
     }
 
+    // RFC 6455 ping/pong: terminate on pong timeout so the reconnect path
+    // fires instead of trusting a dead TCP session.
+    private startKeepalive(ws: any) {
+        this.stopKeepalive();
+        this.lastPong = Date.now();
+        try { ws.on("pong", () => { this.lastPong = Date.now(); }); } catch (e) {}
+        this.pingTimer = setInterval(() => {
+            if (Date.now() - this.lastPong > PONG_TIMEOUT_MS) {
+                SyncLog.log("verbose", "BCP-008", "Pong timeout on " + this.url + " — terminating for reconnect.");
+                try { ws.terminate(); } catch (e) {}
+                return;
+            }
+            try { ws.ping(); } catch (e) {}
+        }, PING_INTERVAL_MS);
+    }
+    private stopKeepalive() {
+        if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
+    }
+
     private onClosed() {
         if (this.disposed) return;
+        this.stopKeepalive();
         this.failAllPending(new Error("connection closed"));
         this.ws = null;
         // Statuses are stale once the control connection is gone — drop them

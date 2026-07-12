@@ -658,22 +658,98 @@
     function previewConnect(srcDev:any,src:any,dstDev:any, dst:any) {
       let srcString = getDevcieNameString(srcDev,src);
       let dstString = getDevcieNameString(dstDev,dst);
-      
-      ServerConnector.post("makeconnection", {
-        preview:true,
-        source:srcString,
-        destination:dstString
-      }).then((response:any)=>{
-        previewConnectList = [];
-        response.data.connections.forEach((c:any)=>{
-          previewConnectList.push({src:c.src, dst:c.dst})
 
-        })
-        refreshMatrix();
-        updateGlobalTake();
-      }).catch((e)=>{
-        console.log(e)
-      })
+      previewConnectList = computePreviewConnections(srcString, dstString);
+      refreshMatrix();
+      updateGlobalTake();
+    }
+
+    /**
+     * Local port of CrosspointAbstraction.makeConnection's preview branch:
+     * same source/destination string parsing, same type matching, same
+     * usedSources / lowest-num preference. The hover preview must predict
+     * exactly what TAKE (which runs the server version) will do, so any
+     * change to the matcher has to land in BOTH places.
+     */
+    function computePreviewConnections(source:string, destination:string):any[]{
+      let out:any[] = [];
+      let devices:any[] = (sourceState && Array.isArray(sourceState.devices)) ? sourceState.devices : [];
+      let disconnect = (source == "" || source == "__disconnect");
+
+      const parseSel = (sel:string)=>{
+        let parts = sel.split(".");
+        let deviceNum = parts[0];
+        let deviceOnly = true, flowType = "", flowNum:any = null;
+        if(parts.length == 2){
+          deviceOnly = false;
+          flowNum = parts[1].slice(1);
+          switch(parts[1][0]){
+            case "v": flowType = "video"; break;
+            case "a": flowType = "audio"; break;
+            case "d": flowType = "data"; break;
+            default:  flowType = "unknown";
+          }
+        }
+        return { deviceNum, deviceOnly, flowType, flowNum };
+      };
+
+      let s = parseSel(source);
+      let d = parseSel(destination);
+
+      let srcFlows:any[] = [];
+      for(let dev of devices){
+        if(dev.num == s.deviceNum){
+          for(let type in dev.senders){
+            if(type == s.flowType || s.deviceOnly){
+              for(let flow of dev.senders[type]){
+                if(flow.num == s.flowNum || s.deviceOnly){ srcFlows.push(flow); }
+              }
+            }
+          }
+        }
+      }
+
+      let dstFlows:any[] = [];
+      for(let dev of devices){
+        if(dev.num == d.deviceNum){
+          for(let type in dev.receivers){
+            if(type == d.flowType || d.deviceOnly){
+              for(let flow of dev.receivers[type]){
+                if(flow.num == d.flowNum || d.deviceOnly){ dstFlows.push(flow); }
+              }
+            }
+          }
+        }
+      }
+
+      if((srcFlows.length > 0 || disconnect) && dstFlows.length > 0){
+        let usedSources:any[] = [];
+        for(let dstFlow of dstFlows){
+          let picked:any = null;
+          if(!disconnect){
+            for(let srcFlow of srcFlows){
+              let connect = false;
+              if(dstFlow.type == "audio" && srcFlow.type == "audio"){ connect = true; }
+              else if(dstFlow.type == "video" && srcFlow.type == "video"){ connect = true; }
+              else if(dstFlow.type == "data"){ if(srcFlow.type == "data"){ connect = true; } }
+              else if(dstFlow.type == srcFlow.type){ connect = true; }
+
+              if(connect && !usedSources.includes(srcFlow.id)){
+                if(picked == null){
+                  picked = srcFlow;
+                  usedSources.push(srcFlow.id);
+                }else if(picked.num > srcFlow.num){
+                  // Server behaviour: the earlier pick's id stays in
+                  // usedSources and the replacement's id is not added.
+                  picked = srcFlow;
+                }
+              }
+            }
+          }
+          out.push({ src: picked ? picked.id : null, dst: dstFlow.id });
+        }
+      }
+      return out;
     }
 
     

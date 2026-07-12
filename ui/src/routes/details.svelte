@@ -53,15 +53,12 @@
     // ----- Source data -----
     // The crosspoint sync carries everything we need — devices, senders,
     // receivers, plus the server-side enrichment (legs, codecs, node label,
-    // gmid, device URL, connected-sender label). The nmos sync is only used
-    // for the raw SDP viewer (sendersManifestDetail._RAWSDP).
+    // gmid, device URL, connected-sender label). Raw SDPs are fetched on
+    // demand via the getSenderSdp route — the multi-MB nmos sync object is
+    // no longer subscribed here.
     let sourceState:any = { devices: [] };
-    let nmosState:any = {
-        sendersManifestDetail :{}
-    };
 
     let sync:Subject<any>;
-    let syncNmos:Subject<any>;
     let syncSetup:Subject<any>;
 
 
@@ -78,7 +75,7 @@
       format:string;
       codec:string;
       bitrate:any;
-      legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string }>;
+      legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string, dup?:boolean, dupText?:string }>;
       // Raw SDP carried directly on the flow for virtual senders (no NMOS
       // manifest fetch available). Empty string for normal NMOS senders.
       sdp:string;
@@ -102,7 +99,7 @@
       connectedSenderLabel:string;
       format:string;
       bitrate:any;
-      legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string }>;
+      legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string, dup?:boolean, dupText?:string }>;
     }
     interface DeviceRow {
       id:string;
@@ -151,25 +148,9 @@
       devices:DeviceRow[];
     }
     let nodeGroups:NodeGroup[] = [];
-    // Per-leg duplicate set: duplicateIpsByLeg[legIndex] = Set of duplicate IPs
-    // We track legs separately because primary and secondary network legs are
-    // independent failover paths — using the same multicast on both is fine.
-    let duplicateIpsByLeg:{[legIndex:number]:Set<string>} = {};
-    // Who uses which multicast on which leg — for the DUP badge tooltip.
-    // ipOwnersByLeg[legIndex][ip] = [{id, label}, …] of every ACTIVE sender
-    // transmitting to that group; built in the same pass as duplicateIpsByLeg.
-    let ipOwnersByLeg:{[legIndex:number]:{[ip:string]:Array<{id:string,label:string}>}} = {};
-
-    // Tooltip text for a DUP badge: list every OTHER sender using the same
-    // multicast on the same leg (device / sender, comma-separated).
-    function dupOwnersText(flowId:string, legIndex:number, ip:string):string{
-      try{
-        let owners = ipOwnersByLeg[legIndex]?.[ip] || [];
-        let others = owners.filter(o => o.id !== flowId).map(o => o.label);
-        if(others.length === 0){ return "another active sender"; }
-        return others.join(", ");
-      }catch(e){ return "another active sender"; }
-    }
+    // Duplicate-multicast detection lives in the backend now: the server
+    // marks conflicting legs (leg.dup + leg.dupText with the other owners)
+    // and publishes crosspointState.activeLegIps for the live-edit check.
     // (Per-page counter removed — moved to the global widget at the top of
     // the right-hand nav so the Dev/TX/RX numbers are visible everywhere.)
 
@@ -221,9 +202,6 @@
     }
 
     function rebuild(){
-      // ipCount[legIndex][ip] = count
-      let ipCount:{[legIndex:number]:{[ip:string]:number}} = {};
-      let newOwners:{[legIndex:number]:{[ip:string]:Array<{id:string,label:string}>}} = {};
       let newList:DeviceRow[] = [];
 
       let cpDevices:any[] = (sourceState && Array.isArray(sourceState.devices)) ? sourceState.devices : [];
@@ -265,24 +243,7 @@
         // Build sender rows
         let senderRows:SenderRow[] = [];
         allSenders.forEach((s:any)=>{
-          let legs:Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string }> = Array.isArray(s.legs) ? s.legs : [];
-
-          if(s.active){
-            legs.forEach((l)=>{
-              if(l.dstIp){
-                if(!ipCount[l.index]){ ipCount[l.index] = {}; }
-                ipCount[l.index][l.dstIp] = (ipCount[l.index][l.dstIp] || 0) + 1;
-                // Remember WHO transmits to this group so the DUP badge
-                // tooltip can name the conflicting sender(s).
-                if(!newOwners[l.index]){ newOwners[l.index] = {}; }
-                if(!newOwners[l.index][l.dstIp]){ newOwners[l.index][l.dstIp] = []; }
-                newOwners[l.index][l.dstIp].push({
-                  id: s.id,
-                  label: combinedLabel + " / " + (s.alias || s.name)
-                });
-              }
-            });
-          }
+          let legs:Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string, dup?:boolean, dupText?:string }> = Array.isArray(s.legs) ? s.legs : [];
 
           let row:SenderRow = {
             id: s.id,
@@ -402,17 +363,6 @@
         });
       });
 
-      // duplicates per leg
-      let newDups:{[legIndex:number]:Set<string>} = {};
-      Object.keys(ipCount).forEach((legKey:any)=>{
-        let leg = Number(legKey);
-        let bucket = new Set<string>();
-        Object.keys(ipCount[leg]).forEach((ip)=>{
-          if(ipCount[leg][ip] > 1){ bucket.add(ip); }
-        });
-        if(bucket.size > 0){ newDups[leg] = bucket; }
-      });
-
       // sort by combined label
       newList.sort((a,b)=>(a.label||"").localeCompare(b.label||""));
 
@@ -439,9 +389,6 @@
       // Reassign — this is what makes Svelte re-render
       deviceList = newList;
       nodeGroups = newGroups;
-      duplicateIpsByLeg = newDups;
-      ipOwnersByLeg = newOwners;
-
     }
 
 
@@ -514,12 +461,6 @@
         sourceState = obj;
         scheduleRebuild();
       });
-      // We still subscribe to the nmos sync purely for the raw SDP modal:
-      // sendersManifestDetail[*]._RAWSDP is the only field we read directly.
-      syncNmos = ServerConnector.sync("nmos")
-      syncNmos.subscribe((obj:any)=>{
-        if(obj){ nmosState = obj; }
-      });
       syncSetup = ServerConnector.sync("setupConfig")
       syncSetup.subscribe((obj:any)=>{
         if(obj && typeof obj.acceptableGmid === "string"){
@@ -545,8 +486,6 @@
     onDestroy(() => {
       try{sync && sync.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("crosspoint");}catch(e){}
-      try{syncNmos && syncNmos.unsubscribe();}catch(e){}
-      try{ServerConnector.unsync("nmos");}catch(e){}
       try{syncSetup && syncSetup.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("setupConfig");}catch(e){}
     });
@@ -707,14 +646,14 @@
      * the conflicting active sender (any device, same leg index) or null.
      * The currently edited sender itself is excluded.
      *
-     * Uses the same ipOwnersByLeg map as the DUP badge tooltip — one source
-     * of truth for "who transmits to this group". The map is built from ALL
-     * active senders (before the page's search filters), so a conflict is
-     * caught even when the other sender is currently filtered out of view.
+     * Looks the typed address up in crosspointState.activeLegIps — the same
+     * server-built map behind the DUP badges, covering ALL active senders
+     * (before the page's search filters), so a conflict is caught even when
+     * the other sender is currently filtered out of view.
      */
     function findActiveLegConflict(currentFlowId:string, legIndex:number, ip:string){
       if(!ip || !ip.trim()){ return null; }
-      let owners = ipOwnersByLeg[legIndex]?.[ip.trim()] || [];
+      let owners:Array<{id:string,label:string}> = sourceState?.activeLegIps?.[legIndex]?.[ip.trim()] || [];
       let other = owners.find(o => o.id !== currentFlowId);
       if(other){ return { alias: other.label }; }
       return null;
@@ -792,25 +731,24 @@
     let audioMonitorEnabled:boolean = false;
     let monitorActiveId:string = "";
     let monitorActiveSdp:string = "";
-    function resolveSdpForFlow(flow:SenderRow):string {
-      // Virtual senders carry the SDP on the flow itself.
+    // SDP on demand: virtual senders carry it on the flow, real senders are
+    // fetched from the server's manifest cache via getSenderSdp (the raw
+    // SDPs are deliberately NOT part of any sync object any more).
+    async function resolveSdpForFlow(flow:SenderRow):Promise<string> {
       if(flow.sdp) return flow.sdp;
-      // Real NMOS senders: the manifest was already fetched by the
-      // backend and parked under nmosState.sendersManifestDetail.
+      if(!flow.nmosId) return "";
       try{
-        const m = flow.nmosId && nmosState.sendersManifestDetail
-          ? nmosState.sendersManifestDetail[flow.nmosId] : null;
-        if(m && typeof m._RAWSDP === "string") return m._RAWSDP;
-      }catch(e){}
-      return "";
+        const r:any = await ServerConnector.post("getSenderSdp", { id: flow.nmosId });
+        return (r && r.data && typeof r.data.sdp === "string") ? r.data.sdp : "";
+      }catch(e){ return ""; }
     }
-    function toggleMonitor(flow:SenderRow){
+    async function toggleMonitor(flow:SenderRow){
       if(monitorActiveId === flow.id){
         monitorActiveId = "";
         monitorActiveSdp = "";
         return;
       }
-      const sdp = resolveSdpForFlow(flow);
+      const sdp = await resolveSdpForFlow(flow);
       if(!sdp){
         alert("No SDP available for this sender yet — wait for the manifest fetch to complete or click SDP first.");
         return;
@@ -819,32 +757,18 @@
       monitorActiveSdp = sdp;
     }
 
+    const SDP_UNAVAILABLE = "No SDP file available for this sender.\n\n" +
+      "Possible reasons:\n" +
+      " - sender is inactive\n" +
+      " - manifest could not be loaded from the device\n" +
+      " - sender is not NMOS-based";
     function openSdpView(flow:SenderRow){
       sdpModalTitle = flow.alias || flow.name || flow.id;
-      sdpModalContent = "";
-      // Virtual senders carry the SDP directly on the flow — no NMOS
-      // registry to fetch from. Check that first.
-      try{
-        if(typeof flow.sdp === "string" && flow.sdp.length > 0){
-          sdpModalContent = flow.sdp;
-        }
-      }catch(e){}
-      try{
-        if(!sdpModalContent && flow.nmosId && nmosState.sendersManifestDetail && nmosState.sendersManifestDetail[flow.nmosId]){
-          let raw = nmosState.sendersManifestDetail[flow.nmosId]._RAWSDP;
-          if(typeof raw === "string" && raw.length > 0){
-            sdpModalContent = raw;
-          }
-        }
-      }catch(e){}
-      if(!sdpModalContent){
-        sdpModalContent = "No SDP file available for this sender.\n\n" +
-          "Possible reasons:\n" +
-          " - sender is inactive\n" +
-          " - manifest could not be loaded from the device\n" +
-          " - sender is not NMOS-based";
-      }
+      sdpModalContent = "Loading SDP…";
       sdpModal.showModal();
+      resolveSdpForFlow(flow).then((sdp)=>{
+        sdpModalContent = sdp || SDP_UNAVAILABLE;
+      }).catch(()=>{ sdpModalContent = SDP_UNAVAILABLE; });
     }
     // Feedback state for the Copy button — flips to "Copied!" briefly.
     let sdpCopied:boolean = false;
@@ -1103,7 +1027,7 @@
                       {:else}
                         <div class="det-legs">
                         {#each flow.legs as leg}
-                          {@const isDup = flow.active && duplicateIpsByLeg[leg.index] && duplicateIpsByLeg[leg.index].has(leg.dstIp)}
+                          {@const isDup = flow.active && !!leg.dup}
                           {@const lKey = legKey(flow.id, leg.index)}
                           {@const isEditing = editingLeg === lKey}
                           <div class="det-leg {isDup ? "det-leg-duplicate" : ""}">
@@ -1147,7 +1071,7 @@
                                 <span class="det-leg-src" use:OverlayMenuService.tooltip data-tooltip="Source IP (SSM filter)">src {leg.srcIp}</span>
                               {/if}
                               {#if isDup}
-                                <span class="text-error det-dup-hint" use:OverlayMenuService.tooltip data-tooltip="Multicast {leg.dstIp} (Leg {leg.index+1}) is also used by: {dupOwnersText(flow.id, leg.index, leg.dstIp)}">DUP</span>
+                                <span class="text-error det-dup-hint" use:OverlayMenuService.tooltip data-tooltip="Multicast {leg.dstIp} (Leg {leg.index+1}) is also used by: {leg.dupText || "another active sender"}">DUP</span>
                               {/if}
                             {/if}
                           </div>

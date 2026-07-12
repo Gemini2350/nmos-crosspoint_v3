@@ -70,11 +70,12 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             CrosspointAbstraction.instance = this;
         }
 
-        // BCP-008 status monitoring (IS-12 client). Status changes re-run
-        // the worker round-trip so the enriched state picks them up — the
-        // service itself debounces bursts to one publish per second.
+        // BCP-008 status monitoring (IS-12 client). A status change touches
+        // ONLY enrichment-time fields (flow.monitor / device summaries) —
+        // the NMOS state and the worker-built shadow are unchanged, so we
+        // skip the full worker round-trip and just re-enrich + publish.
         new Bcp008Monitor();
-        Bcp008Monitor.instance.onChange = () => { try{ this.update(); }catch(e){} };
+        Bcp008Monitor.instance.onChange = () => { try{ this.republishEnriched(); }catch(e){} };
         try{ Bcp008Monitor.instance.setEnabled(this.settings?.bcp008?.enabled !== false); }catch(e){}
 
         this.syncCrosspoint = new SyncObject("crosspoint", this.crosspointState);
@@ -916,6 +917,18 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         })
     }
 
+    /** Re-run enrichment on the CURRENT crosspoint state and publish the
+     *  diff — no worker round-trip. Used for changes that only affect
+     *  enrichment-time data (BCP-008 monitor statuses): the worker's shadow
+     *  depends solely on nmosState, which is untouched by those. */
+    private republishEnriched(){
+        if(!this.crosspointState || !Array.isArray((this.crosspointState as any).devices)) return;
+        try{
+            this.enrichCrosspointState();
+            this.syncCrosspoint.setState(this.crosspointState);
+        }catch(e){}
+    }
+
     updateReturn(data:any){
         if(data.hasOwnProperty("crosspointState")){
             this.crosspointState = data.crosspointState;
@@ -1325,6 +1338,12 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         }
 
         // Pass 2: sender legs + codec, build {flowId → enriched-sender-info}
+        // Also collects every ACTIVE sender per (leg index → multicast IP)
+        // for duplicate detection. Primary and secondary legs are independent
+        // failover paths, so the same group on leg 1 and leg 2 is fine —
+        // only two active senders on the SAME leg index clash.
+        let activeLegIps: { [legIndex:number]: { [ip:string]: Array<{id:string,label:string}> } } = {};
+        let activeLegRefs: Array<{ leg:CrosspointFlowLeg, flowId:string }> = [];
         let senderInfoById: { [id:string]: { legs:CrosspointFlowLeg[], codec:string, format:string, bitrate:CrosspointFlowBitrate, label:string } } = {};
         for(let dev of this.crosspointState.devices){
             let nodeLabel = nodeLabelByDev[dev.id] || "";
@@ -1350,6 +1369,17 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     // brings the sender back).
                     if(devIsVirtual) sf.isVirtual = true;
 
+                    if(s.active){
+                        let dLabel = (dev as CrosspointDevice).displayLabel || dev.alias || dev.name || "";
+                        for(let l of legs){
+                            if(!l.dstIp) continue;
+                            if(!activeLegIps[l.index]) activeLegIps[l.index] = {};
+                            if(!activeLegIps[l.index][l.dstIp]) activeLegIps[l.index][l.dstIp] = [];
+                            activeLegIps[l.index][l.dstIp].push({ id: s.id, label: dLabel + " / " + (s.alias || s.name) });
+                            activeLegRefs.push({ leg: l, flowId: s.id });
+                        }
+                    }
+
                     senderInfoById[s.id] = {
                         legs,
                         codec,
@@ -1358,6 +1388,19 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                         label:   this.buildConnectedSenderLabel(s.id)
                     };
                 }
+            }
+        }
+
+        // Mark the clashing legs. dupText pre-composes the tooltip ("who
+        // else transmits to this group") so the UI needs no owner lookup.
+        // Legs are rebuilt from the NMOS state on every enrich, so stale
+        // flags cannot survive a conflict being resolved.
+        for(let ref of activeLegRefs){
+            let owners = activeLegIps[ref.leg.index]?.[ref.leg.dstIp] || [];
+            if(owners.length > 1){
+                ref.leg.dup = true;
+                let others = owners.filter(o => o.id !== ref.flowId).map(o => o.label);
+                ref.leg.dupText = others.length ? others.join(", ") : "another active sender";
             }
         }
 
@@ -1427,6 +1470,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
         (this.crosspointState as CrosspointState).totals = totals;
         (this.crosspointState as CrosspointState).detectedDevices = this.buildDetectedDevices();
+        // Active multicast owners per (leg → IP) — the Details page checks
+        // its live leg-edit input against this ("does this IP collide?").
+        (this.crosspointState as CrosspointState).activeLegIps = activeLegIps;
         // Lets the matrix hide the status hearts entirely when the feature
         // is switched off (vs. grey "device doesn't support it" hearts).
         (this.crosspointState as any).bcp008Enabled = this.settings?.bcp008?.enabled !== false;
@@ -1595,7 +1641,12 @@ export interface CrosspointFlowLeg {
     index:number,
     dstIp:string,
     dstPort:string|number,
-    srcIp:string
+    srcIp:string,
+    // Duplicate-multicast detection (enrichCrosspointState): set when
+    // another ACTIVE sender transmits to the same group on the same leg.
+    // dupText names the other owner(s) for the DUP badge tooltip.
+    dup?:boolean,
+    dupText?:string
 }
 
 
@@ -1723,7 +1774,11 @@ export interface CrosspointState {
     // Filled by enrichCrosspointState on the main thread. Optional because
     // the worker emits a bare state without these fields.
     totals?:CrosspointTotals,
-    detectedDevices?:Array<{ id:string, label:string, match:string, url:string }>
+    detectedDevices?:Array<{ id:string, label:string, match:string, url:string }>,
+    // Every ACTIVE sender per (leg index → multicast IP). The Details page
+    // live-edit conflict check looks typed-in addresses up here instead of
+    // re-scanning all devices client-side.
+    activeLegIps?:{ [legIndex:number]: { [ip:string]: Array<{id:string,label:string}> } }
 }
 
 
