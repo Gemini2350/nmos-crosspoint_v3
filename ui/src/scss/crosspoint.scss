@@ -15,8 +15,9 @@ $cp-color-data:theme('colors.blue.500');
 
 // Connection-state colours (broadcast convention):
 //   green  = active, confirmed by NMOS — everything is fine
-//   orange dashed OUTLINE = prepared / preview / hover — staged, nothing on the wire yet
-//   orange FILL = working / pending — command sent, waiting for confirmation
+//   grey dashed OUTLINE = prepared / preview / hover — staged, nothing on the wire yet
+//   orange = problems (BCP-008 partially healthy) and the brief working/pending fill
+//   red    = errors / unhealthy / TAKE
 //   orange = working / pending — command sent, waiting for confirmation
 //   red    = reserved for ERRORS only
 $cp-color-green:#46aa14;
@@ -29,68 +30,6 @@ $cp-color-red:#e21e1e;
 $cp-border: 1px solid transparent;
 
 .crosspoint {
-
-    // BCP-008 status modal (click on the status symbol). Lives OUTSIDE
-    // .cp-container in the DOM, hence styled at this level.
-    .cp-monitor-overall {
-        display: flex;
-        gap: 14px;
-        align-items: center;
-        margin: 12px 0 4px 0;
-    }
-    .cp-monitor-state {
-        display: inline-block;
-        padding: 1px 10px;
-        border-radius: 10px;
-        color: #fff;
-        font-size: 12px;
-        font-weight: 600;
-        background-color: theme('colors.neutral-600');
-        &.cp-status-ok   { background-color: #46aa14; }
-        &.cp-status-warn { background-color: #f97316; }
-        &.cp-status-err  { background-color: #e21e1e; }
-    }
-    // Domain state as a traffic-light dot (green / orange / red, grey =
-    // inactive), with the state name in muted text next to it.
-    .cp-monitor-dot {
-        display: inline-block;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        vertical-align: middle;
-        margin-right: 8px;
-        background-color: theme('colors.neutral-600');
-        &.cp-status-ok   { background-color: #46aa14; }
-        &.cp-status-warn { background-color: #f97316; }
-        &.cp-status-err  { background-color: #e21e1e; }
-    }
-    .cp-monitor-dot-label {
-        color: theme('colors.slate.500');
-        font-size: 12px;
-        vertical-align: middle;
-    }
-
-    .cp-monitor-counter {
-        font-size: 13px;
-        color: theme('colors.slate.400');
-    }
-    .cp-monitor-message {
-        font-size: 13px;
-        color: theme('colors.slate.400');
-        margin: 4px 0;
-    }
-    .cp-monitor-table {
-        margin-top: 10px;
-        width: 100%;
-        // Fixed column split — padding alone kept collapsing, auto layout
-        // was giving the surplus width to the Domain column.
-        table-layout: fixed;
-        td { padding: 6px 12px 6px 0; font-size: 13px; }
-        td:nth-child(1) { width: 30%; }
-        td:nth-child(2) { width: 45%; }
-        td:nth-child(3) { width: 25%; }
-        thead td { color: theme('colors.slate.500'); font-size: 12px; }
-    }
 
     .cp-container{
         margin-left:10px;
@@ -295,7 +234,7 @@ $cp-border: 1px solid transparent;
             }
             &.prepareddisconnect {
                 svg {
-                    color:theme('colors.orange.500');
+                    color:theme('colors.neutral-400');
                 }
             }
             &.workingdisconnect {
@@ -306,7 +245,7 @@ $cp-border: 1px solid transparent;
 
             &.previewdisconnect {
                 svg {
-                    color:theme('colors.orange.500');
+                    color:theme('colors.neutral-400');
                 }
             }
 
@@ -733,7 +672,7 @@ $cp-border: 1px solid transparent;
                     // matching the staged-disconnect marker style.
                     &.prepared {
                         background: none;
-                        border: 2px dashed $cp-color-orange;
+                        border: 2px dashed $cp-color-grey;
                     }
                     &.error {
                         background-color:$cp-color-red;
@@ -741,7 +680,7 @@ $cp-border: 1px solid transparent;
 
                     &.preview {
                         background: none;
-                        border: 2px dashed $cp-color-orange;
+                        border: 2px dashed $cp-color-grey;
                     }
 
                     &.working {
@@ -754,7 +693,7 @@ $cp-border: 1px solid transparent;
                     // (dashed orange ring — staged and executing look alike here).
                     &.cp-disc-prepared {
                         background-color: rgba(70, 170, 20, 0.35);
-                        border: 2px dashed $cp-color-orange;
+                        border: 2px dashed $cp-color-grey;
                     }
                     &.cp-disc-working {
                         background-color: rgba(70, 170, 20, 0.35);
@@ -784,7 +723,7 @@ $cp-border: 1px solid transparent;
                     // left alone so an ACTIVE (filled green) cell keeps its
                     // fill and just gains the ring.
                     &:hover {
-                        border: 2px dashed $cp-color-orange;
+                        border: 2px dashed $cp-color-grey;
                     }
 
                 }
@@ -891,7 +830,7 @@ html[data-theme="light"] {
                 }
                 &.prepareddisconnect {
                     svg {
-                        color:theme('colors.orange.600');
+                        color:theme('colors.neutral-500');
                     }
                 }
                 &.workingdisconnect {
@@ -902,7 +841,7 @@ html[data-theme="light"] {
     
                 &.previewdisconnect {
                     svg {
-                        color:theme('colors.orange.600');
+                        color:theme('colors.neutral-500');
                     }
                 }
     
@@ -999,4 +938,69 @@ html[data-theme="light"] {
 
         }
     }
+}
+
+// ----- BCP-008 status modal (click on the status heart) -----
+// GLOBAL scope: the <dialog> elements are template siblings OUTSIDE the
+// .crosspoint root div, so any .crosspoint-scoped selector never matches
+// them (this is why the traffic lights were missing in the app while a
+// scoped test harness looked fine).
+.cp-monitor-overall {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    margin: 12px 0 4px 0;
+}
+.cp-monitor-state {
+    display: inline-block;
+    padding: 1px 10px;
+    border-radius: 10px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    background-color: theme('colors.neutral-600');
+    &.cp-status-ok   { background-color: #46aa14; }
+    &.cp-status-warn { background-color: #f97316; }
+    &.cp-status-err  { background-color: #e21e1e; }
+}
+// Domain state as a traffic-light dot (green / orange / red, grey =
+// inactive), with the state name in muted text next to it.
+.cp-monitor-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    vertical-align: middle;
+    margin-right: 8px;
+    background-color: theme('colors.neutral-600');
+    &.cp-status-ok   { background-color: #46aa14; }
+    &.cp-status-warn { background-color: #f97316; }
+    &.cp-status-err  { background-color: #e21e1e; }
+}
+.cp-monitor-dot-label {
+    color: theme('colors.slate.500');
+    font-size: 12px;
+    vertical-align: middle;
+}
+
+.cp-monitor-counter {
+    font-size: 13px;
+    color: theme('colors.slate.400');
+}
+.cp-monitor-message {
+    font-size: 13px;
+    color: theme('colors.slate.400');
+    margin: 4px 0;
+}
+.cp-monitor-table {
+    margin-top: 10px;
+    width: 100%;
+    // Fixed column split — padding alone kept collapsing, auto layout
+    // was giving the surplus width to the Domain column.
+    table-layout: fixed;
+    td { padding: 6px 12px 6px 0; font-size: 13px; }
+    td:nth-child(1) { width: 30%; }
+    td:nth-child(2) { width: 45%; }
+    td:nth-child(3) { width: 25%; }
+    thead td { color: theme('colors.slate.500'); font-size: 12px; }
 }

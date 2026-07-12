@@ -299,11 +299,11 @@
       <ul class="global-take">
         {#if autoTake}
         <li>
-          <span class="text-small text-orange-400">{(globalTakePreviewListCount > 0 ? "Affected: "+globalTakePreviewListCount : "")}</span>
+          <span class="text-small text-slate-400">{(globalTakePreviewListCount > 0 ? "Affected: "+globalTakePreviewListCount : "")}</span>
         </li>
         {:else}
         <li>
-          <span on:click={()=>{openGlobalTakeModal()}} class="text-small text-orange-400">{(globalTakePreparedListCount > 0 ? "Prepared: "+globalTakePreparedListCount : "")}</span>
+          <span on:click={()=>{openGlobalTakeModal()}} class="text-small text-slate-400">{(globalTakePreparedListCount > 0 ? "Prepared: "+globalTakePreparedListCount : "")}</span>
         </li>
         {/if}
         <li>
