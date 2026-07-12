@@ -834,12 +834,12 @@ $cp-border: 1px solid transparent;
 html[data-theme="light"] {
     .crosspoint {
         .cp-container{
-            // The flow label bars stay dark in both themes, so the status
-            // heart sits on dark grey. Give it a light rounded tile here so
-            // it reads cleanly on the light theme.
+            // Status heart on the light theme: transparent so it takes on
+            // the exact grey of the row / panel it sits in (a white tile
+            // stood out against the greyish rows). The coloured glyph stays
+            // readable either way.
             .cp-type.cp-status {
-                background-color: theme('colors.base-100');
-                border-radius: $cp-round;
+                background: none;
             }
 
             .cp-header-cross {
