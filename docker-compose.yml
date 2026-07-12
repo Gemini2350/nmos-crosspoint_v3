@@ -1,16 +1,11 @@
-# TEST COPY — image + container are named differently from the production
-# stack so a local `docker compose up --build` here never overwrites the
-# gemini2350/nmos-crosspoint_v3:latest tag. NOTE: network_mode host means
-# port 80 clashes with a production container on the SAME host — stop the
-# prod container first or test on another machine.
 services:
   nmos-crosspoint:
     build:
       context: ./
-    image: nmos-crosspoint-responsive:test
+    image: gemini2350/nmos-crosspoint_v3:latest
 
-    container_name: nmos-crosspoint_responsive
-    hostname: nmos-crosspoint_responsive
+    container_name: nmos-crosspoint_v3
+    hostname: nmos-crosspoint_v3
     domainname: local
 
     network_mode: host

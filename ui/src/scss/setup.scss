@@ -133,10 +133,38 @@
         svg { width: 20px; height: 20px; }
     }
 
+    // Category divider between groups of sections. Keeps the long page
+    // scannable: Connection / Switching / Monitoring / Addressing / Access.
+    .setup-group {
+        margin: 34px 0 0 0;
+        padding-bottom: 5px;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: theme('colors.sky.500');
+        border-bottom: 1px solid theme('colors.base-300');
+    }
+
+    // Secondary hint paragraphs are folded away by default. The first
+    // paragraph of every section stays visible.
+    .setup-more {
+        margin: -6px 0 12px 0;
+        summary {
+            cursor: pointer;
+            font-size: 0.8rem;
+            color: theme('colors.sky.500');
+            user-select: none;
+            margin-bottom: 4px;
+        }
+    }
+
     .setup-section {
         border-top: 1px solid theme('colors.base-300');
         padding-top: 18px;
         margin-top: 18px;
+
+        &:first-of-type { border-top: none; }
 
         h3 {
             font-size: 1.05rem;

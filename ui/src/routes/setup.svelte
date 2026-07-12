@@ -48,6 +48,7 @@
       autoMulticast: { enabled: boolean, reconnectReceiversOnSenderChange?: boolean };
       autoActivateInactiveSender: boolean;
       audioMonitor: { enabled: boolean };
+      bcp008: { enabled: boolean };
       // pool = the single-range counter; per-cat fields kept for back-compat
       multicastStats: { pool?: LeaseStat, audio?: LeaseStat, video?: LeaseStat };
       ddns: Ddns;
@@ -66,6 +67,7 @@
       autoMulticast: { enabled: false, reconnectReceiversOnSenderChange: false },
       autoActivateInactiveSender: false,
       audioMonitor: { enabled: false },
+      bcp008: { enabled: true },
       multicastStats: { pool:{used:0,total:0} },
       ddns: { enabled:false, server:"", port:53, zone:"", ttl:300, keyName:"", keySecret:"", keySecretSet:false, keyAlgorithm:"hmac-sha256" },
       auth: { users: [] },
@@ -83,9 +85,10 @@
     let formReconnectReceivers:boolean = false;
     let formAutoActivateSender:boolean = false;
     let formAudioMonitorEnabled:boolean = false;
+    let formBcp008Enabled:boolean = true;
     let formMulticastRange:string = "";
 
-    // Credentials form (independent of the main Save flow — saved via its own
+    // Credentials form (independent of the main Save flow. Saved via its own
     // route). The sha256 hashes are computed at submit time so the plaintext
     // never round-trips through the dirty/save buffer.
     let formCredCurrentUser:string = "";
@@ -108,7 +111,7 @@
     let formDdnsKeySecretSet:boolean = false;
     let formDdnsKeyAlgorithm:string = "hmac-sha256";
 
-    // Live preview of detected devices for the vendor table — the actual
+    // Live preview of detected devices for the vendor table. The actual
     // list (label / match / url per node) is now built server-side and shipped
     // as crosspointState.detectedDevices. The UI just renders what arrives.
     let detectedDevices:Array<{ id:string, label:string, match:string, url:string }> = [];
@@ -155,6 +158,7 @@
             ));
             formAutoActivateSender   = !!obj.autoActivateInactiveSender;
             formAudioMonitorEnabled  = !!(obj.audioMonitor && obj.audioMonitor.enabled);
+            formBcp008Enabled        = !(obj.bcp008 && obj.bcp008.enabled === false);
             formMulticastRange       = (typeof obj.multicastRange === "string") ? obj.multicastRange : "";
             // Pre-fill the credentials form with the first configured user
             // so the operator doesn't have to type their own username.
@@ -229,6 +233,7 @@
       ));
       formAutoActivateSender   = !!serverState.autoActivateInactiveSender;
       formAudioMonitorEnabled  = !!(serverState.audioMonitor && serverState.audioMonitor.enabled);
+      formBcp008Enabled        = !(serverState.bcp008 && serverState.bcp008.enabled === false);
       formMulticastRange       = serverState.multicastRange || "";
       if(serverState.ddns){
         formDdnsEnabled      = !!serverState.ddns.enabled;
@@ -263,7 +268,7 @@
         }
       }
 
-      // Multicast range — basic CIDR sanity check (single shared pool now)
+      // Multicast range. Basic CIDR sanity check (single shared pool now)
       let cidrRe = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
       if(formMulticastRange && !cidrRe.test(formMulticastRange.trim())){
         saveError = "Multicast Range must use CIDR notation, e.g. 239.30.0.0/16";
@@ -304,6 +309,7 @@
         },
         autoActivateInactiveSender: formAutoActivateSender,
         audioMonitor: { enabled: formAudioMonitorEnabled },
+        bcp008: { enabled: formBcp008Enabled },
         ddns: {
           enabled:      formDdnsEnabled,
           server:       formDdnsServer.trim(),
@@ -372,7 +378,7 @@
         if(formCredNewPass !== formCredNewPass2){ credError = "New passwords do not match."; return; }
         if(formCredNewPass.length < 4){ credError = "New password must be at least 4 characters."; return; }
       }
-      if(!newUser && !wantPass){ credError = "Nothing to change — set a new username or a new password."; return; }
+      if(!newUser && !wantPass){ credError = "Nothing to change. Set a new username or a new password."; return; }
 
       let payload:any = {
         currentUsername:     formCredCurrentUser.trim(),
@@ -505,7 +511,7 @@
       return arr;
     }
 
-    // Same format as the Details page: "<v>.x Mbit/s" or "—" if unknown.
+    // Same format as the Details page: "<v>.x Mbit/s" or "-" if unknown.
     function renderBitrate(bitrate:any):string {
       let v:number = 0;
       let hint:string = "ok";
@@ -516,7 +522,7 @@
         hint = bitrate.hint || "ok";
       }
       v = Math.round(v*10)/10;
-      if(hint === "unknown" || v <= 0){ return "—"; }
+      if(hint === "unknown" || v <= 0){ return "-"; }
       if(v < 1){ return "< 1 Mbit/s"; }
       return v.toFixed(1) + " Mbit/s";
     }
@@ -533,7 +539,7 @@
       switch(c){
         case "audio": return "Audio";
         case "video": return "Video";
-        default: return c || "—";
+        default: return c || "-";
       }
     }
     function shortId(id:string){
@@ -547,7 +553,7 @@
 
 
     // ----- Release a single lease from the inventory -----
-    // Per user request the confirmation modal is gone — clicking the trash
+    // Per user request the confirmation modal is gone. Clicking the trash
     // icon releases the lease immediately. The lease list updates within
     // a tick via the multicastLeases SyncObject.
     let releaseInventoryError:string = "";
@@ -561,7 +567,7 @@
     }
 
     // ----- Release every lease at once -----
-    // No modal — a single click clears the whole pool. The server logs the
+    // No modal. A single click clears the whole pool. The server logs the
     // batch and active senders will be re-allocated on the next reconcile
     // if auto-allocation is enabled.
     let releaseAllBusy:boolean = false;
@@ -668,7 +674,7 @@
           let arr:any[] = Array.isArray(data) ? data : (Array.isArray(data?.vendorProfiles) ? data.vendorProfiles : null);
           if(!arr){ vendorImportError = "No 'vendorProfiles' array found in file."; return; }
 
-          // Sanitise — same rules as the server. Generate fresh IDs to avoid
+          // Sanitise. Same rules as the server. Generate fresh IDs to avoid
           // accidental collisions with existing entries.
           let cleaned = arr
             .filter((v:any) => v && typeof v === "object")
@@ -718,7 +724,7 @@
     {#if serverState.restartRequired}
       <div class="alert alert-warning setup-alert">
         <Icon src={ExclamationTriangle} />
-        <span>Registry change pending — restart the server for the new IP/port to take effect.</span>
+        <span>Registry change pending. Restart the server for the new IP/port to take effect.</span>
       </div>
     {/if}
 
@@ -739,10 +745,12 @@
     {#if dirty}
       <div class="alert alert-warning setup-alert">
         <Icon src={ExclamationTriangle} />
-        <span>You have unsaved changes — click the <strong>Save</strong> button at the bottom of the page to persist them to <code>./config/settings.json</code>.</span>
+        <span>You have unsaved changes. Click the <strong>Save</strong> button at the bottom of the page to persist them to <code>./config/settings.json</code>.</span>
       </div>
     {/if}
 
+
+    <h2 class="setup-group">Connection</h2>
 
     <section class="setup-section">
       <h3>NMOS Registry</h3>
@@ -781,6 +789,8 @@
       </div>
     </section>
 
+
+    <h2 class="setup-group">Switching</h2>
 
     <section class="setup-section">
       <h3>Receiver Auto-Reconnect</h3>
@@ -821,27 +831,55 @@
     </section>
 
 
+    <h2 class="setup-group">Monitoring</h2>
+
+    <section class="setup-section">
+      <h3>BCP-008 Status Monitoring</h3>
+      <p class="setup-section-hint">
+        Live health monitoring of senders and receivers via
+        <strong>AMWA BCP-008</strong> (IS-12 control protocol): for every
+        device that advertises an <code>ncp</code> control endpoint, the
+        server subscribes to its NcSender-/NcReceiverMonitors and shows the
+        health as a heart symbol per flow in the Crosspoint matrix. With
+        the four status domains (Link / Connection / Sync / Stream resp.
+        Transmission / Essence), transition counters, a counter reset and
+        coloured crosspoints when an endpoint of an active connection
+        degrades. Read-only on the network (it never changes device state).
+        Devices without BCP-008 support simply show a greyed-out symbol.
+      </p>
+
+      <div class="setup-form">
+        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
+          <span class="label-text">Enable BCP-008 Status Monitoring</span>
+          <input type="checkbox" class="toggle" bind:checked={formBcp008Enabled} on:change={markDirty} />
+        </label>
+      </div>
+    </section>
+
+
     <section class="setup-section">
       <h3>Audio Monitor (experimental)</h3>
       <p class="setup-section-hint">
         Adds a 🎧 button next to each audio sender on the Details page.
         Clicking it makes the server join that sender's multicast on
         demand, transcode the PCM to Opus 48 kHz stereo and stream it to
-        your browser via WebRTC — useful for quick monitoring without
+        your browser via WebRTC. Useful for quick monitoring without
         needing a dedicated probe receiver. Only one sender is monitored
         at a time per browser tab; multi-channel streams (8 ch / 16 ch
         AES67) expose a channel-pair selector in the player overlay.
-        Off by default — the feature costs CPU per active monitor.
+        Off by default. The feature costs CPU per active monitor.
         With this toggle off the 🎧 button is hidden entirely.
       </p>
+      <details class="setup-more"><summary>More details</summary>
       <p class="setup-section-hint">
         <strong>Network requirement:</strong> the server must have access to
         the multicast / media network to receive the streams (IGMP join on
         the ST&nbsp;2110 VLAN). When running in Docker this means
         <code>--network host</code> (or a macvlan/interface in the media
-        VLAN) — with the default bridge network the 🎧 button will connect
+        VLAN). With the default bridge network the 🎧 button will connect
         but stay silent.
       </p>
+      </details>
 
       <div class="setup-form">
         <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
@@ -852,20 +890,24 @@
     </section>
 
 
+    <h2 class="setup-group">Addressing &amp; Integration</h2>
+
     <section class="setup-section">
       <h3>Multicast DHCP</h3>
       <p class="setup-section-hint">
         When enabled, the server reserves a pair of consecutive multicast addresses per <strong>active</strong> sender
         (odd for Leg 1, even = odd + 1 for Leg 2). The reservation is kept for the lifetime of the
-        device — even if the sender goes offline — and is only released when the device is
+        device. Even if the sender goes offline. And is only released when the device is
         explicitly <em>Forgotten</em> on the Details page or its lease is deleted in the inventory below.
       </p>
+      <details class="setup-more"><summary>More details</summary>
       <p class="setup-section-hint">
         <strong>An address is (re-)assigned in two cases:</strong>
       </p>
+      </details>
       <ul class="setup-section-bullets">
         <li>when a sender becomes <em>active</em> (its NMOS subscription transitions to active) and has no lease yet;</li>
-        <li>when the destination IP of an <em>active</em> sender is cleared — the field on the Details page is emptied or its lease is released here.</li>
+        <li>when the destination IP of an <em>active</em> sender is cleared. The field on the Details page is emptied or its lease is released here.</li>
       </ul>
       <p class="setup-section-hint">
         Manual overrides on the Details page are respected: typing a different IP marks it as the
@@ -965,11 +1007,11 @@
                       <span class="lease-channels">{r.channels}ch</span>
                     {/if}
                   </td>
-                  <td>{r.deviceLabel || "—"}</td>
+                  <td>{r.deviceLabel || "-"}</td>
                   <td><span class="vendor-mono" title={r.senderId}>{shortId(r.senderId)}</span></td>
-                  <td class="vendor-mono">{r.primaryIp || "—"}</td>
-                  <td class="vendor-mono">{r.secondaryIp || "—"}</td>
-                  <td class="vendor-mono">{r.port || "—"}</td>
+                  <td class="vendor-mono">{r.primaryIp || "-"}</td>
+                  <td class="vendor-mono">{r.secondaryIp || "-"}</td>
+                  <td class="vendor-mono">{r.port || "-"}</td>
                   <td class="vendor-mono">{renderBitrate(r.bitrate)}</td>
                   <td><span class="lease-date">{fmtDate(r.createdAt)}</span></td>
                   <td>
@@ -1005,11 +1047,13 @@
         NMOS-aware controller on the network, not just here. Heartbeats keep the Node alive against
         the configured registry; switching registries deregisters the old one cleanly.
       </p>
+      <details class="setup-more"><summary>More details</summary>
       <p class="setup-section-hint">
         Each sender keeps the same UUID across restarts, so receivers stay bound. The destination IP
         comes from the SDP exactly as you typed it &mdash; virtual senders are read-only over IS-05,
         so the multicast-edit pencil is hidden for them on the Details page.
       </p>
+      </details>
 
       <div class="setup-form" style="margin-bottom:14px;">
         <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
@@ -1169,13 +1213,11 @@
             {#each detectedDevices as d (d.id)}
               <tr>
                 <td>{d.label}</td>
-                <td>{d.match || "—"}</td>
+                <td>{d.match || "-"}</td>
                 <td class="vendor-mono">
                   {#if d.url}
                     <a href={d.url} target="_blank" rel="noopener noreferrer">{d.url}</a>
-                  {:else}
-                    —
-                  {/if}
+                  {:else}. {/if}
                 </td>
               </tr>
             {/each}
@@ -1192,23 +1234,25 @@
       <h3>Push Names to DNS (DDNS)</h3>
       <p class="setup-section-hint">
         Publishes each NMOS node as an <strong>A record</strong> via standard
-        <strong>RFC&nbsp;2136 Dynamic Updates</strong> — works with BIND9,
+        <strong>RFC&nbsp;2136 Dynamic Updates</strong>. Works with BIND9,
         Knot&nbsp;DNS, PowerDNS, Windows DNS Server and any other server that
         accepts <code>nsupdate</code>-style updates. Authentication is either a
         <strong>TSIG key</strong> (the zone allows updates signed with the key
         below, e.g. BIND: <code>update-policy &#123; grant &lt;keyname&gt; zonesub A; &#125;;</code>)
-        or — algorithm <strong>none&nbsp;(unsigned)</strong> — plain unauthenticated
+        or. Algorithm <strong>none&nbsp;(unsigned)</strong>. Plain unauthenticated
         updates for zones that authorise by source IP (e.g. BIND:
         <code>allow-update &#123; &lt;server-ip&gt;; &#125;;</code>). Unsigned is fine on an
         isolated management network; prefer TSIG whenever the DNS server supports it.
       </p>
+      <details class="setup-more"><summary>More details</summary>
       <p class="setup-section-hint">
         The hostname is the node label (or the device alias if you set one on the
         Crosspoint / Details page); the IP comes from the node's <code>href</code>.
         NMOS Crosspoint keeps a local inventory of the records it created, so it
-        only ever updates or deletes its own — deleting a device with the Forget
+        only ever updates or deletes its own. Deleting a device with the Forget
         button also removes its DNS record.
       </p>
+      </details>
 
       <div class="setup-form">
         <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
@@ -1266,7 +1310,7 @@
         <label class="setup-field">
           <span class="setup-label">TSIG Key Secret (base64)</span>
           <input type="password" class="input input-bordered"
-                 placeholder={formDdnsKeyAlgorithm === "none" ? "not needed for unsigned updates" : (formDdnsKeySecretSet ? "•••••••• (stored — leave blank to keep)" : "Paste the base64 TSIG secret")}
+                 placeholder={formDdnsKeyAlgorithm === "none" ? "not needed for unsigned updates" : (formDdnsKeySecretSet ? "•••••••• (stored. Leave blank to keep)" : "Paste the base64 TSIG secret")}
                  autocomplete="new-password"
                  disabled={formDdnsKeyAlgorithm === "none"}
                  bind:value={formDdnsKeySecret} on:input={markDirty} />
@@ -1274,7 +1318,7 @@
       </div>
 
 
-      <!-- Pushed Records Inventory — mirrors the Multicast Lease inventory.
+      <!-- Pushed Records Inventory. Mirrors the Multicast Lease inventory.
            Lists every A record the server has successfully published via
            RFC 2136. Updated live as new pushes / updates / removes happen. -->
       <details class="lease-inventory">
@@ -1310,6 +1354,8 @@
       </details>
     </section>
 
+
+    <h2 class="setup-group">Access</h2>
 
     <section class="setup-section">
       <h3>Change Login &amp; Password</h3>

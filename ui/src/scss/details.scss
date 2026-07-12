@@ -163,6 +163,13 @@ $det-color-data:  theme('colors.blue.500');
     tr.det-flow:focus-within .det-hover {
         opacity: 1;
     }
+    tr.det-flow:hover .det-leg-src,
+    tr.det-flow:focus-within .det-leg-src {
+        display: inline;
+    }
+    @media (hover: none) {
+        .det-leg-src { display: inline; }
+    }
     @media (hover: none) {
         .det-hover { opacity: 0.6; }
     }
@@ -327,7 +334,12 @@ $det-color-data:  theme('colors.blue.500');
             font-size: 0.82rem;
             white-space: nowrap;
         }
+        // Source IP (SSM filter): hidden WITHOUT reserving space — the
+        // reserved width used to make dual-leg (2022-7) sender legs wrap
+        // onto two lines while receiver legs sat side by side. Revealed on
+        // row hover, always visible on touch devices.
         .det-leg-src {
+            display: none;
             color: theme('colors.slate.500');
             font-family: 'Roboto Mono', monospace;
             font-size: 0.72rem;

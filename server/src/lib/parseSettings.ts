@@ -216,6 +216,17 @@ export function parseSettings(settings:any){
     }
 
 
+    // ----- BCP-008 status monitoring (IS-12) -----
+    // Read-only health monitoring of senders/receivers on devices that
+    // expose NcStatusMonitors. Default ON — it only opens control
+    // connections to devices that advertise an ncp endpoint anyway.
+    if(!settings.bcp008 || typeof settings.bcp008 !== "object"){
+        settings.bcp008 = { enabled: true };
+    }
+    if(typeof settings.bcp008.enabled !== "boolean"){
+        settings.bcp008.enabled = true;
+    }
+
     // ----- Virtual NMOS Node identity -----
     // The Node + Device records (one of each, shared by ALL virtual senders)
     // we publish to the registry. UUIDs are persisted so the registry sees

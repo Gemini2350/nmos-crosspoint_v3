@@ -4,6 +4,7 @@ import { error } from "console";
 import { NmosRegistryConnector } from "./nmosConnector";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { DdnsService } from "./ddnsService";
+import { Bcp008Monitor } from "./bcp008Monitor";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -68,6 +69,14 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         if(CrosspointAbstraction.instance == null){
             CrosspointAbstraction.instance = this;
         }
+
+        // BCP-008 status monitoring (IS-12 client). Status changes re-run
+        // the worker round-trip so the enriched state picks them up — the
+        // service itself debounces bursts to one publish per second.
+        new Bcp008Monitor();
+        Bcp008Monitor.instance.onChange = () => { try{ this.update(); }catch(e){} };
+        try{ Bcp008Monitor.instance.setEnabled(this.settings?.bcp008?.enabled !== false); }catch(e){}
+
         this.syncCrosspoint = new SyncObject("crosspoint", this.crosspointState);
         this.update();
     }
@@ -889,6 +898,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
     updateFromNmos(state:any){
         this.nmosState = state;
+        // Reconcile IS-12 monitoring connections against the registry
+        // (new ncp devices get a WebSocket, vanished ones are torn down).
+        try{ Bcp008Monitor.instance?.updateFromNmos(state); }catch(e){}
         this.update();
     }
 
@@ -1329,6 +1341,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     let sf = s as CrosspointFlow;
                     sf.legs = legs;
                     sf.codec = codec;
+                    // BCP-008-02 sender health (device-computed worst-of-all).
+                    sf.monitor = this.buildMonitorStatus(nmosId);
                     // Mark virtual-sender flows so the Details page can skip
                     // the multicast / port edit and Forget controls — those
                     // would either be rejected (IS-05 returns 405 on /staged
@@ -1347,16 +1361,32 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             }
         }
 
-        // Pass 3: receivers + totals
+        // Pass 3: receivers + totals + per-device BCP-008 rollup
         for(let dev of this.crosspointState.devices){
             if(dev.available) totals.devices.avail++;
             totals.devices.total++;
+
+            // Worst BCP-008 status across the device's flows + how many
+            // flows are affected — the matrix shows this on the collapsed
+            // device row/column ("⚠ 3"). Inactive (0) and Healthy (1) are
+            // fine; only PartiallyHealthy (2) and Unhealthy (3) count.
+            // Tracked separately per direction: the sender COLUMN badge
+            // only counts sender flows, the receiver ROW badge receivers.
+            let monTx = { worst: 0, count: 0 };
+            let monRx = { worst: 0, count: 0 };
+            const monTrack = (agg:{worst:number,count:number}, m:any) => {
+                if(m && typeof m.status === "number" && m.status >= 2){
+                    agg.count++;
+                    if(m.status > agg.worst) agg.worst = m.status;
+                }
+            };
 
             for(let type of Object.keys(dev.senders || {})){
                 for(let s of (dev.senders as any)[type] || []){
                     if(!s) continue;
                     if(s.available) totals.senders.avail++;
                     totals.senders.total++;
+                    monTrack(monTx, (s as CrosspointFlow).monitor);
                 }
             }
 
@@ -1365,6 +1395,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     if(!r) continue;
                     let connected = r.connectedFlow ? senderInfoById[r.connectedFlow] : null;
                     let f = r as CrosspointFlow;
+                    let nmosId = (typeof r.id === "string" && r.id.startsWith("nmos_")) ? r.id.substring(5) : "";
                     if(connected){
                         f.legs    = connected.legs;
                         f.codec   = connected.codec;
@@ -1380,14 +1411,165 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                         f.connectedSenderId    = "";
                         f.connectedSenderLabel = "";
                     }
+                    // BCP-008-01 receiver health + BCP-004-01 capability
+                    // summary (shown in the matrix hover detail).
+                    f.monitor   = this.buildMonitorStatus(nmosId);
+                    f.capLimits = nmosId ? this.buildReceiverCapsSummary(nmosId) : "";
+                    monTrack(monRx, f.monitor);
                     if(r.available) totals.receivers.avail++;
                     totals.receivers.total++;
                 }
             }
+
+            (dev as CrosspointDevice).monitorSummaryTx = monTx;
+            (dev as CrosspointDevice).monitorSummaryRx = monRx;
         }
 
         (this.crosspointState as CrosspointState).totals = totals;
         (this.crosspointState as CrosspointState).detectedDevices = this.buildDetectedDevices();
+        // Lets the matrix hide the status hearts entirely when the feature
+        // is switched off (vs. grey "device doesn't support it" hearts).
+        (this.crosspointState as any).bcp008Enabled = this.settings?.bcp008?.enabled !== false;
+    }
+
+    /** BCP-008 status for one flow, or undefined when nothing monitors it.
+     *  `detail` breaks the four status domains down for the tooltip, e.g.
+     *  "Link ✓ · Connection ⚠ · Sync ✓ · Stream ✗" (receiver) or
+     *  "Link ✓ · Transmission ✓ · Sync ✓ · Essence ✓" (sender). */
+    private buildMonitorStatus(nmosId:string): { status:number, message:string, detail:string, counter:number, domains:Array<{label:string,status:number,counter:number}> } | undefined {
+        if(!nmosId) return undefined;
+        try{
+            let st = Bcp008Monitor.instance?.getStatus(nmosId);
+            if(!st) return undefined;
+            let labels:Array<[string,string]> = st.kind === "receiver"
+                ? [["link","Link"],["path","Connection"],["sync","Sync"],["payload","Stream"]]
+                : [["link","Link"],["path","Transmission"],["sync","Sync"],["payload","Essence"]];
+            // Shared 0..3 scale (link: AllUp/SomeDown/AllDown maps the same):
+            // 1 = fine, 2 = degraded, 3 = down, 0 = inactive/not used.
+            const sym = (v:number) => v === 1 ? "✓" : v === 2 ? "⚠" : v === 3 ? "✗" : "–";
+            let d:any = st.domains || {};
+            let domains:Array<{label:string,status:number,counter:number}> = [];
+            // "Overall counter" = MAX of the domain counters, not the sum: a
+            // single incident typically bumps ALL four domains at once and
+            // should read as 1, not 4.
+            let counter = 0;
+            let parts:string[] = [];
+            for(let [k, l] of labels){
+                let dv = d[k];
+                if(!dv || typeof dv.s !== "number") continue;
+                let c = (typeof dv.c === "number") ? dv.c : 0;
+                counter = Math.max(counter, c);
+                domains.push({ label: l, status: dv.s, counter: c });
+                // Colour = CURRENT state; the counter in parens is history
+                // (transitions since the last reset), not the state itself.
+                parts.push(l + " " + sym(dv.s) + " (" + c + ")");
+            }
+            return { status: st.status, message: st.message || "", detail: parts.join(" · "), counter, domains };
+        }catch(e){ return undefined; }
+    }
+
+    // ----- BCP-004-01 receiver capabilities → short human string -----
+    //
+    // Turns receiver.caps.constraint_sets into something that fits the
+    // matrix hover detail, e.g.
+    //   "L24/L16 · 48k · ≤16ch"  or  "raw · ≤1920×1080 · ≤p60"
+    // Multiple enabled sets are joined with " | ". Falls back to the basic
+    // caps.media_types list when no constraint sets are published.
+
+    private capParamShort(cons:any, mapVal?: (v:any)=>string): string {
+        if(!cons || typeof cons !== "object") return "";
+        const mv = mapVal || ((v:any)=>(""+v));
+        try{
+            if(Array.isArray(cons.enum) && cons.enum.length > 0){
+                return cons.enum.map(mv).join("/");
+            }
+            let hasMin = cons.minimum !== undefined && cons.minimum !== null;
+            let hasMax = cons.maximum !== undefined && cons.maximum !== null;
+            if(hasMin && hasMax) return mv(cons.minimum) + "–" + mv(cons.maximum);
+            if(hasMax) return "≤" + mv(cons.maximum);
+            if(hasMin) return "≥" + mv(cons.minimum);
+        }catch(e){}
+        return "";
+    }
+
+    private static ratShort(v:any): string {
+        // BCP-004 rationals: {numerator, denominator?}. 48000 → "48k",
+        // frame rates stay plain ("50", "59.94").
+        try{
+            if(v && typeof v === "object" && typeof v.numerator === "number"){
+                let d = (typeof v.denominator === "number" && v.denominator > 0) ? v.denominator : 1;
+                let n = v.numerator / d;
+                if(n >= 1000 && n % 1000 === 0) return (n/1000) + "k";
+                return (Math.round(n * 100) / 100) + "";
+            }
+        }catch(e){}
+        return "" + v;
+    }
+
+    private static mediaTypeShort(mt:any): string {
+        // "audio/L24" → "L24", "video/raw" → "raw", "video/jxsv" → "jxsv"
+        let s = "" + mt;
+        let i = s.indexOf("/");
+        return i >= 0 ? s.substring(i+1) : s;
+    }
+
+    private buildReceiverCapsSummary(nmosId:string): string {
+        try{
+            let recv:any = this.nmosState?.receivers?.[nmosId];
+            let caps:any = recv?.caps;
+            if(!caps) return "";
+
+            const CAP = "urn:x-nmos:cap:format:";
+            let sets:any[] = Array.isArray(caps.constraint_sets) ? caps.constraint_sets : [];
+            let parts:string[] = [];
+
+            for(let set of sets){
+                if(!set || typeof set !== "object") continue;
+                if(set["urn:x-nmos:cap:meta:enabled"] === false) continue;
+
+                let p:string[] = [];
+                let mt = this.capParamShort(set[CAP+"media_type"], CrosspointAbstraction.mediaTypeShort);
+                if(mt) p.push(mt);
+
+                // Audio
+                let rate = this.capParamShort(set[CAP+"sample_rate"], CrosspointAbstraction.ratShort);
+                if(rate) p.push(rate);
+                let depth = this.capParamShort(set[CAP+"sample_depth"]);
+                if(depth) p.push(depth + "bit");
+                let ch = this.capParamShort(set[CAP+"channel_count"]);
+                if(ch) p.push(ch + "ch");
+
+                // Video
+                let w = this.capParamShort(set[CAP+"frame_width"]);
+                let h = this.capParamShort(set[CAP+"frame_height"]);
+                if(w && h) p.push(w + "×" + h);
+                else if(w) p.push(w + "px");
+                let fr = this.capParamShort(set[CAP+"grain_rate"], CrosspointAbstraction.ratShort);
+                if(fr) p.push(fr + "fps");
+                let il = this.capParamShort(set[CAP+"interlace_mode"], (v:any)=>{
+                    let s = ""+v;
+                    if(s === "progressive") return "p";
+                    if(s.startsWith("interlaced")) return "i";
+                    return s;
+                });
+                if(il) p.push(il);
+
+                if(p.length > 0){
+                    let label = set["urn:x-nmos:cap:meta:label"];
+                    parts.push((typeof label === "string" && label ? label + ": " : "") + p.join(" · "));
+                }
+            }
+
+            let out = parts.join(" | ");
+            if(!out){
+                // No constraint sets — fall back to the plain media_types list.
+                if(Array.isArray(caps.media_types) && caps.media_types.length > 0){
+                    out = caps.media_types.map(CrosspointAbstraction.mediaTypeShort).join("/");
+                }
+            }
+            if(out.length > 120) out = out.substring(0, 117) + "…";
+            return out;
+        }catch(e){ return ""; }
     }
 
 }
@@ -1457,7 +1639,14 @@ export interface CrosspointFlow {
     // True when this sender lives on our own virtual NMOS device. The
     // Details page uses this to hide leg / multicast edit controls that
     // would be rejected (IS-05 PATCH returns 405 on virtual senders).
-    isVirtual?:boolean
+    isVirtual?:boolean,
+    // BCP-008 health as reported by the device's NcSender/ReceiverMonitor
+    // via IS-12: 0 inactive, 1 healthy, 2 partially healthy, 3 unhealthy.
+    // Absent when the device publishes no status monitor for this flow.
+    // `detail` is the four-domain breakdown for the tooltip, `counter` the
+    // summed transition counters (history, NOT current state), `domains`
+    // the per-domain rows for the status modal.
+    monitor?:{ status:number, message:string, detail?:string, counter?:number, domains?:Array<{label:string,status:number,counter:number}> }
 };
 
 
@@ -1516,7 +1705,13 @@ export interface CrosspointDevice {
     displayTooltip?:string,
     // Device-only name (no "<Node> - " prefix) for use where the node
     // label is already shown as a group header on the Details page.
-    displayLabelShort?:string
+    displayLabelShort?:string,
+    // BCP-008 rollup across the device's flows: worst status (0 = all
+    // fine, 2 = partially healthy, 3 = unhealthy) and the number of flows
+    // currently affected — the matrix badge shows "⚠ <count>". Tracked
+    // per direction so the sender column only reports sender health.
+    monitorSummaryTx?:{ worst:number, count:number },
+    monitorSummaryRx?:{ worst:number, count:number }
   }
 export interface CrosspointTotals {
     devices:   { avail:number, total:number },
