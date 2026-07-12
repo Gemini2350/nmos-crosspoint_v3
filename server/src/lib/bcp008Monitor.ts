@@ -87,6 +87,12 @@ function classIdIsStatusMonitor(classId: any): boolean {
         && classId[0] === 1 && classId[1] === 2 && classId[2] === 2;
 }
 
+// NcBlock and subclasses: classId prefix [1,1].
+function classIdIsBlock(classId: any): boolean {
+    return Array.isArray(classId) && classId.length >= 2
+        && classId[0] === 1 && classId[1] === 1;
+}
+
 // MS-05-02 NcMethodStatus uses HTTP-like codes: 200 Ok, 298/299 deprecation
 // warnings (value still valid), 4xx/5xx errors. Some early implementations
 // answered 0 for Ok — accept both.
@@ -309,12 +315,19 @@ class DeviceMonitorConnection {
         }
         const monitorDescs = membersResult.value.filter((d: any) => classIdIsStatusMonitor(d?.classId));
         if (monitorDescs.length === 0) {
+            // Some devices ignore `recurse: true` and answer with the root
+            // block's DIRECT children only — the monitors then hide inside
+            // nested blocks. Walk the block tree manually before giving up.
+            const nested = await this.walkBlocksForMonitors(membersResult.value);
+            monitorDescs.push(...nested);
+        }
+        if (monitorDescs.length === 0) {
             // Device speaks IS-12 but exposes no NcStatusMonitors — say so
             // ONCE (info), otherwise this case is indistinguishable from
             // "nothing happening" in the logs.
             if (!this.loggedNoMonitors) {
                 this.loggedNoMonitors = true;
-                SyncLog.log("info", "BCP-008", "Connected to " + this.url + " — device model has " + membersResult.value.length + " members but no BCP-008 status monitors (classId 1.2.2.x).");
+                SyncLog.log("info", "BCP-008", "Connected to " + this.url + " — no BCP-008 status monitors found (classId 1.2.2.x), root block and nested blocks checked.");
             }
             this.monitors = [];
             return;
@@ -359,6 +372,42 @@ class DeviceMonitorConnection {
         this.send({ messageType: MT_SUBSCRIPTION, subscriptions: found.map(m => m.oid) });
         await this.pollAll();
         SyncLog.log("info", "BCP-008", "Monitoring " + found.length + " sender/receiver monitors via " + this.url);
+    }
+
+    /** Manual BFS through nested NcBlocks (recurse-less fallback). */
+    private async walkBlocksForMonitors(rootMembers: any[]): Promise<any[]> {
+        const monitors: any[] = [];
+        const seenOids = new Set<number>();
+        const monitorOids = new Set<number>();
+        const queue: number[] = [];
+        for (const d of rootMembers) {
+            if (classIdIsBlock(d?.classId) && typeof d.oid === "number") queue.push(d.oid);
+        }
+        if (queue.length === 0) return monitors;
+        SyncLog.log("verbose", "BCP-008", "recurse returned no monitors on " + this.url + " — walking " + queue.length + " nested block(s) manually.");
+        let guard = 0;
+        while (queue.length > 0 && guard++ < 200) {
+            const oid = queue.shift()!;
+            if (seenOids.has(oid)) continue;
+            seenOids.add(oid);
+            let members: any[];
+            try {
+                const res: any = await this.command(oid, METHOD_GET_MEMBERS, { recurse: false });
+                if (!res || !statusOk(res.status) || !Array.isArray(res.value)) continue;
+                members = res.value;
+            } catch (e) { continue; }
+            for (const d of members) {
+                if (classIdIsStatusMonitor(d?.classId)) {
+                    if (typeof d.oid === "number" && !monitorOids.has(d.oid)) {
+                        monitorOids.add(d.oid);
+                        monitors.push(d);
+                    }
+                } else if (classIdIsBlock(d?.classId) && typeof d.oid === "number") {
+                    queue.push(d.oid);
+                }
+            }
+        }
+        return monitors;
     }
 
     private async pollAll() {
