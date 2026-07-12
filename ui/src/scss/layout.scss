@@ -27,6 +27,11 @@
         flex-shrink: 0;
         display:flex;
         flex-direction: column;
+        // daisyUI's .menu sets flex-wrap:wrap — on a short viewport that
+        // wrapped the pinned TAKE/Autotake block into a second (off-screen)
+        // column instead of letting the middle menu scroll. Force nowrap so
+        // the column-shrink + overflow on .browser-nav-full below applies.
+        flex-wrap: nowrap;
 
         // Global availability counter — sits at the top of the right-hand
         // nav so the current Dev / TX / RX online-vs-total numbers are
