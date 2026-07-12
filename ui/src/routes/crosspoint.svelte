@@ -1294,7 +1294,6 @@
         {/if}
         <div class="modal-action">
           <button class="btn" on:click={resetMonitorCounters}>Reset counters &amp; messages</button>
-          <form method="dialog"><button class="btn">Close</button></form>
         </div>
       </div>
     </dialog>
