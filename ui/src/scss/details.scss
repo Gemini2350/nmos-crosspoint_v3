@@ -163,13 +163,6 @@ $det-color-data:  theme('colors.blue.500');
     tr.det-flow:focus-within .det-hover {
         opacity: 1;
     }
-    tr.det-flow:hover .det-leg-src,
-    tr.det-flow:focus-within .det-leg-src {
-        display: inline;
-    }
-    @media (hover: none) {
-        .det-leg-src { display: inline; }
-    }
     @media (hover: none) {
         .det-hover { opacity: 0.6; }
     }
@@ -298,6 +291,17 @@ $det-color-data:  theme('colors.blue.500');
         line-height: 28px;
         white-space: nowrap;
     }
+    // Long video formats get cut with an ellipsis; the full string sits in
+    // the tooltip. inline-block + vertical-align keeps the bitrate suffix
+    // on the same baseline.
+    .det-media-text {
+        display: inline-block;
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        vertical-align: bottom;
+    }
     .det-media-bitrate  { color: theme('colors.slate.500'); }
     .det-media-inactive { color: theme('colors.warning'); }
     .det-media-muted    { color: theme('colors.slate.500'); }
@@ -334,17 +338,9 @@ $det-color-data:  theme('colors.blue.500');
             font-size: 0.82rem;
             white-space: nowrap;
         }
-        // Source IP (SSM filter): hidden WITHOUT reserving space — the
-        // reserved width used to make dual-leg (2022-7) sender legs wrap
-        // onto two lines while receiver legs sat side by side. Revealed on
-        // row hover, always visible on touch devices.
-        .det-leg-src {
-            display: none;
-            color: theme('colors.slate.500');
-            font-family: 'Roboto Mono', monospace;
-            font-size: 0.72rem;
-            white-space: nowrap;
-        }
+        // Source IP (SSM filter): moved into the leg value's tooltip — any
+        // inline reveal (display or reserved width) either reflowed the legs
+        // on hover or wrapped dual-leg (2022-7) senders permanently.
         .det-leg-input {
             font-family: 'Roboto Mono', monospace;
             background-color: theme('colors.base-100');

@@ -1014,7 +1014,10 @@
                       </div>
                     </td>
                     <td class="det-cell-media">
-                      <span>{mediaText(flow)}</span>
+                      <!-- Full format in the tooltip only when the ellipsis can
+                           actually kick in — a tooltip that mirrors fully
+                           visible text is just noise. -->
+                      <span class="det-media-text" use:OverlayMenuService.tooltip data-tooltip={mediaText(flow).length > 36 ? mediaText(flow) : ""}>{mediaText(flow)}</span>
                       {#if flow.active}
                         <span class="det-media-bitrate">· {renderBitrate(flow.bitrate)}</span>
                       {:else}
@@ -1066,10 +1069,9 @@
                                      legs line up with everything else. -->
                                 <span class="det-icon-btn" style="visibility:hidden;"></span>
                               {/if}
-                              <span class="det-leg-value">{leg.dstIp || "—"}<span class="det-leg-colon">:</span>{leg.dstPort || "—"}</span>
-                              {#if leg.srcIp}
-                                <span class="det-leg-src" use:OverlayMenuService.tooltip data-tooltip="Source IP (SSM filter)">src {leg.srcIp}</span>
-                              {/if}
+                              <!-- SSM source IP lives in the tooltip so revealing
+                                   it never widens the leg and reflows the row. -->
+                              <span class="det-leg-value" use:OverlayMenuService.tooltip data-tooltip={leg.srcIp ? "Source IP (SSM filter): " + leg.srcIp : ""}>{leg.dstIp || "—"}<span class="det-leg-colon">:</span>{leg.dstPort || "—"}</span>
                               {#if isDup}
                                 <span class="text-error det-dup-hint" use:OverlayMenuService.tooltip data-tooltip="Multicast {leg.dstIp} (Leg {leg.index+1}) is also used by: {leg.dupText || "another active sender"}">DUP</span>
                               {/if}
@@ -1155,7 +1157,7 @@
                       </div>
                     </td>
                     <td class="det-cell-media">
-                      <span>{mediaText(recv)}</span>
+                      <span class="det-media-text" use:OverlayMenuService.tooltip data-tooltip={mediaText(recv).length > 36 ? mediaText(recv) : ""}>{mediaText(recv)}</span>
                       {#if recv.active}
                         <span class="det-media-bitrate">· {renderBitrate(recv.bitrate)}</span>
                       {:else}
@@ -1169,10 +1171,7 @@
                         <div class="det-legs">
                         {#each recv.legs as leg}
                           <div class="det-leg det-leg-readonly">
-                            <span class="det-leg-value">{leg.dstIp || "—"}{leg.dstPort ? ":"+leg.dstPort : ""}</span>
-                            {#if leg.srcIp}
-                              <span class="det-leg-src" use:OverlayMenuService.tooltip data-tooltip="Source IP (SSM filter)">src {leg.srcIp}</span>
-                            {/if}
+                            <span class="det-leg-value" use:OverlayMenuService.tooltip data-tooltip={leg.srcIp ? "Source IP (SSM filter): " + leg.srcIp : ""}>{leg.dstIp || "—"}{leg.dstPort ? ":"+leg.dstPort : ""}</span>
                           </div>
                         {/each}
                         </div>

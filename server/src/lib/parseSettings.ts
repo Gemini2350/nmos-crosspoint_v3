@@ -227,6 +227,21 @@ export function parseSettings(settings:any){
         settings.bcp008.enabled = true;
     }
 
+    // ----- Registry discovery (unicast DNS-SD) -----
+    // Default ON: query the DNS search domain for _nmos-register._tcp
+    // records before falling back to mDNS. A static registry IP always
+    // wins over any discovered one. `domain` overrides the search domain
+    // taken from the system resolver.
+    if(!settings.registryDiscovery || typeof settings.registryDiscovery !== "object"){
+        settings.registryDiscovery = { unicastDnssd: true, domain: "" };
+    }
+    if(typeof settings.registryDiscovery.unicastDnssd !== "boolean"){
+        settings.registryDiscovery.unicastDnssd = true;
+    }
+    if(typeof settings.registryDiscovery.domain !== "string"){
+        settings.registryDiscovery.domain = "";
+    }
+
     // ----- Virtual NMOS Node identity -----
     // The Node + Device records (one of each, shared by ALL virtual senders)
     // we publish to the registry. UUIDs are persisted so the registry sees

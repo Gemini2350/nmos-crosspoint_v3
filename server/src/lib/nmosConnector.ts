@@ -4,6 +4,7 @@
 */
 
 import * as WebSocket from "ws";
+import * as dns from "dns";
 import axios from "axios";
 import { SyncObject } from "./SyncServer/syncObject";
 import { Subject } from "rxjs";
@@ -104,6 +105,9 @@ export class NmosRegistryConnector {
 
         
         this.settings.staticNmosRegistries.forEach((staticRegistry) => {
+            // An empty IP means "no static registry configured" — skip it so
+            // the discovery cascade (unicast DNS-SD, then mDNS) can take over.
+            if(!staticRegistry || !staticRegistry.ip || !staticRegistry.port) return;
             try {
                 let registry: NmosRegistry = {
                     ip: staticRegistry.ip,
@@ -118,8 +122,15 @@ export class NmosRegistryConnector {
                 SyncLog.log("error","NMOS Settings","Can not add Static Registry: "+ JSON.stringify(staticRegistry) );
             }
         });
-    
 
+        // Unicast DNS-SD discovery runs first (default ON) — one DNS query
+        // round against the search domain is cheap and instant. mDNS follows
+        // as the fallback; the source ranking inside addRegistry() makes
+        // sure a DNS-SD result outranks mDNS and a static entry beats both.
+        this.dnssdQuery().catch(()=>{});
+        this.dnssdQueryInterval = setInterval(() => {
+            this.dnssdQuery().catch(()=>{});
+        }, 60000);
 
         setTimeout(()=>{
             this.mdnsQuery();
@@ -161,31 +172,115 @@ export class NmosRegistryConnector {
             ],
         });
     }
-    private addRegistry(registry: NmosRegistry) {
-        
-        let addNew = true;
-        let update = -1;
 
-        for (let i = 0; i < this.nmosRegistryList.length; i++) {
-            const el = this.nmosRegistryList[i];
-            if (el.ip + ":" + el.port == registry.ip + ":" + registry.port) {
-                addNew = false;
-                if (el.source != "static") {
-                    update = i;
+    // Discovery cascade: an operator-entered static IP always wins, unicast
+    // DNS-SD beats mDNS. Registries from a lower-ranked source are ignored
+    // while a higher-ranked one is connected; a higher-ranked discovery
+    // takes over from a lower-ranked connection.
+    private static sourceRank(source: string): number {
+        return source === "static" ? 3 : source === "dnssd" ? 2 : 1;
+    }
+
+    /** Resolve the DNS-SD domains to query: the Setup override if set,
+     *  otherwise the system resolver's search domains (/etc/resolv.conf —
+     *  present in the container; empty list elsewhere is a clean no-op). */
+    private dnssdSearchDomains(): string[] {
+        let cfg = "";
+        try{ cfg = ("" + (this.settings?.registryDiscovery?.domain || "")).trim().replace(/\.+$/, ""); }catch(e){}
+        if(cfg){ return [cfg]; }
+        try{
+            const txt = fs.readFileSync("/etc/resolv.conf", "utf8");
+            const domains: string[] = [];
+            for(const line of ("" + txt).split("\n")){
+                const m = line.match(/^\s*(search|domain)\s+(.+)$/);
+                if(!m) continue;
+                for(const d of m[2].trim().split(/\s+/)){
+                    const clean = d.trim().replace(/\.+$/, "");
+                    if(clean && clean !== "local" && !domains.includes(clean)){ domains.push(clean); }
+                }
+            }
+            return domains;
+        }catch(e){ return []; }
+    }
+
+    /** Unicast DNS-SD (RFC 6763 over normal DNS): PTR on
+     *  _nmos-register._tcp.<domain> (v1.3; plus the deprecated
+     *  _nmos-registration._tcp name) → SRV per instance → A record. */
+    private async dnssdQuery() {
+        try{
+            if(this.settings?.registryDiscovery?.unicastDnssd === false) return;
+        }catch(e){}
+        const domains = this.dnssdSearchDomains();
+        if(domains.length === 0){
+            if(!this.loggedDnssdNoDomain){
+                this.loggedDnssdNoDomain = true;
+                SyncLog.log("verbose", "NMOS", "Unicast DNS-SD discovery: no DNS search domain found and none configured — relying on mDNS / static registry.");
+            }
+            return;
+        }
+        const services = ["_nmos-register._tcp.", "_nmos-registration._tcp."];
+        for(const domain of domains){
+            for(const svc of services){
+                let instances: string[] = [];
+                try{ instances = await dns.promises.resolvePtr(svc + domain); }
+                catch(e){ continue; }   // NXDOMAIN etc. — try the next name
+                for(const inst of instances){
+                    try{
+                        const srvs = await dns.promises.resolveSrv(inst);
+                        for(const srv of srvs){
+                            const target = ("" + srv.name).replace(/\.+$/, "");
+                            if(!target || !srv.port) continue;
+                            let ip = target;
+                            try{
+                                const addrs = await dns.promises.resolve4(target);
+                                if(addrs.length > 0){ ip = addrs[0]; }
+                            }catch(e){ /* keep the hostname — works in the URL too */ }
+                            this.addRegistry({
+                                ip,
+                                port: srv.port,
+                                priority: (typeof srv.priority === "number") ? srv.priority : 100,
+                                source: "dnssd",
+                                domain,
+                            });
+                        }
+                    }catch(e){ /* instance without SRV — skip */ }
                 }
             }
         }
+    }
 
-        if (addNew) {
-            this.nmosRegistryList.push(registry);
-            SyncLog.log("info","NMOS Settings","Adding Registry: "+registry.ip + ":"+registry.port );
-            this.connectRegistry(registry);
+    private addRegistry(registry: NmosRegistry) {
+        const rank = NmosRegistryConnector.sourceRank(registry.source);
 
+        // Same endpoint already known → keep the connection, just upgrade
+        // the source label when a higher-ranked discovery confirms it.
+        for (let i = 0; i < this.nmosRegistryList.length; i++) {
+            const el = this.nmosRegistryList[i];
+            if (el.ip + ":" + el.port == registry.ip + ":" + registry.port) {
+                if (rank > NmosRegistryConnector.sourceRank(el.source)) {
+                    this.nmosRegistryList[i] = registry;
+                    this.updateSyncConnectionState();
+                }
+                return;
+            }
         }
 
-        if (update != -1) {
-            this.nmosRegistryList[update] = registry;
+        let bestRank = 0;
+        for (const el of this.nmosRegistryList) {
+            bestRank = Math.max(bestRank, NmosRegistryConnector.sourceRank(el.source));
         }
+        if (bestRank > 0 && rank < bestRank) {
+            SyncLog.log("verbose", "NMOS Settings", "Ignoring " + registry.source + " registry " + registry.ip + ":" + registry.port + " — a higher-priority source is connected.");
+            return;
+        }
+        if (bestRank > 0 && rank > bestRank) {
+            SyncLog.log("info", "NMOS Settings", registry.source + " registry " + registry.ip + ":" + registry.port + " outranks the current source — switching.");
+            this.disconnectAllRegistries();
+        }
+
+        this.nmosRegistryList.push(registry);
+        SyncLog.log("info","NMOS Settings","Adding Registry ("+registry.source+"): "+registry.ip + ":"+registry.port );
+        this.connectRegistry(registry);
 
         this.updateSyncConnectionState();
     }
@@ -202,6 +297,8 @@ export class NmosRegistryConnector {
     }
 
     private mdnsQueryInterval = null;
+    private dnssdQueryInterval: any = null;
+    private loggedDnssdNoDomain = false;
     private mdnsBrowser: any = null;
     private registryVersionList = ["v1.3","v1.2"];
     private connectVersionList = ["v1.1", "v1.0"];
@@ -468,6 +565,14 @@ export class NmosRegistryConnector {
         // Force a crosspoint rebuild so the UI clears any device cards that
         // were built from the old registry's state.
         this.updateCrosspoint();
+
+        // With no static registry configured the discovery cascade repopulates
+        // the list — re-query right away instead of waiting for the next tick
+        // (up to 60s for DNS-SD, 20s for mDNS).
+        setTimeout(() => {
+            this.dnssdQuery().catch(()=>{});
+            this.mdnsQuery();
+        }, 250);
     }
 
     private versionIsPrefered(oldVersion:string, newVersion:string, registry=true){
@@ -2008,7 +2113,7 @@ interface NmosRegistry {
     port: number;
     domain: string;
     priority: number;
-    source: "mdns" | "static";
+    source: "mdns" | "dnssd" | "static";
 }
 
 interface ConnectionList {

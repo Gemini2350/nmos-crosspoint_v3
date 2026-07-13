@@ -256,11 +256,18 @@ $cp-border: 1px solid transparent;
                 display:none;
                 position:absolute;
                 height:$cp-size;
-                width:168px;
+                // Grow with long video format strings so the grey pill always
+                // covers the whole text; only extreme ones get ellipsized.
+                width:max-content;
+                min-width:168px;
+                max-width:320px;
+                overflow:hidden;
+                text-overflow:ellipsis;
+                white-space:nowrap;
                 border-radius: $cp-round;
                 right:26px;
                 top:0px;
-                padding:2px;
+                padding:2px 6px;
                 background-color: theme('colors.neutral-800');
                 color:theme('colors.white');
                 font-size:13px;
@@ -405,8 +412,16 @@ $cp-border: 1px solid transparent;
 
                 .cp-type {
                     .cp-detail {
-                        height:168px;
+                        // Vertical variant of the auto-growing pill: the text
+                        // runs upwards from the icon, capped just below the
+                        // header height (232px) so it can't poke out the top.
+                        height:max-content;
+                        min-height:168px;
+                        max-height:200px;
                         width:$cp-size;
+                        min-width:unset;
+                        max-width:unset;
+                        padding:6px 2px;
 
                         bottom:26px;
                         left:0px;
@@ -417,7 +432,7 @@ $cp-border: 1px solid transparent;
 
                         writing-mode: vertical-rl;
                         text-orientation: mixed;
-                        
+
                     }
                 }
 

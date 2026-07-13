@@ -961,7 +961,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     // ------------------------------------------------------------------
 
     private static MEDIA_TYPE_CODEC: { [mt:string]: string } = {
-        "video/raw":      "RAW Video",
+        "video/raw":      "RAW",
         "video/jxsv":     "JPEG-XS Video",
         "video/colibri":  "Colibri Video",
         "audio/L16":      "16 Bit LPCM",
@@ -997,7 +997,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     case "L24":      pretty = "24 Bit LPCM"; break;
                     case "L32":      pretty = "24 Bit LPCM"; break;
                     case "AM824":    pretty = "ST2110-31 AES3"; break;
-                    case "RAW":      pretty = "RAW Video"; break;
+                    case "RAW":      pretty = "RAW"; break;
                     case "JXSV":     pretty = "JPEG-XS Video"; break;
                     case "SMPTE291": pretty = "ANC"; break;
                     case "VC2":      pretty = "VC-2"; break;

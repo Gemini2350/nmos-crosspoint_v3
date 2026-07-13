@@ -86,6 +86,8 @@
     let formAutoActivateSender:boolean = false;
     let formAudioMonitorEnabled:boolean = false;
     let formBcp008Enabled:boolean = true;
+    let formDnssdEnabled:boolean = true;
+    let formDnssdDomain:string = "";
     let formMulticastRange:string = "";
 
     // Credentials form (independent of the main Save flow. Saved via its own
@@ -159,6 +161,8 @@
             formAutoActivateSender   = !!obj.autoActivateInactiveSender;
             formAudioMonitorEnabled  = !!(obj.audioMonitor && obj.audioMonitor.enabled);
             formBcp008Enabled        = !(obj.bcp008 && obj.bcp008.enabled === false);
+            formDnssdEnabled         = !(obj.registryDiscovery && obj.registryDiscovery.unicastDnssd === false);
+            formDnssdDomain          = (obj.registryDiscovery && typeof obj.registryDiscovery.domain === "string") ? obj.registryDiscovery.domain : "";
             formMulticastRange       = (typeof obj.multicastRange === "string") ? obj.multicastRange : "";
             // Pre-fill the credentials form with the first configured user
             // so the operator doesn't have to type their own username.
@@ -234,6 +238,8 @@
       formAutoActivateSender   = !!serverState.autoActivateInactiveSender;
       formAudioMonitorEnabled  = !!(serverState.audioMonitor && serverState.audioMonitor.enabled);
       formBcp008Enabled        = !(serverState.bcp008 && serverState.bcp008.enabled === false);
+      formDnssdEnabled         = !((serverState as any).registryDiscovery && (serverState as any).registryDiscovery.unicastDnssd === false);
+      formDnssdDomain          = ((serverState as any).registryDiscovery && typeof (serverState as any).registryDiscovery.domain === "string") ? (serverState as any).registryDiscovery.domain : "";
       formMulticastRange       = serverState.multicastRange || "";
       if(serverState.ddns){
         formDdnsEnabled      = !!serverState.ddns.enabled;
@@ -310,6 +316,7 @@
         autoActivateInactiveSender: formAutoActivateSender,
         audioMonitor: { enabled: formAudioMonitorEnabled },
         bcp008: { enabled: formBcp008Enabled },
+        registryDiscovery: { unicastDnssd: formDnssdEnabled, domain: formDnssdDomain.trim() },
         ddns: {
           enabled:      formDdnsEnabled,
           server:       formDdnsServer.trim(),
@@ -754,11 +761,30 @@
 
     <section class="setup-section">
       <h3>NMOS Registry</h3>
-      <p class="setup-section-hint">Address of the NMOS registry the server contacts at startup.</p>
+      <p class="setup-section-hint">
+        How the server finds the NMOS registry. With discovery enabled it first
+        queries the DNS search domain for unicast DNS-SD records
+        (_nmos-register._tcp) and falls back to mDNS when nothing is found.
+        A static IP entered below always wins over any discovered registry.
+        Leave the IP empty to rely on discovery alone.
+      </p>
 
       <div class="setup-form">
+        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
+          <span class="label-text">Discover registry via unicast DNS-SD</span>
+          <input type="checkbox" class="toggle" bind:checked={formDnssdEnabled} on:change={markDirty} />
+        </label>
+      </div>
+      <div class="setup-form">
         <label class="setup-field">
-          <span class="setup-label">Registry IP</span>
+          <span class="setup-label">DNS-SD domain (optional)</span>
+          <input type="text" class="input input-bordered" placeholder="uses the server DNS search domain"
+                 bind:value={formDnssdDomain} on:input={markDirty} />
+        </label>
+      </div>
+      <div class="setup-form">
+        <label class="setup-field">
+          <span class="setup-label">Registry IP (static, overrides discovery)</span>
           <input type="text" class="input input-bordered" placeholder="10.0.0.1"
                  bind:value={formIp} on:input={markDirty} />
         </label>

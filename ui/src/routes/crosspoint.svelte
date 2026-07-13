@@ -1078,8 +1078,15 @@
       });
     }
 
+    // The matrix pill is a quick glance, so the SDR/BT709 defaults are
+    // dropped from video formats ("1920x1080i25 BT709 SDR YCbCr 8Bit" →
+    // "1920x1080i25 YCbCr 8Bit"). Non-default colorimetry (BT2020, PQ,
+    // HLG) stays visible on purpose; the Details page shows the full
+    // string in its tooltip.
     function shortFormat(format:any){
-      return format;
+      let f = "" + (format || "");
+      f = f.replace(" BT709", "").replace(" SDR", "");
+      return f.trim();
     }
 
 

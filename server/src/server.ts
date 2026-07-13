@@ -425,6 +425,14 @@ function getSetupConfigState() {
         enabled: !(settings.bcp008 && settings.bcp008.enabled === false)
     };
 
+    // Registry discovery: unicast DNS-SD (default ON) with optional domain
+    // override. A static registry IP always outranks discovered ones.
+    let discoveryCfg:any = (settings.registryDiscovery && typeof settings.registryDiscovery === "object") ? settings.registryDiscovery : {};
+    let registryDiscovery = {
+        unicastDnssd: discoveryCfg.unicastDnssd !== false,
+        domain: (typeof discoveryCfg.domain === "string") ? discoveryCfg.domain : ""
+    };
+
     // Audio monitor: master toggle for the headphone button on the
     // Details page (WebRTC listen-in on audio senders).
     let audioMonitorCfg = {
@@ -433,6 +441,7 @@ function getSetupConfigState() {
 
     return {
         registry,
+        registryDiscovery,
         acceptableGmid: (typeof settings.acceptableGmid === "string") ? settings.acceptableGmid : "",
         vendorProfiles,
         virtualSenders,
@@ -616,6 +625,14 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                         }
                     }
                 }
+                if(postData.registryDiscovery && typeof postData.registryDiscovery === "object"){
+                    if(typeof postData.registryDiscovery.unicastDnssd === "boolean"){
+                        next.registryDiscovery.unicastDnssd = postData.registryDiscovery.unicastDnssd;
+                    }
+                    if(typeof postData.registryDiscovery.domain === "string"){
+                        next.registryDiscovery.domain = postData.registryDiscovery.domain.trim().replace(/\.+$/, "");
+                    }
+                }
                 if(typeof postData.acceptableGmid === "string"){
                     next.acceptableGmid = postData.acceptableGmid.trim().toUpperCase();
                 }
@@ -756,6 +773,18 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             if(settings.staticNmosRegistries[0].port !== next.registry.port){
                 settings.staticNmosRegistries[0].port = next.registry.port;
                 firstChanged = true;
+            }
+            // Registry discovery settings — a change re-runs the whole
+            // cascade below (same live path as a registry IP change).
+            let prevDiscovery = (settings.registryDiscovery && typeof settings.registryDiscovery === "object") ? settings.registryDiscovery : {};
+            let discoveryChanged =
+                (prevDiscovery.unicastDnssd !== false) !== next.registryDiscovery.unicastDnssd ||
+                (prevDiscovery.domain || "") !== next.registryDiscovery.domain;
+            if(discoveryChanged){
+                settings.registryDiscovery = {
+                    unicastDnssd: next.registryDiscovery.unicastDnssd,
+                    domain: next.registryDiscovery.domain
+                };
             }
             let prevAcceptableGmid = settings.acceptableGmid || "";
             settings.acceptableGmid = next.acceptableGmid;
@@ -943,7 +972,7 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             // API WebSocket and re-subscribe to the new IP/port. The NMOS
             // SyncObject is reset along the way so the UI doesn't keep cards
             // for devices that belong to the old registry.
-            if(firstChanged){
+            if(firstChanged || discoveryChanged){
                 try{
                     if(NmosRegistryConnector.instance){
                         NmosRegistryConnector.instance.reconnectStaticRegistries();
