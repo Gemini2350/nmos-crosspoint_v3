@@ -377,12 +377,16 @@ export class NmosRegistryConnector {
 
 
     private getSubscription(nmosRegistryUrl: string, resource: string) {
-        this.registryVersionList.forEach((version)=>{
-            this.getVersionSubscription(nmosRegistryUrl,resource,version );
-        })
+        // Version cascade: subscribe with the newest Query API version and
+        // fall back to the next one only when the subscription POST fails.
+        // Subscribing to ALL versions in parallel (the old behaviour) doubled
+        // the websockets and made the registry deliver every event twice.
+        this.getVersionSubscription(nmosRegistryUrl, resource, 0);
     }
 
-    private getVersionSubscription(nmosRegistryUrl: string, resource: string, version:string){
+    private getVersionSubscription(nmosRegistryUrl: string, resource: string, versionIndex:number){
+        const version = this.registryVersionList[versionIndex];
+        if(!version) return;
         // Capture the generation at subscribe time. If reconnectStaticRegistries
         // is called mid-flight (live switch), this.registryGen advances and the
         // late-arriving response / reconnect timer skips itself.
@@ -397,6 +401,17 @@ export class NmosRegistryConnector {
             this.logReset = true;
             let subscription = response.data;
             let fullResource = nmosRegistryUrl + "_" + resource + "_" + version;
+            // With the cascade there is exactly ONE live subscription per
+            // resource — drop entries from another version (left over when a
+            // reconnect landed on a different Query API version).
+            for(const key of Object.keys(this.connections)){
+                if(key.startsWith(nmosRegistryUrl + "_" + resource + "_") && key !== fullResource){
+                    try{ if(this.connections[key].pingInterval){ clearInterval(this.connections[key].pingInterval); } }catch(e){}
+                    try{ this.connections[key].ws.onmessage = () => {}; }catch(e){}
+                    try{ this.connections[key].ws.close(); }catch(e){}
+                    delete this.connections[key];
+                }
+            }
             if (this.connections[fullResource]) {
                 this.connections[fullResource].ws.onmessage = (message) => {};
                 try{ if(this.connections[fullResource].pingInterval){ clearInterval(this.connections[fullResource].pingInterval); } }catch(e){}
@@ -431,7 +446,9 @@ export class NmosRegistryConnector {
                 SyncLog.log("error",  "NMOS","Closed subscription to Registry: " + nmosRegistryUrl + ", " + resource + ", " + version );
                 setTimeout(()=>{
                     if(myGen !== this.registryGen) return;
-                    this.getVersionSubscription(nmosRegistryUrl,resource,version );
+                    // Restart the cascade from the newest version — a registry
+                    // restart may well have brought a newer Query API along.
+                    this.getVersionSubscription(nmosRegistryUrl,resource,0);
                 },1000)
                 this.updateSyncConnectionState();
             };
@@ -481,10 +498,15 @@ export class NmosRegistryConnector {
             SyncLog.log("info",  "NMOS","Subscribed to Registry: " + nmosRegistryUrl + ", " + resource + ", " + version );
         }).catch((error) => {
             if(myGen !== this.registryGen) return;  // Switched registries while the POST was failing.
-            //console.log(error);
+            if(versionIndex + 1 < this.registryVersionList.length){
+                // The registry may simply not offer this Query API version —
+                // fall through to the next one right away.
+                this.getVersionSubscription(nmosRegistryUrl, resource, versionIndex + 1);
+                return;
+            }
             	setTimeout(()=>{
                     if(myGen !== this.registryGen) return;
-                    this.getVersionSubscription(nmosRegistryUrl,resource,version );
+                    this.getVersionSubscription(nmosRegistryUrl,resource,0);
                 },20000)
                 if(this.logReset){
                     this.logReset = false;
