@@ -1014,15 +1014,14 @@
                       </div>
                     </td>
                     <td class="det-cell-media">
-                      <!-- Full format in the tooltip only when the ellipsis can
-                           actually kick in — a tooltip that mirrors fully
-                           visible text is just noise. -->
-                      <span class="det-media-text" use:OverlayMenuService.tooltip data-tooltip={mediaText(flow).length > 36 ? mediaText(flow) : ""}>{mediaText(flow)}</span>
-                      {#if flow.active}
-                        <span class="det-media-bitrate">· {renderBitrate(flow.bitrate)}</span>
-                      {:else}
-                        <span class="det-media-inactive">· inactive</span>
-                      {/if}
+                      <div class="det-media-line">
+                        <span class="det-media-text" use:OverlayMenuService.tooltip data-tooltip={mediaText(flow)}>{mediaText(flow)}</span>
+                        {#if flow.active}
+                          <span class="det-media-bitrate">· {renderBitrate(flow.bitrate)}</span>
+                        {:else}
+                          <span class="det-media-inactive">· inactive</span>
+                        {/if}
+                      </div>
                     </td>
                     <td class="det-cell-legs">
                       {#if flow.legs.length === 0}
@@ -1157,12 +1156,14 @@
                       </div>
                     </td>
                     <td class="det-cell-media">
-                      <span class="det-media-text" use:OverlayMenuService.tooltip data-tooltip={mediaText(recv).length > 36 ? mediaText(recv) : ""}>{mediaText(recv)}</span>
-                      {#if recv.active}
-                        <span class="det-media-bitrate">· {renderBitrate(recv.bitrate)}</span>
-                      {:else}
-                        <span class="det-media-inactive">· inactive</span>
-                      {/if}
+                      <div class="det-media-line">
+                        <span class="det-media-text" use:OverlayMenuService.tooltip data-tooltip={mediaText(recv)}>{mediaText(recv)}</span>
+                        {#if recv.active}
+                          <span class="det-media-bitrate">· {renderBitrate(recv.bitrate)}</span>
+                        {:else}
+                          <span class="det-media-inactive">· inactive</span>
+                        {/if}
+                      </div>
                     </td>
                     <td class="det-cell-legs">
                       {#if recv.legs.length === 0}

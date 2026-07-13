@@ -127,6 +127,16 @@
     let syncLeases:Subject<any>;
     let syncCrosspoint:Subject<any>;
     let syncDnsPushed:Subject<any>;
+    let syncConnState:Subject<any>;
+    // One entry per registry the server currently knows: {ip, port, source,
+    // connected:[{endpoint, connected}]} — from the nmosConnectionState sync.
+    let registryStatusList:any[] = [];
+    function regTotal(r:any):number{
+      return Array.isArray(r?.connected) ? r.connected.length : 0;
+    }
+    function regUp(r:any):number{
+      return Array.isArray(r?.connected) ? r.connected.filter((c:any)=>c && c.connected).length : 0;
+    }
     // Live inventory of DNS entries currently published to pfSense
     let dnsPushedSnapshot:any = { entries: [], updatedAt: "" };
 
@@ -204,6 +214,13 @@
       syncDnsPushed.subscribe((obj:any)=>{
         if(obj){ dnsPushedSnapshot = obj; }
       });
+      // Live registry connection state: which registries the server knows
+      // (static / unicast DNS-SD / mDNS) and how many of the six query-API
+      // subscriptions are up. Refreshed by the server every 2 s.
+      syncConnState = ServerConnector.sync("nmosConnectionState");
+      syncConnState.subscribe((obj:any)=>{
+        registryStatusList = (obj && Array.isArray(obj.registries)) ? obj.registries : [];
+      });
     });
 
     onDestroy(() => {
@@ -215,6 +232,8 @@
       try{ServerConnector.unsync("crosspoint");}catch(e){}
       try{syncDnsPushed && syncDnsPushed.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("dnsPushed");}catch(e){}
+      try{syncConnState && syncConnState.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("nmosConnectionState");}catch(e){}
     });
 
     function markDirty(){
@@ -793,6 +812,26 @@
           <input type="number" class="input input-bordered" min="1" max="65535"
                  bind:value={formPort} on:input={markDirty} />
         </label>
+      </div>
+
+      <div class="setup-registry-status">
+        {#if registryStatusList.length === 0}
+          <div class="setup-registry-row">
+            <span class="setup-dot setup-dot-warning"></span>
+            <span>No registry connected. Discovery keeps looking via unicast DNS-SD and mDNS.</span>
+          </div>
+        {:else}
+          {#each registryStatusList as r}
+            {@const total = regTotal(r)}
+            {@const up = regUp(r)}
+            <div class="setup-registry-row">
+              <span class="setup-dot {up > 0 && up === total ? "setup-dot-success" : up > 0 ? "setup-dot-warning" : "setup-dot-error"}"></span>
+              <code>{r.ip}:{r.port}</code>
+              <span class="setup-registry-source">{r.source === "dnssd" ? "unicast DNS-SD" : r.source === "mdns" ? "mDNS" : "static"}</span>
+              <span>{up}/{total || 6} query subscriptions connected</span>
+            </div>
+          {/each}
+        {/if}
       </div>
     </section>
 

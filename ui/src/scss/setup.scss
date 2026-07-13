@@ -234,6 +234,29 @@
 
         &.setup-dot-success { background-color: theme('colors.success'); }
         &.setup-dot-warning { background-color: theme('colors.warning'); }
+        &.setup-dot-error   { background-color: theme('colors.error'); }
+    }
+
+    // Live registry status under the NMOS Registry form: one line per
+    // known registry with source and query-subscription health.
+    .setup-registry-status {
+        margin: 6px 0 2px 0;
+        font-size: 0.9rem;
+
+        .setup-registry-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 2px 0;
+
+            code {
+                font-family: 'Roboto Mono', monospace;
+                font-size: 0.85rem;
+            }
+        }
+        .setup-registry-source {
+            opacity: 0.7;
+        }
     }
 
 

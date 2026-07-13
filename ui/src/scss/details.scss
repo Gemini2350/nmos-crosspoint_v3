@@ -291,17 +291,25 @@ $det-color-data:  theme('colors.blue.500');
         line-height: 28px;
         white-space: nowrap;
     }
-    // Long video formats get cut with an ellipsis; the full string sits in
-    // the tooltip. inline-block + vertical-align keeps the bitrate suffix
-    // on the same baseline.
+    // Flex line inside the media cell: the format text is the only part
+    // allowed to shrink (with its own ellipsis), so the bitrate suffix
+    // survives narrow screens — the plain td ellipsis used to cut the
+    // bitrate (last element) first. Full format lives in the tooltip.
+    .det-media-line {
+        display: flex;
+        align-items: baseline;
+        gap: 4px;
+        min-width: 0;
+    }
     .det-media-text {
-        display: inline-block;
+        flex: 0 1 auto;
+        min-width: 0;
         max-width: 320px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        vertical-align: bottom;
     }
+    .det-media-bitrate, .det-media-inactive, .det-media-muted { flex: 0 0 auto; }
     .det-media-bitrate  { color: theme('colors.slate.500'); }
     .det-media-inactive { color: theme('colors.warning'); }
     .det-media-muted    { color: theme('colors.slate.500'); }
