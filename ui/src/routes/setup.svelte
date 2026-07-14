@@ -131,6 +131,9 @@
     // One entry per registry the server currently knows: {ip, port, source,
     // connected:[{endpoint, connected}]} — from the nmosConnectionState sync.
     let registryStatusList:any[] = [];
+    let syncProbeState:Subject<any>;
+    // {token, probes:[{name,address,streams}]} from the probeState sync.
+    let probeState:any = { token:"", probes:[] };
     function regTotal(r:any):number{
       return Array.isArray(r?.connected) ? r.connected.length : 0;
     }
@@ -221,6 +224,11 @@
       syncConnState.subscribe((obj:any)=>{
         registryStatusList = (obj && Array.isArray(obj.registries)) ? obj.registries : [];
       });
+      // Connected multicast probes + the shared token for starting one.
+      syncProbeState = ServerConnector.sync("probeState");
+      syncProbeState.subscribe((obj:any)=>{
+        if(obj){ probeState = obj; }
+      });
     });
 
     onDestroy(() => {
@@ -234,6 +242,8 @@
       try{ServerConnector.unsync("dnsPushed");}catch(e){}
       try{syncConnState && syncConnState.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("nmosConnectionState");}catch(e){}
+      try{syncProbeState && syncProbeState.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("probeState");}catch(e){}
     });
 
     function markDirty(){
@@ -942,7 +952,9 @@
         the ST&nbsp;2110 VLAN). When running in Docker this means
         <code>--network host</code> (or a macvlan/interface in the media
         VLAN). With the default bridge network the 🎧 button will connect
-        but stay silent.
+        but stay silent. Alternatively run a <strong>probe</strong> container
+        on a host that IS attached to the media network (see below) — the
+        crosspoint then needs no multicast access at all.
       </p>
       </details>
 
@@ -951,6 +963,42 @@
           <span class="label-text">Enable Audio Monitor</span>
           <input type="checkbox" class="toggle" bind:checked={formAudioMonitorEnabled} on:change={markDirty} />
         </label>
+      </div>
+
+      <h4 class="setup-subhead">Multicast Probe</h4>
+      <p class="setup-section-hint">
+        A helper container on a host attached to the media network: it
+        receives the multicast there and forwards it to this server as
+        unicast. When a probe is connected the Audio Monitor uses it
+        automatically instead of a local IGMP join, so this server needs
+        no multicast access at all. It is the same image started in probe
+        mode:
+      </p>
+      <div class="setup-probe-cmd">
+        <code>docker run -d --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" gemini2350/nmos-crosspoint_v3</code>
+      </div>
+      <div class="setup-form">
+        <label class="setup-field">
+          <span class="setup-label">Probe token</span>
+          <input type="text" class="input input-bordered setup-probe-token" readonly value={probeState.token || ""} on:focus={(e)=>e.currentTarget.select()} />
+        </label>
+      </div>
+      <div class="setup-registry-status">
+        {#if !probeState.probes || probeState.probes.length === 0}
+          <div class="setup-registry-row">
+            <span class="setup-dot setup-dot-warning"></span>
+            <span>No probe connected. The Audio Monitor uses a local IGMP join.</span>
+          </div>
+        {:else}
+          {#each probeState.probes as p}
+            <div class="setup-registry-row">
+              <span class="setup-dot setup-dot-success"></span>
+              <code>{p.name}</code>
+              <span class="setup-registry-source">{p.address}</span>
+              <span>{p.streams} active stream{p.streams === 1 ? "" : "s"}</span>
+            </div>
+          {/each}
+        {/if}
       </div>
     </section>
 

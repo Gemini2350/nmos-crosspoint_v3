@@ -11,6 +11,15 @@
 
 set -e
 
+# Probe mode: the same image doubles as the multicast probe — a tiny helper
+# on a media-network host that forwards multicast RTP to the crosspoint as
+# unicast. No config/state mounts needed; driven entirely by env vars:
+#   MODE=probe CROSSPOINT_URL=ws://<crosspoint> PROBE_TOKEN=<token>
+#   [PROBE_NAME="Studio A"] [PROBE_IFACE=<local ip>]
+if [ "$MODE" = "probe" ]; then
+    exec node ./dist/probe.js
+fi
+
 CONFIG_DIR="./config"
 DEFAULT_DIR="./config.default"
 

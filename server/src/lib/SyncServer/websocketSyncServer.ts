@@ -213,10 +213,24 @@ export class WebsocketSyncServer {
         });
 
         ls.on("upgrade", (request, socket, head) => {
+            // Path-registered upgrade handlers (e.g. /probe) speak their own
+            // protocol and bypass the sync client handling entirely.
+            try{
+                const p = ("" + (request.url || "")).split("?")[0];
+                const handler = this.upgradePathHandlers[p];
+                if(handler){ handler(request, socket, head); return; }
+            }catch(e){}
             this.wss.handleUpgrade(request, socket, head, (socket) => {
                 this.wss.emit("connection", socket, request);
             });
         });
+    }
+
+    // WS upgrade handlers per URL path, registered by modules with their own
+    // websocket protocol (ProbeGateway). Kept out of the sync client list.
+    private upgradePathHandlers: { [path:string]: (request:any, socket:any, head:any) => void } = {};
+    public addUpgradePath(path:string, handler:(request:any, socket:any, head:any)=>void){
+        this.upgradePathHandlers[path] = handler;
     }
 
 

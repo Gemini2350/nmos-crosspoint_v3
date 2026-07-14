@@ -42,6 +42,7 @@
  */
 
 import * as dgram from "dgram";
+import { ProbeGateway } from "./probeGateway";
 import * as sdpTransform from "sdp-transform";
 import { SyncLog } from "./syncLog";
 
@@ -83,7 +84,12 @@ interface ParsedSdp {
 interface ProducerEntry {
     senderId:   string;
     sdpParams:  ParsedSdp;
-    udpSocket:  dgram.Socket;
+    // Packet source: EITHER a local IGMP-joined UDP socket OR a stream
+    // forwarded by a crosspoint_probe on the media network. Exactly one
+    // of the two is set; `sourceLabel` says which for logs/status.
+    udpSocket:  dgram.Socket | null;
+    probeStream: { probeName: string, close: () => void } | null;
+    sourceLabel: string;
     listeners:  Set<string>;
     pickL:      number;          // channel index for left
     pickR:      number;          // channel index for right
@@ -331,19 +337,33 @@ export class AudioMonitorService {
 
     private async openProducer(senderId: string, sdp: string, ch: [number, number], iface: string): Promise<ProducerEntry> {
         const params = AudioMonitorService.parseSdpForMonitor(sdp);
-        const sock = dgram.createSocket({ type: "udp4", reuseAddr: true });
-        await new Promise<void>((resolve, reject) => {
-            sock.bind(params.port, () => {
-                try {
-                    sock.addMembership(params.multicast, iface || "0.0.0.0");
-                    resolve();
-                } catch (e) { reject(e); }
+
+        // Source selection: a connected crosspoint_probe (media-network
+        // helper container) wins over a local IGMP join — the whole point
+        // of the probe is that THIS host usually has no multicast access.
+        let sock: dgram.Socket | null = null;
+        let probeStream: { probeName: string, close: () => void } | null = null;
+        let sourceLabel = "local IGMP";
+        if (ProbeGateway.instance && ProbeGateway.instance.hasProbe()) {
+            probeStream = null;   // assigned below once prod exists (needs the packet callback)
+            sourceLabel = "probe";
+        } else {
+            sock = dgram.createSocket({ type: "udp4", reuseAddr: true });
+            await new Promise<void>((resolve, reject) => {
+                sock.bind(params.port, () => {
+                    try {
+                        sock.addMembership(params.multicast, iface || "0.0.0.0");
+                        resolve();
+                    } catch (e) { reject(e); }
+                });
+                sock.once("error", reject);
             });
-            sock.once("error", reject);
-        });
+        }
 
         const prod: ProducerEntry = {
             senderId, sdpParams: params, udpSocket: sock,
+            probeStream: null,
+            sourceLabel,
             listeners: new Set(),
             pickL: Math.max(0, Math.min(ch[0], params.channels - 1)),
             pickR: Math.max(0, Math.min(ch[1], params.channels - 1)),
@@ -365,9 +385,10 @@ export class AudioMonitorService {
             started:   false
         };
 
-        sock.on("message", (pkt: Buffer) => {
-            // Minimum RTP header is 12 bytes. We don't care about CSRC /
-            // extensions for monitoring; just skip past them.
+        // Shared ingest for both sources: strip the RTP header (CSRC /
+        // extensions skipped — irrelevant for monitoring), feed the payload
+        // into the PCM ring.
+        const onRtpPacket = (pkt: Buffer) => {
             if (pkt.length < 12) return;
             const b0 = pkt[0];
             const cc = b0 & 0x0F;
@@ -379,7 +400,20 @@ export class AudioMonitorService {
             }
             if (headerLen >= pkt.length) return;
             this.depacketise(prod, pkt.slice(headerLen));
-        });
+        };
+
+        if (sock) {
+            sock.on("message", onRtpPacket);
+        } else {
+            const stream = ProbeGateway.instance!.join(params.multicast, params.port, onRtpPacket);
+            if (!stream) {
+                // Probe vanished between the hasProbe() check and the join —
+                // surface it like a failed IGMP join.
+                throw new Error("No probe connected (and this host has no multicast access).");
+            }
+            prod.probeStream = stream;
+            prod.sourceLabel = "probe \"" + stream.probeName + "\"";
+        }
 
         prod.pumpTimer = setInterval(() => {
             try { this.pump(prod); } catch (e) {}
@@ -387,7 +421,7 @@ export class AudioMonitorService {
         prod.started = true;
 
         SyncLog.log("info", "AudioMonitor",
-            "IGMP-joined " + params.multicast + ":" + params.port +
+            "Receiving " + params.multicast + ":" + params.port + " via " + prod.sourceLabel +
             "  src=" + params.encoding + "/" + params.channels + "ch  pick=" + prod.pickL + "/" + prod.pickR +
             "  for " + senderId);
         return prod;
@@ -395,9 +429,15 @@ export class AudioMonitorService {
 
     private closeProducer(prod: ProducerEntry) {
         try { if (prod.pumpTimer) clearInterval(prod.pumpTimer); } catch {}
-        try { prod.udpSocket.dropMembership(prod.sdpParams.multicast); } catch {}
-        try { prod.udpSocket.close(); } catch {}
-        SyncLog.log("info", "AudioMonitor", "IGMP-left  " + prod.sdpParams.multicast + " (no more listeners)");
+        if (prod.udpSocket) {
+            try { prod.udpSocket.dropMembership(prod.sdpParams.multicast); } catch {}
+            try { prod.udpSocket.close(); } catch {}
+        }
+        if (prod.probeStream) {
+            try { prod.probeStream.close(); } catch {}
+            prod.probeStream = null;
+        }
+        SyncLog.log("info", "AudioMonitor", "Stopped " + prod.sdpParams.multicast + " via " + prod.sourceLabel + " (no more listeners)");
     }
 
 

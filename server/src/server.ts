@@ -32,6 +32,7 @@ import { MulticastLeaseManager } from "./lib/multicastLeaseManager";
 import { DdnsService } from "./lib/ddnsService";
 import { AudioMonitorService } from "./lib/audioMonitor";
 import { Bcp008Monitor } from "./lib/bcp008Monitor";
+import { ProbeGateway } from "./lib/probeGateway";
 import { NmosNodeApi } from "./lib/NmosNode/NmosNodeApi";
 import { NmosNodeRegistration } from "./lib/NmosNode/NmosNodeRegistration";
 
@@ -53,6 +54,16 @@ try {
     let rawFile = fs.readFileSync("./config/settings.json");
     let tempSettings = JSON.parse(rawFile);
     settings = parseSettings(tempSettings);
+    // Persist whatever parseSettings minted or normalised (probe token,
+    // virtual-sender UUIDs) — those identifiers must survive restarts, and
+    // waiting for the next Setup save would lose them on a plain reboot.
+    try{
+        let serialised = JSON.stringify(settings, null, 4);
+        if(serialised !== rawFile.toString()){
+            fs.writeFileSync("./config/settings.json", serialised);
+            SyncLog.log("info", "Settings", "Self-seeded ./config/settings.json (new fields normalised at startup).");
+        }
+    }catch(e){}
 } catch (e) {
     SyncLog.log("error", "Settings", "Error while reading file: ./config/settings.json", e);
     SyncLog.log("error", "Settings", "Can not run without Configuration...");
@@ -144,6 +155,12 @@ try { ddnsService.setSettings(settings.ddns); } catch (e) {}
 // PCM to Opus and streams it to the browser via WebRTC. Feature-gated by
 // settings.audioMonitor.enabled (Setup page).
 const audioMonitor = new AudioMonitorService();
+// Multicast probe gateway: companion containers (crosspoint_probe) on
+// media-network hosts connect to ws://<this server>/probe and forward
+// multicast RTP as unicast, so this container needs no multicast access.
+// The audio monitor prefers a connected probe over a local IGMP join.
+const probeGateway = new ProbeGateway((settings.probe && typeof settings.probe.token === "string") ? settings.probe.token : "");
+server.addSyncObject("probeState", "global", probeGateway.syncProbes);
 // Snap-disconnect: when the browser's WebSocket drops (tab closed, network
 // gone), tear down that client's audio listeners immediately — IGMP-leave +
 // PeerConnection close without waiting ~30 s for the DTLS timeout.

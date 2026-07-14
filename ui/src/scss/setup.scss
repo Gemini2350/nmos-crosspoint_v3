@@ -237,6 +237,30 @@
         &.setup-dot-error   { background-color: theme('colors.error'); }
     }
 
+    // Sub-heading inside a section (e.g. the probe block under Audio Monitor)
+    .setup-subhead {
+        margin: 18px 0 4px 0;
+        font-weight: 600;
+    }
+    // docker run one-liner for the probe container — scrolls, never wraps.
+    .setup-probe-cmd {
+        margin: 4px 0 8px 0;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background-color: theme('colors.base-300');
+        overflow-x: auto;
+        code {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.78rem;
+            white-space: nowrap;
+        }
+    }
+    .setup-probe-token {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.85rem;
+        min-width: 420px;
+    }
+
     // Live registry status under the NMOS Registry form: one line per
     // known registry with source and query-subscription health.
     .setup-registry-status {

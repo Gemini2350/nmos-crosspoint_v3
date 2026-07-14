@@ -215,6 +215,27 @@ export function parseSettings(settings:any){
         settings.audioMonitor.enabled = false;
     }
 
+    // ----- Multicast probe (crosspoint_probe companion container) -----
+    // A probe on a media-network host connects to ws://<crosspoint>/probe
+    // with this shared token and forwards multicast RTP as unicast, so the
+    // crosspoint container itself needs no multicast access. The token is
+    // minted once and persisted (self-seeding, like the virtual-sender
+    // UUIDs); the Setup page shows it for the docker run command.
+    if(!settings.probe || typeof settings.probe !== "object"){
+        settings.probe = {};
+    }
+    if(typeof settings.probe.token !== "string" || settings.probe.token.length < 16){
+        let mkToken = () => {
+            try{
+                if(crypto && typeof crypto.randomBytes === "function"){
+                    return crypto.randomBytes(24).toString("hex");
+                }
+            }catch(e){}
+            return (mkUuid() + mkUuid()).replace(/-/g, "");
+        };
+        settings.probe.token = mkToken();
+    }
+
 
     // ----- BCP-008 status monitoring (IS-12) -----
     // Read-only health monitoring of senders/receivers on devices that
