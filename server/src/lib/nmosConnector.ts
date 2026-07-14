@@ -207,10 +207,13 @@ export class NmosRegistryConnector {
      *  _nmos-register._tcp.<domain> (v1.3; plus the deprecated
      *  _nmos-registration._tcp name) → SRV per instance → A record. */
     private async dnssdQuery() {
+        // Resolve + remember the domains BEFORE the enabled check — the
+        // Setup page shows them either way ("what would be searched").
+        const domains = this.dnssdSearchDomains();
+        this.lastDnssdDomains = domains;
         try{
             if(this.settings?.registryDiscovery?.unicastDnssd === false) return;
         }catch(e){}
-        const domains = this.dnssdSearchDomains();
         if(domains.length === 0){
             if(!this.loggedDnssdNoDomain){
                 this.loggedDnssdNoDomain = true;
@@ -299,6 +302,9 @@ export class NmosRegistryConnector {
     private mdnsQueryInterval = null;
     private dnssdQueryInterval: any = null;
     private loggedDnssdNoDomain = false;
+    // Domains the last DNS-SD pass would query (override or resolv.conf
+    // search list) — shown on the Setup page next to the registry status.
+    private lastDnssdDomains: string[] = [];
     private mdnsBrowser: any = null;
     private registryVersionList = ["v1.3","v1.2"];
     private connectVersionList = ["v1.1", "v1.0"];
@@ -1040,7 +1046,16 @@ export class NmosRegistryConnector {
             } catch (e) {}
             list.push(entry);
         });
-        this.syncConnectionState.setState({ registries: list });
+        let dnssdEnabled = true;
+        let dnssdOverride = "";
+        try{
+            dnssdEnabled = this.settings?.registryDiscovery?.unicastDnssd !== false;
+            dnssdOverride = "" + (this.settings?.registryDiscovery?.domain || "");
+        }catch(e){}
+        this.syncConnectionState.setState({
+            registries: list,
+            dnssd: { enabled: dnssdEnabled, override: dnssdOverride, domains: this.lastDnssdDomains }
+        });
 
         // Re-arm the periodic refresh as a SINGLE timer. This method is also
         // called directly on connection open/close and on registry switch;

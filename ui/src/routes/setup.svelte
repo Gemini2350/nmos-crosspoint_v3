@@ -129,8 +129,11 @@
     let syncDnsPushed:Subject<any>;
     let syncConnState:Subject<any>;
     // One entry per registry the server currently knows: {ip, port, source,
-    // connected:[{endpoint, connected}]} — from the nmosConnectionState sync.
+    // priority, connected:[{endpoint, connected}]} — from the
+    // nmosConnectionState sync, which also carries the DNS-SD domains the
+    // discovery would query.
     let registryStatusList:any[] = [];
+    let dnssdStatus:any = { enabled: true, override: "", domains: [] };
     let syncProbeState:Subject<any>;
     // {token, probes:[{name,address,streams}]} from the probeState sync.
     let probeState:any = { token:"", probes:[] };
@@ -223,6 +226,7 @@
       syncConnState = ServerConnector.sync("nmosConnectionState");
       syncConnState.subscribe((obj:any)=>{
         registryStatusList = (obj && Array.isArray(obj.registries)) ? obj.registries : [];
+        dnssdStatus = (obj && obj.dnssd) ? obj.dnssd : { enabled: true, override: "", domains: [] };
       });
       // Connected multicast probes + the shared token for starting one.
       syncProbeState = ServerConnector.sync("probeState");
@@ -825,6 +829,16 @@
       </div>
 
       <div class="setup-registry-status">
+        <div class="setup-registry-row">
+          <span class="setup-registry-source">DNS-SD</span>
+          {#if !dnssdStatus.enabled}
+            <span>discovery disabled</span>
+          {:else if Array.isArray(dnssdStatus.domains) && dnssdStatus.domains.length > 0}
+            <span>searching domain{dnssdStatus.domains.length === 1 ? "" : "s"}: <code>{dnssdStatus.domains.join(", ")}</code>{dnssdStatus.override ? " (configured above)" : " (from the server DNS search domain)"}</span>
+          {:else}
+            <span>no DNS search domain found. Configure one above, otherwise mDNS and the static IP take over.</span>
+          {/if}
+        </div>
         {#if registryStatusList.length === 0}
           <div class="setup-registry-row">
             <span class="setup-dot setup-dot-warning"></span>
@@ -837,7 +851,7 @@
             <div class="setup-registry-row">
               <span class="setup-dot {up > 0 && up === total ? "setup-dot-success" : up > 0 ? "setup-dot-warning" : "setup-dot-error"}"></span>
               <code>{r.ip}:{r.port}</code>
-              <span class="setup-registry-source">{r.source === "dnssd" ? "unicast DNS-SD" : r.source === "mdns" ? "mDNS" : "static"}</span>
+              <span class="setup-registry-source">{r.source === "dnssd" ? "unicast DNS-SD" : r.source === "mdns" ? "mDNS" : "static"}{typeof r.priority === "number" ? " · priority " + r.priority : ""}</span>
               <span>{up}/{total || 6} query subscriptions connected</span>
             </div>
           {/each}
