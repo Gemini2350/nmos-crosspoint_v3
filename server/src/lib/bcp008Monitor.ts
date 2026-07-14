@@ -147,6 +147,7 @@ class DeviceMonitorConnection {
     dispose() {
         this.disposed = true;
         if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+        if (this.rediscoverTimer) { clearTimeout(this.rediscoverTimer); this.rediscoverTimer = null; }
         this.stopKeepalive();
         this.failAllPending(new Error("disposed"));
         try { if (this.ws) this.ws.close(); } catch (e) {}
@@ -204,6 +205,7 @@ class DeviceMonitorConnection {
     private onClosed() {
         if (this.disposed) return;
         this.stopKeepalive();
+        if (this.rediscoverTimer) { clearTimeout(this.rediscoverTimer); this.rediscoverTimer = null; }
         this.failAllPending(new Error("connection closed"));
         this.ws = null;
         // Statuses are stale once the control connection is gone — drop them
@@ -291,6 +293,15 @@ class DeviceMonitorConnection {
     }
 
     private onNotification(n: any) {
+        // A members change on a known block (NcBlock.members = 2p1) means
+        // the device model changed — new or removed senders/receivers.
+        if (this.knownBlocks.has(n?.oid)) {
+            const pid = n?.eventData?.propertyId;
+            if (pid && pid.level === 2 && pid.index === 1) {
+                this.scheduleRediscover("block " + n.oid + " members changed");
+            }
+            return;
+        }
         // Only PropertyChanged (eventId 1e1) on our monitor oids is relevant.
         const mon = this.monitors.find(m => m.oid === n?.oid);
         if (!mon || !n?.eventData?.propertyId) return;
@@ -352,6 +363,8 @@ class DeviceMonitorConnection {
     // ----- discovery + initial read -----
 
     private async discover() {
+      this.discovering = true;
+      try {
         const membersResult: any = await this.command(ROOT_BLOCK_OID, METHOD_GET_MEMBERS, { recurse: true });
         if (!membersResult || !statusOk(membersResult.status) || !Array.isArray(membersResult.value)) {
             throw new Error("GetMemberDescriptors failed (status " + membersResult?.status +
@@ -359,12 +372,16 @@ class DeviceMonitorConnection {
                 (membersResult && statusOk(membersResult.status) && !Array.isArray(membersResult.value) ? ", value is not an array" : "") + ")");
         }
         const monitorDescs = membersResult.value.filter((d: any) => classIdIsStatusMonitor(d?.classId));
-        if (monitorDescs.length === 0) {
-            // Some devices ignore `recurse: true` and answer with the root
-            // block's DIRECT children only — the monitors then hide inside
-            // nested blocks. Walk the block tree manually before giving up.
-            const nested = await this.walkBlocksForMonitors(membersResult.value);
-            monitorDescs.push(...nested);
+        // ALWAYS merge in a manual walk of the nested blocks. Devices that
+        // ignore `recurse: true` answer with the direct children only — and
+        // may list SOME monitors at root level while others hide inside
+        // nested blocks, so walking only "when zero found" missed those
+        // (seen on real hardware: 1 of 2 monitors found). Deduped by oid;
+        // honest recurse devices just answer a few extra member queries.
+        const nested = await this.walkBlocksForMonitors(membersResult.value);
+        const seenOid = new Set(monitorDescs.map((d: any) => d.oid));
+        for (const d of nested) {
+            if (!seenOid.has(d.oid)) { seenOid.add(d.oid); monitorDescs.push(d); }
         }
         if (monitorDescs.length === 0) {
             // Device speaks IS-12 but exposes no NcStatusMonitors — say so
@@ -413,28 +430,68 @@ class DeviceMonitorConnection {
 
         // Subscribe first, then do ONE initial read — no gap where a change
         // could slip by. From here on the subscription notifications carry
-        // every update; no periodic re-poll needed.
-        this.send({ messageType: MT_SUBSCRIPTION, subscriptions: found.map(m => m.oid) });
+        // every update; no periodic re-poll needed. The blocks (incl. root)
+        // are subscribed too: a PropertyChanged on NcBlock.members means the
+        // device model changed (new sender/receiver appeared) and triggers a
+        // re-discovery — push-driven, no polling.
+        this.send({ messageType: MT_SUBSCRIPTION, subscriptions: [...found.map(m => m.oid), ...Array.from(this.knownBlocks)] });
         await this.pollAll();
         SyncLog.log("info", "BCP-008", "Monitoring " + found.length + " sender/receiver monitors via " + this.url);
+      } finally {
+        this.discovering = false;
+      }
     }
 
-    /** Manual BFS through nested NcBlocks (recurse-less fallback). */
+    // Blocks seen during discovery (root + every walked NcBlock) — the
+    // notification handler uses this to spot device-model changes.
+    private knownBlocks: Set<number> = new Set([ROOT_BLOCK_OID]);
+    private discovering = false;
+    private rediscoverTimer: any = null;
+
+    /** Debounced re-discovery — a model change usually emits a burst. */
+    scheduleRediscover(reason: string) {
+        if (this.disposed || this.rediscoverTimer) return;
+        SyncLog.log("verbose", "BCP-008", "Re-discovering device model on " + this.url + " (" + reason + ").");
+        this.rediscoverTimer = setTimeout(() => {
+            this.rediscoverTimer = null;
+            this.rediscover().catch((e: any) => {
+                SyncLog.log("verbose", "BCP-008", "Re-discovery failed on " + this.url + ": " + (e?.message || e));
+            });
+        }, 1000);
+    }
+
+    private async rediscover() {
+        if (this.disposed || this.discovering) return;
+        if (!this.ws || this.ws.readyState !== 1) return;   // reconnect re-discovers anyway
+        const before = this.monitors.map(m => m.flowId);
+        await this.discover();
+        // Monitors that vanished take their status with them.
+        const now = new Set(this.monitors.map(m => m.flowId));
+        for (const flowId of before) {
+            if (!now.has(flowId)) this.onStatus(flowId, null);
+        }
+    }
+
+    /** Manual BFS through nested NcBlocks. Runs on EVERY discovery (results
+     *  are merged with the recurse answer) and refreshes `knownBlocks` for
+     *  the model-change subscription. */
     private async walkBlocksForMonitors(rootMembers: any[]): Promise<any[]> {
         const monitors: any[] = [];
         const seenOids = new Set<number>();
         const monitorOids = new Set<number>();
         const queue: number[] = [];
+        this.knownBlocks = new Set([ROOT_BLOCK_OID]);
         for (const d of rootMembers) {
             if (classIdIsBlock(d?.classId) && typeof d.oid === "number") queue.push(d.oid);
         }
         if (queue.length === 0) return monitors;
-        SyncLog.log("verbose", "BCP-008", "recurse returned no monitors on " + this.url + " — walking " + queue.length + " nested block(s) manually.");
+        SyncLog.log("verbose", "BCP-008", "Walking " + queue.length + " nested block(s) on " + this.url + ".");
         let guard = 0;
         while (queue.length > 0 && guard++ < 200) {
             const oid = queue.shift()!;
             if (seenOids.has(oid)) continue;
             seenOids.add(oid);
+            this.knownBlocks.add(oid);
             let members: any[];
             try {
                 const res: any = await this.command(oid, METHOD_GET_MEMBERS, { recurse: false });
@@ -526,6 +583,9 @@ export class Bcp008Monitor {
     public static instance: Bcp008Monitor;
 
     private conns: Map<string, DeviceMonitorConnection> = new Map();   // deviceId → connection
+    // Last seen IS-04 device version per connection — a bump means the
+    // device model changed (new/removed flows) and triggers re-discovery.
+    private devVersions: Map<string, string> = new Map();
     private statusByFlow: { [flowId: string]: MonitorStatus } = {};
     private changeTimer: any = null;
     private enabled = true;
@@ -606,14 +666,27 @@ export class Bcp008Monitor {
             if (!url || url !== conn.url) {
                 conn.dispose();
                 this.conns.delete(devId);
+                this.devVersions.delete(devId);
             }
         }
         // Open connections for new devices.
         for (const [devId, url] of wanted.entries()) {
             if (this.conns.has(devId)) continue;
+            this.devVersions.set(devId, "" + (state?.devices?.[devId]?.version || ""));
             this.conns.set(devId, new DeviceMonitorConnection(devId, url, (flowId, st) => {
                 this.applyStatus(flowId, st);
             }));
+        }
+        // Second (registry-driven) model-change trigger: a new sender or
+        // receiver bumps the IS-04 device version — re-discover then. Some
+        // devices never emit the NcBlock.members notification, so relying on
+        // IS-12 alone would miss late additions. Still push, never polling.
+        for (const [devId, conn] of Array.from(this.conns.entries())) {
+            const ver = "" + (state?.devices?.[devId]?.version || "");
+            if (ver && this.devVersions.get(devId) !== ver) {
+                this.devVersions.set(devId, ver);
+                conn.scheduleRediscover("IS-04 device version changed");
+            }
         }
     }
 
