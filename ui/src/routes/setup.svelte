@@ -975,8 +975,14 @@
         mode:
       </p>
       <div class="setup-probe-cmd">
-        <code>docker run -d --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" gemini2350/nmos-crosspoint_v3</code>
+        <code>docker run -d --name nmos_crosspoint_v3_probe --restart unless-stopped --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" gemini2350/nmos-crosspoint_v3</code>
       </div>
+      <p class="setup-section-hint">
+        The token is minted once and persisted in <code>settings.json</code>,
+        so it survives updates and restarts as long as the config volume is
+        mounted (container path <code>/nmos-crosspoint/server/config</code>).
+        A probe therefore only needs to be configured once.
+      </p>
       <div class="setup-form">
         <label class="setup-field">
           <span class="setup-label">Probe token</span>

@@ -63,7 +63,13 @@ try {
             fs.writeFileSync("./config/settings.json", serialised);
             SyncLog.log("info", "Settings", "Self-seeded ./config/settings.json (new fields normalised at startup).");
         }
-    }catch(e){}
+    }catch(e:any){
+        // Loud on purpose: when this write fails (read-only or missing
+        // config mount) the minted identifiers — probe token, virtual
+        // sender UUIDs — change on EVERY restart and probes stop
+        // authenticating after each update.
+        SyncLog.log("error", "Settings", "Could not persist ./config/settings.json — minted identifiers (probe token!) will change on every restart. Check the config volume mount (container path /nmos-crosspoint/server/config). " + (e?.message || e));
+    }
 } catch (e) {
     SyncLog.log("error", "Settings", "Error while reading file: ./config/settings.json", e);
     SyncLog.log("error", "Settings", "Can not run without Configuration...");
