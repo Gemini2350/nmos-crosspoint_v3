@@ -210,6 +210,7 @@
       sync.subscribe((obj:any)=>{
         sourceState = obj;
         scheduleFilter();
+        refreshMonitorModalFlow();
       });
     });
 
@@ -1061,8 +1062,12 @@
     // Packet counters (lost/late resp. transmission errors) are IS-12
     // METHODS, not subscribable properties — fetched live on modal open.
     let monitorModalCounters:any = null;   // null = loading, [] = none
+    // JSON snapshot of the monitor at open/refresh time — change detection
+    // must not compare object references (the sync may patch in place).
+    let monitorModalMonitorJson = "";
     function openMonitorModal(flow:any){
       monitorModalFlow = flow;
+      monitorModalMonitorJson = JSON.stringify(flow.monitor);
       monitorModalCounters = null;
       monitorModal.showModal();
       ServerConnector.post("bcp008Counters", { id: flow.id }).then((r:any)=>{
@@ -1076,6 +1081,43 @@
       }).catch((e:any)=>{
         ServerConnector.addFeedback({ message: "Counter reset failed: " + (e?.message || e), level: "error" });
       });
+    }
+
+    /**
+     * The modal holds the flow object captured at click time, so without
+     * this it kept showing that snapshot while the heart behind it updated.
+     * Re-resolve the flow by id on every crosspoint sync push (no polling —
+     * it rides the updates the page receives anyway). When the monitor
+     * status actually changed, the packet counters are re-fetched once too:
+     * a transition usually means those moved as well.
+     */
+    function refreshMonitorModalFlow(){
+      if(!monitorModalFlow || !monitorModal || !monitorModal.open) return;
+      let id = monitorModalFlow.id;
+      try{
+        for(let dev of (sourceState.devices || [])){
+          for(let kind of ["senders", "receivers"]){
+            for(let type of Object.keys(dev[kind] || {})){
+              for(let f of (dev[kind][type] || [])){
+                if(f && f.id === id){
+                  let nowJson = JSON.stringify(f.monitor);
+                  let changed = nowJson !== monitorModalMonitorJson;
+                  monitorModalMonitorJson = nowJson;
+                  monitorModalFlow = f;
+                  if(changed){
+                    ServerConnector.post("bcp008Counters", { id }).then((r:any)=>{
+                      if(monitorModalFlow && monitorModalFlow.id === id){
+                        monitorModalCounters = (r && r.data && Array.isArray(r.data.groups)) ? r.data.groups : [];
+                      }
+                    }).catch(()=>{});
+                  }
+                  return;
+                }
+              }
+            }
+          }
+        }
+      }catch(e){}
     }
 
     // The matrix pill is a quick glance, so the SDR/BT709 defaults are
