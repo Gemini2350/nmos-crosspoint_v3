@@ -21,7 +21,9 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 ![Duplicate-multicast detection flags the offending leg](Screenshots/details-dup-detection.png)
 - **Live device overview.** Every node, device, sender and receiver from the NMOS registry, in real time updated via Websocket Connection from the Registry. 
 - **Hide devices.** Hide flows you don't want to see in the matrix without losing the device.
-- **Offline devices.** Crosspoint keeps track of offline devices or individual offline senders / receivers; 
+- **Offline devices.** Crosspoint keeps track of offline devices or individual offline senders / receivers; a red dot and a Forget button per device and per flow let you clean up when something is gone for good.
+
+![Offline device with Forget buttons](Screenshots/details-offline-forget.png)
 
 - **Web-UI links.** One click opens the device's own configuration page in a new tab.
 - **DDNS hostname push.** Each device's name lands as an A record on your DNS server via standard RFC 2136 Dynamic Updates (TSIG-signed) — works with BIND9, Knot, PowerDNS, Windows DNS —, so `Camera1.media.example.net` resolves automatically. (option)
@@ -34,8 +36,12 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 - **Audio monitor.** A headphone button next to each audio sender on the Details page: the server joins the multicast on demand, transcodes to Opus and streams it to your browser via WebRTC, with a channel-pair selector for multichannel AES67. (option, off by default; the server needs access to the media network — or use the multicast probe below)
 - **Multicast probe.** The same Docker image started with `MODE=probe` on a host that IS attached to the media network: it receives the multicast there and forwards it to the crosspoint as unicast over a token-authenticated websocket. When a probe is connected the audio monitor uses it automatically, so the crosspoint container itself needs no multicast access at all. The Setup page shows the token, the ready-made `docker run` command and the connected probes.
 - **Bandwidth estimates.** Crosspoint computes a Mbit/s estimate per flow from the SDP.
-- **SDP viewer.** One-click on the `SDP` button next to a sender opens the raw SDP manifest in a modal.
+- **SDP viewer.** One click next to a sender opens the raw SDP manifest in a modal.
+
+![SDP viewer](Screenshots/details-sdp-viewer.png)
 - **Search and filter.** Three independent search boxes on the Details page: by name (device or flow alias), by codec / format (e.g. `L24`, `JPEG-XS`, `1080i50`), and by IP (`239.77.0.85` finds the one sender or receiver that uses that address). Tokens are matched against every matching field — type `Anubis 48` to narrow down to Anubis flows running at 48 kHz. Filters compose so you can quickly locate exactly the one flow you're looking for.
+
+![Search by IP finds the sender and the receiver using that address](Screenshots/details-search-ip.png)
 
 ## The Setup page
 
@@ -49,29 +55,29 @@ The top of the Setup page. The registry is found automatically (unicast DNS-SD �
 **Crosspoint: Auto-Activate Sender + Multicast DHCP**
 Auto-Activate Sender, off by default, automatically switches on an inactive sender when you patch a receiver to it. Multicast DHCP is the main switch for the address pool — when enabled, every active sender gets a reserved pair of addresses (odd / odd+1 so ST 2022-7 works) drawn from a single CIDR range you define (default `239.30.0.0/16`). The allocator checks both its own pool and every live `destination_ip` on the network before handing out a new pair, so duplicates can't slip through. Manual overrides on the Details page are honoured; clearing the field reverts the leg to its reserved address. When you flip Multicast DHCP on for the first time you're asked whether to **Keep current IPs** (no streams touched) or **Renew from Pool** (everything gets a fresh address).
 
-![Setup: auto-activate + multicast DHCP](Screenshots/Screenshot%202026-05-22%20at%2000.55.51.png)
+![Setup: auto-activate + multicast DHCP](Screenshots/setup-multicast-dhcp.png)
 
 **Lease Inventory**
 Every multicast allocation is listed with live status (active / inactive / missing), category badge (audio / video), bitrate and allocation date. One-click release per row, or "Release all leases" to start fresh. The list can also be exported and imported as JSON.
 
-![Lease inventory](Screenshots/Screenshot%202026-05-22%20at%2000.56.10.png)
+![Lease inventory](Screenshots/setup-lease-inventory.png)
 
 **Device Web UI Link Setup**
 Per-vendor recipes for the "Open device Web UI" link on the Details page. Profiles match by substring against the NMOS node label (first match wins). Defaults ship for Matrox, Embrionix, Riedel, Lawo, AJA, Imagine, Sony, Grass Valley, Blackmagic, Merging, DirectOut and QSC. A "detected devices" list right below the table shows the resulting URL for every node so you can sanity-check your recipe. Profiles can be exported / imported as JSON.
 
-![Device Web UI Link Setup](Screenshots/Screenshot%202026-05-22%20at%2000.56.24.png)
+![Device Web UI Link Setup](Screenshots/setup-webui-links.png)
 
-![Detected devices with resolved Web-UI links](Screenshots/Screenshot%202026-05-22%20at%2001.36.51.png)
+![Detected devices with resolved Web-UI links](Screenshots/setup-detected-devices.png)
 
 **Virtual Senders**
 Setup Virtual Senders by adding their SDP. An Sender_ID is automatically generated. 
 
-![Setup Virtual Senders](Screenshots/Screenshot%202026-05-22%20at%2009.58.22.png)
+![Setup Virtual Senders](Screenshots/setup-virtual-senders.png)
 
 **Push Names to DNS (DDNS)**
 Publish every device's name as an A record via RFC 2136 Dynamic Updates with a TSIG key. Point it at any updates-capable DNS server (BIND9, Knot, PowerDNS, Windows DNS), name the zone and paste the key — Crosspoint keeps a local inventory of the records it created and only ever touches those. Forgetting a device also removes its DNS record.
 
-![Push names to DNS](Screenshots/Screenshot%202026-05-22%20at%2000.56.32.png)
+![Push names to DNS](Screenshots/setup-ddns.png)
 
 **BCP-008 Status Monitoring, Audio Monitor & Multicast Probe**
 The monitoring block: the BCP-008 master toggle, the audio monitor (headphone button on the Details page) and the multicast probe — a helper container on a media-network host that forwards multicast to the crosspoint as unicast. The section shows the ready-made `docker run` command, the shared token and every connected probe with its active stream count.
@@ -81,7 +87,7 @@ The monitoring block: the BCP-008 master toggle, the audio monitor (headphone bu
 **Change Login & Password**
 Update your admin user and password. You can only edit your own account and you have to know the current password. After a change the server logs you out and asks you to sign in again with the new credentials.
 
-![Change login and password](Screenshots/Screenshot%202026-05-22%20at%2000.56.36.png)
+![Change login and password](Screenshots/setup-credentials.png)
 
 
 ## What you need
