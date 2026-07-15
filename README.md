@@ -52,6 +52,8 @@ The top of the Setup page. The registry is found automatically (unicast DNS-SD �
 
 ![Setup: registry discovery with DNS-SD domain and live status](Screenshots/setup-registry.png)
 
+![Setup: acceptable PTP GMID](Screenshots/setup-gmid.png)
+
 **Crosspoint: Auto-Activate Sender + Multicast DHCP**
 Auto-Activate Sender, off by default, automatically switches on an inactive sender when you patch a receiver to it. Multicast DHCP is the main switch for the address pool — when enabled, every active sender gets a reserved pair of addresses (odd / odd+1 so ST 2022-7 works) drawn from a single CIDR range you define (default `239.30.0.0/16`). The allocator checks both its own pool and every live `destination_ip` on the network before handing out a new pair, so duplicates can't slip through. Manual overrides on the Details page are honoured; clearing the field reverts the leg to its reserved address. When you flip Multicast DHCP on for the first time you're asked whether to **Keep current IPs** (no streams touched) or **Renew from Pool** (everything gets a fresh address).
 
@@ -81,6 +83,8 @@ Publish every device's name as an A record via RFC 2136 Dynamic Updates with a T
 
 **BCP-008 Status Monitoring, Audio Monitor & Multicast Probe**
 The monitoring block: the BCP-008 master toggle, the audio monitor (headphone button on the Details page) and the multicast probe — a helper container on a media-network host that forwards multicast to the crosspoint as unicast. The section shows the ready-made `docker run` command, the shared token and every connected probe with its active stream count.
+
+![Setup: BCP-008 status monitoring](Screenshots/setup-bcp008.png)
 
 ![Setup: audio monitor and multicast probe with a connected probe](Screenshots/setup-audio-monitor-probe.png)
 
