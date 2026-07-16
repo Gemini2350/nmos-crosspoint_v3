@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, tick } from "svelte";
     import ServerConnector from "./ServerConnectorService";
     import { Icon, User, Key } from "svelte-hero-icons";
 
@@ -12,6 +12,12 @@ let authRequestModalPassword:any;
 let authUser = ""
 let authPass = ""
 let authDenied = false;
+// The username/password inputs are only RENDERED while the dialog is
+// actually open. With the fields permanently in the (closed) dialog,
+// password-manager extensions re-scan the page on every DOM mutation —
+// on the crosspoint matrix every BCP-008 status push — and kept
+// prompting for a login although no login field was visible.
+let authModalOpen = false;
 
 
 onMount(async()=>{
@@ -23,19 +29,22 @@ onMount(async()=>{
         loading = load;
     })
 
-    ServerConnector.authRequest.subscribe((data)=>{
+    ServerConnector.authRequest.subscribe(async (data)=>{
         if(data.request == true){
             authUser = data.username;
             authDenied = data.denied;
 
+            authModalOpen = true;
             authRequestModal.showModal();
+            await tick();   // inputs render only now
             if(authUser != ""){
-                authRequestModalPassword.focus();
+                authRequestModalPassword?.focus();
             }else{
-                authRequestModalUser.focus();
+                authRequestModalUser?.focus();
             }
         }else{
             if(data.authDone == true){
+                authModalOpen = false;
                 authRequestModal.close();
             }
         }
@@ -63,8 +72,9 @@ function doLogin(){
 
 
 
-<dialog bind:this={authRequestModal} class="modal">
+<dialog bind:this={authRequestModal} class="modal" on:close={()=>{ authModalOpen = false; }}>
     <div class="modal-box">
+        {#if authModalOpen}
         <form method="dialog">
             <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
         </form>
@@ -72,18 +82,18 @@ function doLogin(){
         <div class="form-control">
             <div class="pt-8">
             <label class="input input-bordered flex gap-2">
-                <input bind:this={authRequestModalUser} bind:value={authUser} type="text" class="grow" placeholder="Username" />
+                <input bind:this={authRequestModalUser} bind:value={authUser} type="text" autocomplete="username" class="grow" placeholder="Username" />
                 <Icon src={User}></Icon>
             </label>
         </div>
         <div class="pt-4">
             <label class="input input-bordered flex gap-2">
-                <input on:keypress={(e)=>{if(e.keyCode == 13) doLogin()}} bind:this={authRequestModalPassword}  bind:value={authPass} type="password" class="grow" placeholder="Password" />
+                <input on:keypress={(e)=>{if(e.keyCode == 13) doLogin()}} bind:this={authRequestModalPassword}  bind:value={authPass} type="password" autocomplete="current-password" class="grow" placeholder="Password" />
                 <Icon src={Key}></Icon>
             </label>
         </div>
-            
-            
+
+
             {#if authDenied}
                 <span class="text-error" >Login failed.</span>
             {/if}
@@ -95,6 +105,7 @@ function doLogin(){
                 <button class="btn" on:click={()=>{doLogin()}}>Login</button>
             </form>
         </div>
+        {/if}
     </div>
 </dialog>
 

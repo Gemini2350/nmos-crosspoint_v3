@@ -5,7 +5,7 @@
       import { onDestroy, onMount } from "svelte";
       import { createEventDispatcher } from 'svelte';
 
-      import { Icon, ChevronRight, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart } from "svelte-hero-icons";
+      import { Icon, ChevronRight, ChevronDoubleUp, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart } from "svelte-hero-icons";
     import { getSearchTokens, tokenSearch } from "../lib/functions";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
@@ -449,6 +449,18 @@
         return true;
       }
       return false;
+    }
+
+    // One click folds every expanded sender column and receiver row back
+    // to the device level — after exploring a large matrix that beats
+    // clicking every chevron again.
+    function collapseAll(){
+      filter.expanded.senders = [];
+      filter.expanded.receivers = [];
+      searchExpandedSenders = [];
+      searchExpandedReceivers = [];
+      saveFilter();
+      refreshMatrix();
     }
 
     function toggleExpandSender(id:string){
@@ -1197,6 +1209,14 @@
           <span class="label-text">Show hidden</span>
           <input on:input={()=>changeFilter()} bind:checked={filter.showHidden} type="checkbox" class="toggle toggle-info" />
         </label>
+      </li>
+
+      <li>
+        <button class="label gap-2" on:click={collapseAll}
+                use:OverlayMenuService.tooltip data-tooltip="Fold every expanded sender and receiver back to the device level">
+          <Icon src={ChevronDoubleUp} size="18"></Icon>
+          <span class="label-text">Collapse all</span>
+        </button>
       </li>
     </ul>
 
