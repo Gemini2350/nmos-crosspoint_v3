@@ -387,7 +387,20 @@ $cp-border: 1px solid transparent;
                 }
 
 
+                // Stack chevron / heart / label / type icon vertically and
+                // centred NO MATTER how wide the table makes the column. The
+                // previous inline flow only held together at exactly pill
+                // width — one wider column (e.g. under a long node-band
+                // label) and the chevron ended up BESIDE the pill with wild
+                // baseline offsets.
+                .cp-expand, .cp-type, .cp-type-spacer {
+                    display: block;
+                    margin-left: auto;
+                    margin-right: auto;
+                }
+
                 .cp-label {
+                    display: block;
                     writing-mode: vertical-rl;
                     text-orientation: mixed;
                     max-height: $cp-headerSize;
@@ -395,7 +408,7 @@ $cp-border: 1px solid transparent;
                     max-width: $cp-sizePP;
                     min-width: $cp-sizePP;
                     padding: 36px 4px 36px 4px;
-                    margin:-32px 0px -32px 0px;
+                    margin:-32px auto -32px auto;
                 }
 
                 .cp-label {
@@ -538,8 +551,15 @@ $cp-border: 1px solid transparent;
         }
 
         .cp-node-band-label {
-            display: block;
-            margin: 0 8px;
+            // Absolutely positioned so a LONG node label can never widen the
+            // (possibly few and narrow) columns it spans — a band cell that
+            // pushed its column wider used to shatter the header pill stack
+            // below it. The sticky th is the positioning context; the text
+            // simply ellipsises inside whatever width the columns dictate.
+            position: absolute;
+            left: 8px;
+            right: 8px;
+            bottom: 0;
             padding: 1px 8px 2px 8px;
             font-size: 11px;
             font-weight: 500;
