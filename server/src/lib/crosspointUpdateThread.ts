@@ -883,7 +883,12 @@ class CrosspointUpdateThread{
             //receivers
             for(let receiverType of Object.values(dev.receivers)){
                 for(let recv of Object.values(receiverType)){
-                    if(recv.type != "unknown"){
+                    // NOTE: unknown-type receivers (e.g. urn:x-nmos:format:mux
+                    // on SDI gateways) are rendered like unknown senders are —
+                    // they used to be skipped here, which made a device with
+                    // ONLY such receivers vanish from the crosspoint entirely
+                    // (zero flows → pruned as a ghost device).
+                    {
                         let receiver:CrosspointFlow = {
                             id:recv.id,
                             name: recv.name,
