@@ -136,6 +136,7 @@
     // / dashed disconnect markers) has to reassign ALL of them; reassigning
     // only `receivers` (the pre-grouping idiom) no longer reaches the rows.
     function refreshMatrix(){
+      rebuildCellIndex();
       senders = [...senders];
       receivers = [...receivers];
       senderGroups = [...senderGroups];
@@ -429,6 +430,8 @@
         senders = flattenGroups(senderGroups);
         receiverGroups = groupDevicesByNode(receivers);
         receivers = flattenGroups(receiverGroups);
+
+        rebuildCellIndex();
     }
 
     }
@@ -672,7 +675,11 @@
       let srcString = getDevcieNameString(srcDev,src);
       let dstString = getDevcieNameString(dstDev,dst);
 
-      previewConnectList = computePreviewConnections(srcString, dstString);
+      let next = computePreviewConnections(srcString, dstString);
+      // Same preview as before (hovering along the same row/column) —
+      // skip the full matrix repaint entirely.
+      if(JSON.stringify(next) === JSON.stringify(previewConnectList)){ return; }
+      previewConnectList = next;
       refreshMatrix();
       updateGlobalTake();
     }
@@ -846,125 +853,103 @@
       return "";
     }
 
+    // ----- Sparse cell-class index -----
+    // getConnectClass used to SCAN the staging lists and — for the
+    // device-level aggregate dot — every sender×receiver pair PER CELL on
+    // every render. With hundreds of senders that made each sync push,
+    // each expand and each hover preview an O(cells × flows) full-matrix
+    // pass. The index is rebuilt ONCE per data/staging change by walking
+    // only the sparse facts (active connections + the short staging
+    // lists); a cell render is then a single Map lookup.
+    let cellClassFlow: Map<string,string> = new Map();
+    let cellClassDevice: Map<string,string> = new Map();
+
+    function rebuildCellIndex(){
+      cellClassFlow = new Map();
+      cellClassDevice = new Map();
+
+      // flowId → {flow, dev} for both directions.
+      const senderByFlowId: Map<string,{flow:any,dev:any}> = new Map();
+      for(const d of senders){
+        for(const t of flowTypes){ for(const f of (d.senders[t] || [])){ senderByFlowId.set(f.id, {flow:f, dev:d}); } }
+      }
+      const receiverByFlowId: Map<string,{flow:any,dev:any}> = new Map();
+      for(const d of receivers){
+        for(const t of flowTypes){ for(const f of (d.receivers[t] || [])){ receiverByFlowId.set(f.id, {flow:f, dev:d}); } }
+      }
+
+      // Staged disconnects by receiver flow id.
+      const discPrepared = new Set<string>();
+      const discWorking = new Set<string>();
+      for(const c of preparedConnectList){ if(!c.src && c.dst){ discPrepared.add(c.dst.id); } }
+      for(const c of workingConnectList){ if(!c.src && c.dst){ discWorking.add(c.dst.id); } }
+
+      // Device-level aggregation per (srcDev|dstDev): dashed only when
+      // EVERY active connection between the two devices is staged for
+      // disconnect; health = solid fill when uniform, ring when mixed.
+      const devAgg: Map<string,{anyUnstaged:boolean,sawPrepared:boolean,sawWorking:boolean,healths:number[]}> = new Map();
+
+      // 1) ACTIVE connections — walk the receivers once.
+      for(const [rid, rE] of receiverByFlowId){
+        const cf = rE.flow.connectedFlow;
+        if(!cf) continue;
+        const sE = senderByFlowId.get(cf);
+        if(!sE) continue;   // connected sender filtered out of the matrix
+        const h = Math.max(flowHealth(sE.flow), flowHealth(rE.flow));
+        let cls = "active";
+        if(discPrepared.has(rid)){ cls += " cp-disc-prepared"; }
+        else if(discWorking.has(rid)){ cls += " cp-disc-working"; }
+        if(h === 3){ cls += " cp-health-err"; }
+        else if(h === 2){ cls += " cp-health-warn"; }
+        cellClassFlow.set(cf + "|" + rid, cls);
+
+        const k = sE.dev.id + "|" + rE.dev.id;
+        let a = devAgg.get(k);
+        if(!a){ a = {anyUnstaged:false, sawPrepared:false, sawWorking:false, healths:[]}; devAgg.set(k, a); }
+        a.healths.push(h);
+        if(discPrepared.has(rid)){ a.sawPrepared = true; }
+        else if(discWorking.has(rid)){ a.sawWorking = true; }
+        else { a.anyUnstaged = true; }
+      }
+      for(const [k, a] of devAgg){
+        let cls = "active";
+        if(!a.anyUnstaged && (a.sawPrepared || a.sawWorking)){
+          cls += a.sawPrepared ? " cp-disc-prepared" : " cp-disc-working";
+        }
+        const worst = a.healths.length ? Math.max(...a.healths) : 0;
+        if(worst >= 2){
+          const allSame = a.healths.every(h => h === worst);
+          if(allSame){ cls += (worst === 3 ? " cp-health-err" : " cp-health-warn"); }
+          else{ cls += (worst === 3 ? " cp-health-err-ring" : " cp-health-warn-ring"); }
+        }
+        cellClassDevice.set(k, cls);
+      }
+
+      // 2..4) Staging overlays in ASCENDING priority (each overwrites the
+      // previous): preview beats active, working beats preview, prepared
+      // beats everything — same order the old scan checked them in.
+      for(const c of previewConnectList){
+        if(c.src && c.dst){ cellClassFlow.set(c.src + "|" + c.dst, "preview"); }
+      }
+      for(const c of workingConnectList){
+        if(c.src && c.dst){
+          cellClassFlow.set(c.src.id + "|" + c.dst.id, "working");
+          const sE = senderByFlowId.get(c.src.id), rE = receiverByFlowId.get(c.dst.id);
+          if(sE && rE){ cellClassDevice.set(sE.dev.id + "|" + rE.dev.id, "working"); }
+        }
+      }
+      for(const c of preparedConnectList){
+        if(c.src && c.dst){
+          cellClassFlow.set(c.src.id + "|" + c.dst.id, "prepared");
+          const sE = senderByFlowId.get(c.src.id), rE = receiverByFlowId.get(c.dst.id);
+          if(sE && rE){ cellClassDevice.set(sE.dev.id + "|" + rE.dev.id, "prepared"); }
+        }
+      }
+    }
+
     function getConnectClass(srcDev:any,src:any,dstDev:any, dst:any){
-      for(let c of preparedConnectList){
-        if(c.src && c.dst){
-
-
-          if(src && dst){
-              if( src.id == c.src.id && dst.id == c.dst.id ){
-                return "prepared"
-              }
-          }
-
-
-          if(!src && !dst){
-            for(let r of dstDev.receiverIds){
-              for(let s of srcDev.senderIds){
-                if(r == c.dst.id && s == c.src.id){
-                  return "prepared"
-                }
-              }
-            }
-          }
-
-           
-        }
-      }
-
-      for(let c of workingConnectList){
-        if(c.src && c.dst){
-
-
-          if(src && dst){
-              if( src.id == c.src.id && dst.id == c.dst.id ){
-                return "working"
-              }
-          }
-
-
-          if(!src && !dst){
-            for(let r of dstDev.receiverIds){
-              for(let s of srcDev.senderIds){
-                if(r == c.dst.id && s == c.src.id){
-                  return "working"
-                }
-              }
-            }
-          }
-
-           
-        }
-      }
-
-      for(let c of previewConnectList){
-        if(src && dst && c.src && c.dst){
-            if( src.id == c.src && dst.id == c.dst ){
-              return "preview"
-            }
-        }
-      }
-
-      if(src && dst){
-        if(src.id == dst.connectedFlow){
-          let cls = "active";
-          let stage = disconnectStageFor(dst.id);
-          if(stage === "prepared"){ cls += " cp-disc-prepared"; }
-          else if(stage === "working"){ cls += " cp-disc-working"; }
-          // Solid health ring when either endpoint reports a BCP-008 problem.
-          let h = Math.max(flowHealth(src), flowHealth(dst));
-          if(h === 3){ cls += " cp-health-err"; }
-          else if(h === 2){ cls += " cp-health-warn"; }
-          return cls;
-        }
-      }else{
-        // Device-level cell: dashed only when EVERY active connection
-        // between the two devices is staged for disconnect — if some stay
-        // up after TAKE, the aggregate dot keeps its solid active look.
-        let anyActive = false;
-        let anyUnstaged = false;
-        let sawPrepared = false;
-        let sawWorking = false;
-        // Health of every ACTIVE connection this dot represents (max of the
-        // two endpoints each, 0 = fine). Uniform problem → solid fill,
-        // mixed states → ring, so the dot never lies about "all bad".
-        let healths:number[] = [];
-        for(let type in srcDev.senders){
-          for(let flow of srcDev.senders[type]){
-            if(dstDev.connectedFlows.includes(flow.id)){
-              anyActive = true;
-              let matched = false;
-              for(let rtype in dstDev.receivers){
-                for(let r of dstDev.receivers[rtype] || []){
-                  if(r.connectedFlow === flow.id){
-                    matched = true;
-                    healths.push(Math.max(flowHealth(flow), flowHealth(r)));
-                    let st = disconnectStageFor(r.id);
-                    if(st === "prepared"){ sawPrepared = true; }
-                    else if(st === "working"){ sawWorking = true; }
-                    else { anyUnstaged = true; }
-                  }
-                }
-              }
-              if(!matched){ anyUnstaged = true; healths.push(flowHealth(flow)); }
-            }
-          }
-        }
-        if(anyActive){
-          let cls = "active";
-          if(!anyUnstaged && (sawPrepared || sawWorking)){
-            cls += sawPrepared ? " cp-disc-prepared" : " cp-disc-working";
-          }
-          let worst = healths.length ? Math.max(...healths) : 0;
-          if(worst >= 2){
-            let allSame = healths.every(h => h === worst);
-            if(allSame){ cls += (worst === 3 ? " cp-health-err" : " cp-health-warn"); }
-            else{ cls += (worst === 3 ? " cp-health-err-ring" : " cp-health-warn-ring"); }
-          }
-          return cls;
-        }
-      }
-
+      if(src && dst){ return cellClassFlow.get(src.id + "|" + dst.id) || ""; }
+      if(!src && !dst){ return cellClassDevice.get(srcDev.id + "|" + dstDev.id) || ""; }
       return "";
     }
 
