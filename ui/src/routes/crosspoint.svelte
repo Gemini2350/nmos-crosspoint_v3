@@ -1066,6 +1066,15 @@
       return t;
     }
 
+    // A BCP-008 statusMessage / overallStatusMessage is retained by the device
+    // until the next counter reset, so once the status has recovered (below
+    // PartiallyHealthy) the text describes a PAST condition, not the current
+    // one. Prefix it with "previous" so that's unambiguous in the modal.
+    function monitorMsg(status:number, message:string){
+      if(!message) return "";
+      return status >= 2 ? message : "previous: " + message;
+    }
+
     // Status modal (click on the symbol): full breakdown + counter reset.
     let monitorModal:any;
     let monitorModalFlow:any = null;
@@ -1426,7 +1435,7 @@
           <h3 class="font-bold text-lg cp-monitor-title">Status – {monitorModalFlow.alias || monitorModalFlow.name || monitorModalFlow.id}
             <span class={"cp-monitor-state " + monitorClassVal(m.status)}>{monitorStateName(m.status)}</span></h3>
           <div class="cp-monitor-counter">Overall counter: {m.counter || 0}</div>
-          {#if m.message}<p class="cp-monitor-message">{m.message}</p>{/if}
+          {#if m.message}<p class="cp-monitor-message">{monitorMsg(m.status, m.message)}</p>{/if}
           <table class="cp-monitor-table">
             <thead><tr><td>Domain</td><td>State</td><td>Message</td><td>Transitions</td></tr></thead>
             <tbody>
@@ -1435,7 +1444,7 @@
                   <td>{d.label}</td>
                   <td><span class={"cp-monitor-dot " + monitorClassVal(d.status)}
                         use:OverlayMenuService.tooltip data-tooltip={monitorStateName(d.status)}></span></td>
-                  <td class="cp-monitor-domain-message">{d.message || ""}</td>
+                  <td class="cp-monitor-domain-message">{monitorMsg(d.status, d.message)}</td>
                   <td>{d.counter}</td>
                 </tr>
               {/each}
