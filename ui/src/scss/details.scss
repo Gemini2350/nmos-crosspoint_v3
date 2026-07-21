@@ -503,6 +503,15 @@ $det-color-data:  theme('colors.blue.500');
         svg { width: 16px; height: 16px; }
         &:hover { background-color: theme('colors.base-300'); }
     }
+    // "Forget offline (n)" — destructive, so tinted like the error accents.
+    .det-forget-offline {
+        color: theme('colors.error');
+    }
+    // The forget-all dialog lists EVERY offline device — cap and scroll.
+    .det-forget-list-scroll {
+        max-height: 260px;
+        overflow-y: auto;
+    }
 
     // Empty state
     .det-empty {

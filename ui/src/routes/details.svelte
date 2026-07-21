@@ -6,7 +6,7 @@
     import { Icon, MagnifyingGlass, RectangleGroup, Pencil, ChevronRight,
        VideoCamera, Microphone, DocumentText,
        CodeBracketSquare, ArrowTopRightOnSquare,
-       Clock, ChevronDoubleDown, ChevronDoubleUp
+       Clock, ChevronDoubleDown, ChevronDoubleUp, Trash
      } from "svelte-hero-icons";
 
     import ScrollArea from "../lib/ScrollArea.svelte";
@@ -680,6 +680,31 @@
       if(forgetModal){ forgetModal.close(); }
     }
 
+    // ----- Forget ALL offline devices at once -----
+    // Same delete action as the per-device Forget, looped over every
+    // offline device that still carries flows (matches card visibility).
+    // Reads the UNFILTERED state on purpose: "all offline" should not
+    // silently shrink to whatever the current search happens to show.
+    let forgetAllModal:any;
+    $: offlineDevices = ((sourceState && Array.isArray(sourceState.devices)) ? sourceState.devices : []).filter((d:any)=>{
+      if(d.available){ return false; }
+      let flows = 0;
+      ["video","audio","data","audiochannel","mqtt","websocket","unknown"].forEach((t)=>{
+        flows += ((d.senders && d.senders[t]) ? d.senders[t].length : 0) + ((d.receivers && d.receivers[t]) ? d.receivers[t].length : 0);
+      });
+      return flows > 0;
+    });
+    function openForgetAllDialog(){
+      if(forgetAllModal){ forgetAllModal.showModal(); }
+    }
+    async function confirmForgetAll(){
+      const list = [...offlineDevices];
+      if(forgetAllModal){ forgetAllModal.close(); }
+      for(const d of list){
+        try{ await ServerConnector.post("crosspoint", { action:"delete", devId: d.id, flowId:"" }); }catch(e){}
+      }
+    }
+
     // ----- Forget individual sender / receiver (only for unavailable flows) -----
     // Per user request the confirmation dialog is skipped — the Forget button
     // only ever appears for offline flows anyway (the rendered button is
@@ -845,6 +870,15 @@
           <span>{allExpanded ? "Collapse all" : "Expand all"}</span>
         </button>
       </li>
+      {#if offlineDevices.length > 0}
+      <li>
+        <button class="det-expand-all det-forget-offline" on:click={openForgetAllDialog}
+                use:OverlayMenuService.tooltip data-tooltip="Forget every offline device: releases their multicast leases and clears the cached state">
+          <Icon src={Trash}></Icon>
+          <span>Forget offline ({offlineDevices.length})</span>
+        </button>
+      </li>
+      {/if}
       <li class="nav-spacer"></li>
     </ul>
 
@@ -1236,6 +1270,30 @@
       <div class="modal-action">
         <button on:click={cancelForget} class="btn">Cancel</button>
         <button on:click={confirmForget} class="btn btn-error">Forget</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog bind:this={forgetAllModal} class="modal">
+    <div class="modal-box">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+      </form>
+      <h3 class="font-bold text-lg">Forget all offline devices?</h3>
+      <p class="det-forget-text">
+        This forgets <strong>{offlineDevices.length}</strong> offline device{offlineDevices.length === 1 ? "" : "s"}:
+        multicast leases go back into the pool, the cached crosspoint state
+        (aliases, sort numbers, …) is cleared, and a device that comes back
+        online later is treated as a fresh device.
+      </p>
+      <ul class="det-forget-list det-forget-list-scroll">
+        {#each offlineDevices as d}
+          <li>{d.displayLabel || d.alias || d.name || d.id}</li>
+        {/each}
+      </ul>
+      <div class="modal-action">
+        <form method="dialog"><button class="btn">Cancel</button></form>
+        <button on:click={confirmForgetAll} class="btn btn-error">Forget all</button>
       </div>
     </div>
   </dialog>
