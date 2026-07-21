@@ -39,6 +39,14 @@ $cp-border: 1px solid transparent;
         overflow:scroll;
         
 
+        // While scrolling: no hover targets. Cells streaming under the
+        // stationary pointer fired mouseover storms (hover recalcs +
+        // preview scheduling) that throttled wheel scrolling badly on
+        // large matrices.
+        &.cp-scrolling table {
+            pointer-events: none;
+        }
+
         .cp-vertical-text {
             writing-mode: vertical-rl;
             text-orientation: mixed;

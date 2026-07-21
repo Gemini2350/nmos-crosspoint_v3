@@ -454,6 +454,19 @@
       return false;
     }
 
+    // While the matrix scrolls, cells stream under the (stationary)
+    // pointer: every one of them fired mouseover → hover style recalcs +
+    // preview scheduling, which throttled wheel scrolling to a crawl on
+    // large matrices. pointer-events are disabled during the scroll and
+    // restored 150ms after the last scroll event.
+    let isScrolling = false;
+    let scrollIdleTimer:any = null;
+    function onMatrixScroll(){
+      isScrolling = true;
+      if(scrollIdleTimer){ clearTimeout(scrollIdleTimer); }
+      scrollIdleTimer = setTimeout(()=>{ isScrolling = false; }, 150);
+    }
+
     // One click folds every expanded sender column and receiver row back
     // to the device level — after exploring a large matrix that beats
     // clicking every chevron again.
@@ -1206,7 +1219,7 @@
     </ul>
 
 
-    <div class="cp-container" class:cp-has-node-bands={hasSenderBands} class:cp-has-node-vbands={hasReceiverBands}>
+    <div class="cp-container" class:cp-has-node-bands={hasSenderBands} class:cp-has-node-vbands={hasReceiverBands} class:cp-scrolling={isScrolling} on:scroll={onMatrixScroll}>
       <div class="cp-limit-container">
 
       <div class="cp-header-cross"></div>
