@@ -233,6 +233,45 @@ class CrosspointUpdateThread{
         if(change.action == "delete"){
             if(change.flowId == ""){
 
+                // Forget must be FINAL: purge every nmosState leftover of
+                // this device too. updateShadow() rebuilds shadow devices
+                // from nmosState on every tick — stale resources of an
+                // offline device (registry removals still in flight, or
+                // never delivered) re-created the entry right after the
+                // delete, which is why "Forget all offline" needed several
+                // clicks on larger systems. If the device is actually still
+                // online the next registry event re-adds it — consistent
+                // with "comes back as a fresh device".
+                try{
+                    let devKey = "" + change.devId;
+                    if(devKey.startsWith("nmos_")){
+                        let nmosDevId = devKey.slice(5);
+                        delete this.nmosState.devices[nmosDevId];
+                        for(let coll of ["senders", "receivers", "flows", "sources"]){
+                            for(let id of Object.keys(this.nmosState[coll] || {})){
+                                if(this.nmosState[coll][id] && this.nmosState[coll][id].device_id === nmosDevId){
+                                    delete this.nmosState[coll][id];
+                                }
+                            }
+                        }
+                    }else if(devKey.startsWith("nmosgrp_")){
+                        // Grouphint pseudo-device: purge the individual
+                        // flows it carried (their ids are nmos_<uuid>).
+                        let dev:any = this.crosspointShadow.devices[devKey];
+                        for(let dir of ["senders", "receivers"]){
+                            for(let type of Object.keys((dev && dev[dir]) || {})){
+                                for(let fid of Object.keys(dev[dir][type] || {})){
+                                    if(("" + fid).startsWith("nmos_")){
+                                        let nid = ("" + fid).slice(5);
+                                        delete this.nmosState.senders[nid];
+                                        delete this.nmosState.receivers[nid];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }catch(e){ console.log(e); }
+
                 try{
 
                     for(let type of Object.keys(this.crosspointShadow.devices[change.devId].senders)){

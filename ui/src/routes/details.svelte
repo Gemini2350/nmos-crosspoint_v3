@@ -6,7 +6,7 @@
     import { Icon, MagnifyingGlass, RectangleGroup, Pencil, ChevronRight,
        VideoCamera, Microphone, DocumentText,
        CodeBracketSquare, ArrowTopRightOnSquare,
-       Clock, ChevronDoubleDown, ChevronDoubleUp, Trash
+       Clock, ChevronDoubleDown, ChevronDoubleUp
      } from "svelte-hero-icons";
 
     import ScrollArea from "../lib/ScrollArea.svelte";
@@ -698,10 +698,18 @@
       if(forgetAllModal){ forgetAllModal.showModal(); }
     }
     async function confirmForgetAll(){
-      const list = [...offlineDevices];
+      // Snapshot the IDs as plain strings BEFORE the first delete lands:
+      // spreading offlineDevices only copies the array, its elements still
+      // reference the live sync state, and the jsonpatch stream arriving
+      // after each processed delete rewrites those objects' fields in place
+      // (array diffs patch every shifted element). Iterating the objects
+      // therefore sent the same — freshly shifted — device id over and over
+      // while other devices never got a delete at all, which is why the
+      // button had to be pressed several times.
+      const ids = offlineDevices.map((d:any)=>String(d.id));
       if(forgetAllModal){ forgetAllModal.close(); }
-      for(const d of list){
-        try{ await ServerConnector.post("crosspoint", { action:"delete", devId: d.id, flowId:"" }); }catch(e){}
+      for(const id of ids){
+        try{ await ServerConnector.post("crosspoint", { action:"delete", devId: id, flowId:"" }); }catch(e){}
       }
     }
 
@@ -870,16 +878,15 @@
           <span>{allExpanded ? "Collapse all" : "Expand all"}</span>
         </button>
       </li>
+      <li class="nav-spacer"></li>
       {#if offlineDevices.length > 0}
-      <li>
-        <button class="det-expand-all det-forget-offline" on:click={openForgetAllDialog}
+      <li class="det-forget-offline-li">
+        <button class="btn btn-sm det-flow-forget det-forget-offline" on:click={openForgetAllDialog}
                 use:OverlayMenuService.tooltip data-tooltip="Forget every offline device: releases their multicast leases and clears the cached state">
-          <Icon src={Trash}></Icon>
-          <span>Forget offline ({offlineDevices.length})</span>
+          Forget offline ({offlineDevices.length})
         </button>
       </li>
       {/if}
-      <li class="nav-spacer"></li>
     </ul>
 
 

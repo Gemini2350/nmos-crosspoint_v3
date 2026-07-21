@@ -252,6 +252,47 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 SyncLog.log("warn", "Multicast Lease", "Could not release leases on delete: " + e.message);
             }
 
+            // Forget must be FINAL: purge the device's leftovers from the
+            // MAIN nmosState too. The worker receives full nmosState
+            // snapshots on every registry event, so purging only inside the
+            // worker was undone by the next snapshot and updateShadow()
+            // resurrected the just-deleted device — the reason "Forget all
+            // offline" needed several clicks while registry removals were
+            // still in flight. A device that is actually online re-adds
+            // itself with the next registry event (fresh device semantics).
+            try{
+                if(data && data.action === "delete" && data.devId && !data.flowId && this.nmosState){
+                    let devKey = "" + data.devId;
+                    if(devKey.startsWith("nmos_")){
+                        let nmosDevId = devKey.slice(5);
+                        delete this.nmosState.devices[nmosDevId];
+                        for(let coll of ["senders", "receivers", "flows", "sources"]){
+                            for(let id of Object.keys(this.nmosState[coll] || {})){
+                                if(this.nmosState[coll][id] && this.nmosState[coll][id].device_id === nmosDevId){
+                                    delete this.nmosState[coll][id];
+                                }
+                            }
+                        }
+                    }else if(devKey.startsWith("nmosgrp_")){
+                        // Grouphint pseudo-device: purge the flows it carried.
+                        let dev = this.crosspointState.devices.find((d:any) => d.id === devKey);
+                        for(let dir of ["senders", "receivers"]){
+                            for(let type of Object.keys((dev && (dev as any)[dir]) || {})){
+                                for(let f of ((dev as any)[dir][type] || [])){
+                                    if(f && typeof f.id === "string" && f.id.startsWith("nmos_")){
+                                        let nid = f.id.slice(5);
+                                        delete this.nmosState.senders[nid];
+                                        delete this.nmosState.receivers[nid];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }catch(e:any){
+                SyncLog.log("warn", "Crosspoint", "Could not purge nmos leftovers on delete: " + e.message);
+            }
+
             this.worker.postMessage(JSON.stringify({
                 crosspointChanges:data
             }));
