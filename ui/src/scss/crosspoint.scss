@@ -745,20 +745,14 @@ $cp-border: 1px solid transparent;
 
                     // BCP-008 endpoint health on ACTIVE connections: the
                     // whole point turns orange (partially healthy) or red
-                    // (unhealthy). The -ring variants are used on the round
-                    // device dot when it represents MULTIPLE connections in
-                    // DIFFERENT states — solid ring, fill stays green.
+                    // (unhealthy). On the collapsed device dot the WORST
+                    // status of all connections between the two devices
+                    // wins, so a single bad stream is visible while folded.
                     &.cp-health-warn {
                         background-color: $cp-color-orange;
                     }
                     &.cp-health-err {
                         background-color: $cp-color-red;
-                    }
-                    &.cp-health-warn-ring {
-                        box-shadow: 0 0 0 2px $cp-color-orange;
-                    }
-                    &.cp-health-err-ring {
-                        box-shadow: 0 0 0 2px $cp-color-red;
                     }
 
                     // Hover = preview of what a click would prepare: same
@@ -791,6 +785,18 @@ $cp-border: 1px solid transparent;
                     border-radius: 8px;
                     height:16px;
                     width:16px;
+                }
+
+                // Worst BCP-008 status of the folded connections fills the
+                // dot. Combined with .active on purpose: the plain
+                // `span.active` rules here and in the light-theme block
+                // would otherwise out-rank the generic health colours and
+                // pin the dot to green.
+                &.active.cp-health-warn {
+                    background-color: $cp-color-orange;
+                }
+                &.active.cp-health-err {
+                    background-color: $cp-color-red;
                 }
 
                 &:hover {
@@ -973,7 +979,16 @@ html[data-theme="light"] {
                         background-color: $cp-color-green;
                     }
 
-
+                    // Same worst-status fill as the dark design — the
+                    // theme-scoped `span.active` above would otherwise
+                    // out-rank the health colours (higher specificity than
+                    // the generic .cp-health-* rules).
+                    &.active.cp-health-warn {
+                        background-color: $cp-color-orange;
+                    }
+                    &.active.cp-health-err {
+                        background-color: $cp-color-red;
+                    }
                 }
             }
 

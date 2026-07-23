@@ -899,7 +899,8 @@
 
       // Device-level aggregation per (srcDev|dstDev): dashed only when
       // EVERY active connection between the two devices is staged for
-      // disconnect; health = solid fill when uniform, ring when mixed.
+      // disconnect; health = solid fill in the WORST status of any
+      // connection between the two devices (red beats orange beats green).
       const devAgg: Map<string,{anyUnstaged:boolean,sawPrepared:boolean,sawWorking:boolean,healths:number[]}> = new Map();
 
       // 1) ACTIVE connections — walk the receivers once.
@@ -929,12 +930,12 @@
         if(!a.anyUnstaged && (a.sawPrepared || a.sawWorking)){
           cls += a.sawPrepared ? " cp-disc-prepared" : " cp-disc-working";
         }
+        // Worst status wins and FILLS the dot: one unhealthy connection
+        // among many healthy ones must be as loud as a uniformly bad pair.
+        // (This used to render a thin 2px ring for mixed states — easy to
+        // miss on the small collapsed-device dot.)
         const worst = a.healths.length ? Math.max(...a.healths) : 0;
-        if(worst >= 2){
-          const allSame = a.healths.every(h => h === worst);
-          if(allSame){ cls += (worst === 3 ? " cp-health-err" : " cp-health-warn"); }
-          else{ cls += (worst === 3 ? " cp-health-err-ring" : " cp-health-warn-ring"); }
-        }
+        if(worst >= 2){ cls += (worst === 3 ? " cp-health-err" : " cp-health-warn"); }
         cellClassDevice.set(k, cls);
       }
 
