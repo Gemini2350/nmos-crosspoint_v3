@@ -238,6 +238,20 @@ class _ServerConnector {
         this.connect();
       },10)
 
+      // Suspended-tab recovery. Browsers freeze timers and sockets in
+      // background tabs: coming back to a long-idle tab, the dead socket
+      // would only be noticed after the regular ping timeout (25s) and the
+      // reconnect would then sit in the accumulated backoff (up to 60s) —
+      // a minute of spinner that looks like the server is in "standby".
+      // On becoming visible (or the network coming back) probe the
+      // connection immediately with a short deadline and skip the backoff.
+      try{
+        document.addEventListener("visibilitychange", ()=>{
+          if(document.visibilityState === "visible"){ this.verifyConnectionNow(); }
+        });
+        window.addEventListener("online", ()=>{ this.verifyConnectionNow(); });
+      }catch(e){}
+
       // Auto-Take is enabled by default. Only honour an explicit "false"
       // that the user has previously stored via the UI toggle.
       let mode = localStorage.getItem("nmos_crosspoint_auto_take");
@@ -268,6 +282,40 @@ class _ServerConnector {
             this.ws.close();
           } catch (e) {}
         }
+      }
+
+      /** Immediate liveness check after tab-resume / network-online.
+       *  Dead or half-open sockets are detected within ~3s instead of the
+       *  regular 25s ping timeout, and a pending reconnect backoff is
+       *  cut short so the page is live again within a few seconds. */
+      private verifyConnectionNow() {
+        this.reconnectTime = 1;
+        if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+          if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+          }
+          this.connect();
+          return;
+        }
+        if (this.ws.readyState !== WebSocket.OPEN) {
+          // CONNECTING or CLOSING — let that attempt finish; the backoff
+          // for the follow-up round has been reset above.
+          return;
+        }
+        // Socket claims OPEN, but after a freeze it may be half-dead.
+        // Probe with a short deadline; a close here re-enters the normal
+        // reconnect path with the backoff already reset.
+        this.pingLastTime = Date.now();
+        if (this.pingPendingSince === 0) {
+          this.pingPendingSince = this.pingLastTime;
+        }
+        try { this.ws.send('ping'); } catch (e) {}
+        setTimeout(() => {
+          if (this.ws && this.pingPendingSince > 0 && (Date.now() - this.pingPendingSince) > 2900) {
+            try { this.ws.close(); } catch (e) {}
+          }
+        }, 3000);
       }
     
       private connect() {
