@@ -334,7 +334,8 @@ class DeviceMonitorConnection {
     // change without a new message, a single domain flip) merge instead of
     // clobbering the rest.
     private lastByOid: Map<number, { status: number, message: string, domains: any }> = new Map();
-    private publish(mon: MonitorRef, patch: { status?: number, message?: string, domain?: { key: string, s?: number, c?: number, m?: string } }) {
+    private publish(mon: MonitorRef, patch: { status?: number, message?: string, domain?: { key: string, s?: number, c?: number, m?: string } }, force = false) {
+        const hadPrev = this.lastByOid.has(mon.oid);
         const prev = this.lastByOid.get(mon.oid) || { status: 1, message: "", domains: {} };
         const next = {
             status: (patch.status === undefined) ? prev.status : patch.status,
@@ -347,6 +348,17 @@ class DeviceMonitorConnection {
             if (patch.domain.c !== undefined) d.c = patch.domain.c;
             if (patch.domain.m !== undefined) d.m = patch.domain.m;
             next.domains[patch.domain.key] = d;
+        }
+        // Some devices re-notify EVERY property on a fixed tick (seen in the
+        // field: 14 PropertyChanged per monitor per second, all values
+        // unchanged). Without this guard each of them produced a log line —
+        // megabytes of identical "→ status" spam per hour. `force` is the
+        // initial pollAll() read (it pre-seeds lastByOid, so it would always
+        // look unchanged); an unseeded first publish passes too.
+        if (!force && hadPrev
+            && prev.status === next.status && prev.message === next.message
+            && JSON.stringify(prev.domains) === JSON.stringify(next.domains)) {
+            return;
         }
         this.lastByOid.set(mon.oid, next);
         SyncLog.log("verbose", "BCP-008", mon.kind + " " + mon.flowId + " → status " + next.status +
@@ -533,7 +545,10 @@ class DeviceMonitorConnection {
                     } catch (e) { /* domain not implemented */ }
                 }
                 this.lastByOid.set(m.oid, { status: Number(status) | 0, message, domains });
-                this.publish(m, { status: Number(status) | 0 });
+                // force: this is the initial read — lastByOid was just
+                // seeded above, so the unchanged-guard in publish() would
+                // otherwise swallow it and the UI never got a status.
+                this.publish(m, { status: Number(status) | 0 }, true);
             } catch (e) { /* keep last known */ }
         }
     }
