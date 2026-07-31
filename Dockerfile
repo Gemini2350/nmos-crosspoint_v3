@@ -79,4 +79,9 @@ RUN chmod +x ./docker-entrypoint.sh
 # server doesn't error out on first boot when nothing is mounted yet.
 RUN mkdir -p ./config ./state ./log
 
+# Web UI + WebSocket sync (settings.json server.port, default 80).
+# Documentation metadata: with --net=host it has no effect, and in probe
+# mode (MODE=probe) the process only opens outgoing connections.
+EXPOSE 80
+
 ENTRYPOINT ["./docker-entrypoint.sh"]
