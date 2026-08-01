@@ -207,16 +207,23 @@ class CrosspointUpdateThread{
 
 
         if(this.updateRequest > 0){
-            if(this.updateTimeout && this.updateRequest < 10){
-                clearTimeout(this.updateTimeout);
-                setTimeout(()=>{
-                    this.doUpdate();
-                },10)
-            }else{
-                setTimeout(()=>{
-                    this.doUpdate();
-                },10)
+            // Debounce burst updates into ONE rebuild. The handle was never
+            // assigned before, so every inbound message scheduled its own
+            // doUpdate() — a device registering 50 resources caused 50 full
+            // shadow rebuilds + 50 state posts instead of ~1. After 10
+            // pending requests the timer is left alone so a steady stream
+            // still flushes regularly instead of being pushed out forever.
+            if(this.updateTimeout){
+                if(this.updateRequest < 10){
+                    clearTimeout(this.updateTimeout);
+                }else{
+                    return;
+                }
             }
+            this.updateTimeout = setTimeout(()=>{
+                this.updateTimeout = null;
+                this.doUpdate();
+            },10)
         }
         
 

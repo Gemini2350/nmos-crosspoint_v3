@@ -748,7 +748,13 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                             senderInfo = await NmosRegistryConnector.instance.connectionGetSenderInfo(nmosId);
                         }
                     }catch(e){
+                        // The missing `return` here used to let execution
+                        // continue with senderInfo === null; the resulting
+                        // TypeError inside this async executor was swallowed
+                        // and the promise never settled — the UI request ran
+                        // into its 60s timeout instead of showing the error.
                         reject({src:src,dst:dst,status:"failed sender info"});
+                        return;
                     }
                 }else{
                     SyncLog.log("info", "connect_crosspoint", "Make Connect: Receiver "+ dst.id + "    <   Disconnect")
@@ -822,6 +828,14 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 }
 
 
+
+                // A source that is neither nmos_ nor "disconnect" leaves
+                // senderInfo unset — settle instead of running into a
+                // TypeError that would hang the promise forever.
+                if(!senderInfo){
+                    reject({src:src,dst:dst,status:"failed", detail:{message:"No sender info available for " + (src ? src.id : "?"), log:""}});
+                    return;
+                }
 
                 if(dst.id.startsWith("nmos_")){
                     try{

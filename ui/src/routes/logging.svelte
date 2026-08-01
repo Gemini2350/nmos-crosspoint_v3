@@ -110,8 +110,10 @@
       changeFilter();
     });
     onDestroy(() => {
-      sync.unsubscribe();
-    ServerConnector.unsync("log")
+      // Same guard as crosspoint.svelte: never let a failed unsubscribe
+      // skip the unsync — the server would keep streaming the log channel.
+      try{ sync.unsubscribe(); }catch(e){}
+      try{ ServerConnector.unsync("log"); }catch(e){}
     });
 
     function saveFilter(){

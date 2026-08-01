@@ -518,8 +518,12 @@
     }
   
     onDestroy(() => {
-      sync.unsubscribe();
-      ServerConnector.unsync("crosspoint");
+      // Guard each step: if the component dies before onMount assigned
+      // `sync`, the throw used to skip unsync() — the server-side refCount
+      // never dropped and the server kept streaming crosspoint patches for
+      // a page nobody was watching.
+      try{ sync.unsubscribe(); }catch(e){}
+      try{ ServerConnector.unsync("crosspoint"); }catch(e){}
     });
 
  
@@ -639,6 +643,13 @@
 
       })
       newList.forEach((n:any)=>{
+        // Freeze the wire strings NOW. The flow objects reference the live
+        // sync state and incoming jsonpatch bursts rewrite their fields in
+        // place (same failure class as the forget-all bug) — with AutoTake
+        // off, TAKE can happen many patches later and must switch what the
+        // operator prepared, not whatever the objects mutated into.
+        n.srcString = getDevcieNameString(n.srcDev, n.src);
+        n.dstString = getDevcieNameString(n.dstDev, n.dst);
         preparedConnectList.push(n);
       })
 
@@ -789,11 +800,11 @@
     function doConnect(list:any[]) {
       let reducedList:any[] = [];
       list.forEach((l)=>{
-        let srcString = getDevcieNameString(l.srcDev,l.src);
-        let dstString = getDevcieNameString(l.dstDev,l.dst);
+        // Prefer the strings frozen at prepare time (see
+        // cleanPreparedConnections); recompute only as a fallback.
         reducedList.push({
-          source:srcString,
-          destination:dstString
+          source: (l.srcString !== undefined) ? l.srcString : getDevcieNameString(l.srcDev,l.src),
+          destination: (l.dstString !== undefined) ? l.dstString : getDevcieNameString(l.dstDev,l.dst)
         })
       });
       

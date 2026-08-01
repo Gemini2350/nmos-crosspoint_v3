@@ -170,6 +170,12 @@ export class WebsocketSyncServer {
         if (index > -1) {
             this.clientList.splice(index, 1);
         }
+        // Also drop the client from every sync channel — subscriptions used
+        // to outlive the socket, so each browser reload leaked one entry per
+        // channel that every future setState still serialised for.
+        for (const name of Object.keys(this.syncObjectList)) {
+            try { this.syncObjectList[name].unsubscribeAll(client); } catch (e) {}
+        }
         for (const cb of this.onClientDisconnect) {
             try { cb(client); } catch (e) {}
         }

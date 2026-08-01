@@ -42,7 +42,12 @@ export function tokenSearch(input:string|any, tokens:string[][], keys:string[]|n
         token.forEach((comb)=>{
             let keyFound = false;
             keys.forEach((k)=>{
-                if(input[k].search(new RegExp(comb, "i")) != -1){
+                // Fields can legitimately be missing (e.g. a flow without an
+                // alias) — the old unguarded .search() threw, the caller's
+                // try/catch swallowed it and the whole filter pass silently
+                // aborted.
+                let v = input[k];
+                if(typeof v === "string" && v.search(new RegExp(comb, "i")) != -1){
                     keyFound = true
                 }
             });

@@ -44,7 +44,7 @@ export class WebsocketClient {
         this.authSeed = Crypto.createHash('sha1').update(""+Math.random()).digest('hex');
 
         this.ws.on("message", (text: string) => {
-            if (text == "ping" && this.ws.OPEN) {
+            if (text == "ping" && this.ws.readyState === this.ws.OPEN) {
                 this.ws.send("pong");
             } else {
                 try {
@@ -97,12 +97,15 @@ export class WebsocketClient {
 
     destructor() {}
     isConnected() {
-        return !this.ws.CLOSED;
+        // NOTE ws.OPEN / ws.CLOSED are the readyState CONSTANTS (1 / 3),
+        // not the state itself — the old checks compared against those and
+        // were always-true / always-false.
+        return this.ws.readyState === this.ws.OPEN;
     }
 
     private send(obj) {
         try{
-            if (this.ws.OPEN) {
+            if (this.ws.readyState === this.ws.OPEN) {
                 this.ws.send(JSON.stringify(obj));
             }
         }catch(e){}
