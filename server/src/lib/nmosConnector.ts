@@ -747,12 +747,15 @@ export class NmosRegistryConnector {
 
 
                     if (type == "senders" || type == "flows") {
-                        setTimeout(()=>{
-                            this.getSenderManifestData(type, g);
-                        },200);
-                        setTimeout(()=>{
-                            this.getSenderManifestData(type, g);
-                        },5000);
+                        // One fetch per resource, coalesced. Every grain used
+                        // to schedule TWO manifest fetches (200ms + a blind
+                        // 5s repeat) with no dedup, so a registry restart or
+                        // bulk re-registration hit every device with 2×N HTTP
+                        // GETs. The 5s repeat exists because some devices
+                        // publish a real SDP only shortly after registering —
+                        // it is now conditional: it only runs when the first
+                        // fetch produced no usable media section.
+                        this.scheduleManifestFetch(type, g);
                     }
 
                     if(type == "senders"){
@@ -813,6 +816,39 @@ export class NmosRegistryConnector {
     }
 
 
+
+    // Pending manifest fetches keyed by sender id — collapses the burst of
+    // grains a registry restart produces into one fetch per sender.
+    private manifestFetchTimers: Map<string, any> = new Map();
+
+    /** Debounced manifest fetch. Retries ONCE after 5s when the first fetch
+     *  left no usable SDP (some devices publish theirs a moment after
+     *  registering); a successful fetch schedules nothing. */
+    scheduleManifestFetch(type:string, g:any, delay = 200, retry = true){
+        let key = "";
+        try{
+            key = (type == "flows") ? ("" + (g?.post?.source_id ?? g?.path)) : ("" + g?.path);
+        }catch(e){ key = "" + (g && g.path); }
+        if(!key || key === "undefined"){ return; }
+
+        let existing = this.manifestFetchTimers.get(key);
+        if(existing){ clearTimeout(existing); }
+
+        this.manifestFetchTimers.set(key, setTimeout(()=>{
+            this.manifestFetchTimers.delete(key);
+            this.getSenderManifestData(type, g);
+            if(retry){
+                setTimeout(()=>{
+                    let sdp:any = null;
+                    try{ sdp = this.nmosState["sendersManifestDetail"][key]; }catch(e){}
+                    let usable = !!(sdp && Array.isArray(sdp.media) && sdp.media.length > 0);
+                    if(!usable){
+                        this.scheduleManifestFetch(type, g, 0, false);
+                    }
+                }, 5000);
+            }
+        }, delay));
+    }
 
     getSenderManifestData(type:string, g:any){
         if (g.hasOwnProperty("path") && typeof g.path == "string") {

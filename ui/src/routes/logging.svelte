@@ -61,11 +61,24 @@
     function removeNewId(id:string){
         let saveindex = newIds.indexOf(id);
       if(saveindex == -1){
-        
+
       }else{
         newIds.splice(saveindex,1);
       }
       uiList = [...uiList]
+    }
+
+    // Coalesced "new line" highlight expiry: clears the whole batch at once
+    // and repaints the table a single time.
+    let newIdSweepTimer:any = null;
+    function scheduleNewIdSweep(){
+      if(newIdSweepTimer){ return; }
+      newIdSweepTimer = setTimeout(()=>{
+        newIdSweepTimer = null;
+        if(newIds.length === 0){ return; }
+        newIds = [];
+        uiList = [...uiList];
+      }, 500);
     }
 
     function isNew(id:string){
@@ -219,9 +232,11 @@
                         logList.shift();
                     }
                     newIds.push(log.id);
-                    setTimeout(()=>{
-                        removeNewId(log.id);
-                    },500);
+                    // ONE sweep timer for the whole burst. Each line used to
+                    // arm its own 500ms timer whose removeNewId re-rendered
+                    // the entire table — 200 incoming lines meant 200 full
+                    // table re-renders half a second later.
+                    scheduleNewIdSweep();
                 }
             });
         }catch(e){console.log(e)}

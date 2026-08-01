@@ -447,6 +447,37 @@ class CrosspointUpdateThread{
                 (this.crosspointShadow.devices[devId] as any)["available"] = false;
             }
         }
+        // Distinct grouphint labels per NMOS device, computed ONCE per tick
+        // for both directions. This used to be an inner loop over all
+        // senders (resp. receivers) of the device per flow — the answer is
+        // identical for every flow of a device, so a 200-sender device cost
+        // 40 000 iterations per tick for a value that fits in one Map.
+        const groupLabelCount: Map<string, number> = new Map();
+        const countGroups = (idList: any, pool: any) => {
+            let labels: string[] = [];
+            if(Array.isArray(idList)){
+                for(const id of idList){
+                    const r = pool ? pool[id] : null;
+                    const tags = r && r.tags && r.tags["urn:x-nmos:tag:grouphint/v1.0"];
+                    if(Array.isArray(tags) && tags.length > 0){
+                        const g = ("" + (tags[0] ?? "")).split(':')[0];
+                        if(!labels.includes(g)){ labels.push(g); }
+                    }
+                }
+            }
+            return labels.length;
+        };
+
+        if(this.nmosState){
+            for(const devId of Object.keys(this.nmosState.devices || {})){
+                const dev: any = this.nmosState.devices[devId];
+                // NOTE the receiver path historically counted the device's
+                // SENDER list too (see the comment further down); both
+                // directions therefore use the same sender-derived count.
+                groupLabelCount.set(devId, countGroups(dev && dev.senders, this.nmosState.senders));
+            }
+        }
+
         if(this.nmosState){
             // NMOS Senders
 
@@ -476,26 +507,10 @@ class CrosspointUpdateThread{
                     groupId = 'nmosgrp_' +md5(group+send.device_id);
                     groupHint = true;
                     if(this.nmosState.devices.hasOwnProperty(send.device_id)){
-
-                        // If device is new, check naming
-                        let groupLabels:string[] = [];
-                        let devSenders = this.nmosState.devices[send.device_id].senders;
-                        if(Array.isArray(devSenders)){
-                            devSenders.forEach((id:string)=>{
-                                if(this.nmosState.senders[id]){
-                                    let otherSender = this.nmosState.senders[id]
-                                    if(otherSender.hasOwnProperty('tags') && otherSender.tags.hasOwnProperty("urn:x-nmos:tag:grouphint/v1.0") && Array.isArray(otherSender.tags["urn:x-nmos:tag:grouphint/v1.0"]) && otherSender.tags["urn:x-nmos:tag:grouphint/v1.0"].length > 0  ) {
-                                        let otherTagVal = otherSender.tags["urn:x-nmos:tag:grouphint/v1.0"][0];
-                                        let otherGroup = ("" + (otherTagVal ?? "")).split(':')[0];
-                                        if(!groupLabels.includes(otherGroup)){
-                                            groupLabels.push(otherGroup);
-                                        }
-                                    }
-                                }
-
-                            })
-                        }
-                        if(groupLabels.length > 1){
+                        // Distinct group labels of this device — precomputed
+                        // once per tick (groupLabelCount) instead of walking
+                        // all sibling senders per sender.
+                        if((groupLabelCount.get(send.device_id) || 0) > 1){
                             groupLabel = this.nmosState.devices[send.device_id].label + " - " + group;
                         }else{
                             groupLabel = this.nmosState.devices[send.device_id].label;
@@ -617,37 +632,13 @@ class CrosspointUpdateThread{
                     groupId = 'nmosgrp_' +md5(group+recv.device_id);
                     groupHint = true;
                     if(this.nmosState.devices.hasOwnProperty(recv.device_id)){
-
-
-
-
-                        // If device is new, check naming
-                        let groupLabels:string[] = [];
-                        // NOTE: this iterates `.senders` of the device, but the
-                        // intent is clearly to look at sibling receivers. We
-                        // preserve the existing behaviour to avoid changing
-                        // user-visible grouping logic; just guard the access.
-                        let devSenders = this.nmosState.devices[recv.device_id].senders;
-                        if(Array.isArray(devSenders)){
-                            devSenders.forEach((id:string)=>{
-                                if(this.nmosState.receivers[id]){
-                                    let otherReceiver = this.nmosState.receivers[id]
-                                    if(otherReceiver.hasOwnProperty('tags') && otherReceiver.tags.hasOwnProperty("urn:x-nmos:tag:grouphint/v1.0") && Array.isArray(otherReceiver.tags["urn:x-nmos:tag:grouphint/v1.0"]) && otherReceiver.tags["urn:x-nmos:tag:grouphint/v1.0"].length > 0  ) {
-                                        let otherTagVal = otherReceiver.tags["urn:x-nmos:tag:grouphint/v1.0"][0];
-                                        let otherGroup = ("" + (otherTagVal ?? "")).split(':')[0];
-                                        if(!groupLabels.includes(otherGroup)){
-                                            groupLabels.push(otherGroup);
-                                        }
-                                    }
-                                }
-
-                            })
-                        }
-                        if(groupLabels.length > 1){
-                            groupLabel = this.nmosState.devices[recv.device_id].label + " - " + group;
-                        }else{
-                            groupLabel = this.nmosState.devices[recv.device_id].label;
-                        }
+                        // Plain device label — no " - <group>" suffix here.
+                        // The removed loop looked up the device's SENDER id
+                        // list inside nmosState.receivers, so it never found
+                        // anything and the suffix branch was unreachable.
+                        // Kept as-is on purpose: making it work would rename
+                        // every existing receiver group in the field.
+                        groupLabel = this.nmosState.devices[recv.device_id].label;
 
                     }else{
                         groupLabel = group;

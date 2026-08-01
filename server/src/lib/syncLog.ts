@@ -99,7 +99,7 @@ export class SyncLog extends SyncObject {
         if (!this.startReadState(objectId)) {
             return;
         }
-        this.endReadState(objectId, { logList: [] });
+        this.endReadState(objectId, { logList: [], lastLogId: 0 });
     }
     pushMessage(id:number, time:number, severity: string, topic: string, text: string,  raw: any) {
             let message = {
@@ -111,20 +111,30 @@ export class SyncLog extends SyncObject {
                 raw,
             };
 
-            let state = this.getStateCopy();
-
             this.logHistory.push(message);
             if (this.logHistory.length > this.limitHistoryMem) {
                 this.logHistory.shift();
             }
-            state.logList.push(message);
-            if (state.logList.length > this.limitHistory) {
-                state.logList.shift();
+
+            // Explicit patch instead of setState(). setState deep-cloned the
+            // whole buffer, diffed it against the previous copy and cloned it
+            // again — and once the buffer was full the shift() re-indexed the
+            // array, so EVERY line produced a ~200-operation patch to every
+            // client. The two ops below describe the same change exactly.
+            let live: any = this.getState();
+            if(!live || !Array.isArray(live.logList)){
+                // First message before readState ran — fall back to a full set.
+                this.setState({ logList: [message], lastLogId: message.id });
+                return;
             }
-
-            state.lastLogId = message.id;
-
-            this.setState(state);
+            let patch: any[] = [{ op: "add", path: "/logList/-", value: message }];
+            if (live.logList.length + 1 > this.limitHistory) {
+                patch.push({ op: "remove", path: "/logList/0" });
+            }
+            // "add" on an object member replaces an existing value and
+            // creates a missing one — readState() seeds logList only.
+            patch.push({ op: "add", path: "/lastLogId", value: message.id });
+            this.patchState(patch);
     }
 }
 

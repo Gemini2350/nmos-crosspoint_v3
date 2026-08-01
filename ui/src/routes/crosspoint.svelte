@@ -659,7 +659,10 @@
     let previewTimer:any = null;
     
     function getDeviceConnectionPreview(srcDev:any,src:any,dstDev:any, dst:any){
-      
+      // Cancel the pending preview first — moving the pointer quickly across
+      // the matrix used to leave orphan timers that later fired a full
+      // repaint for a cell the pointer had long left.
+      if(previewTimer){ clearTimeout(previewTimer); }
       previewTimer = setTimeout(()=>{
         previewTimer = null;
         previewConnect(srcDev,src,dstDev,dst);
@@ -700,9 +703,16 @@
       let dstString = getDevcieNameString(dstDev,dst);
 
       let next = computePreviewConnections(srcString, dstString);
-      // Same preview as before (hovering along the same row/column) —
-      // skip the full matrix repaint entirely.
-      if(JSON.stringify(next) === JSON.stringify(previewConnectList)){ return; }
+      // Same preview as before (hovering along the same row/column) — skip
+      // the full matrix repaint entirely. Element-wise compare instead of
+      // two JSON.stringify calls on the hottest interaction path.
+      let same = next.length === previewConnectList.length;
+      if(same){
+        for(let i = 0; i < next.length; i++){
+          if(next[i].src !== previewConnectList[i].src || next[i].dst !== previewConnectList[i].dst){ same = false; break; }
+        }
+      }
+      if(same){ return; }
       previewConnectList = next;
       refreshMatrix();
       updateGlobalTake();

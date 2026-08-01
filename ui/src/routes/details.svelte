@@ -389,6 +389,7 @@
       // Reassign — this is what makes Svelte re-render
       deviceList = newList;
       nodeGroups = newGroups;
+      computeOfflineDevices();
     }
 
 
@@ -686,14 +687,22 @@
     // Reads the UNFILTERED state on purpose: "all offline" should not
     // silently shrink to whatever the current search happens to show.
     let forgetAllModal:any;
-    $: offlineDevices = ((sourceState && Array.isArray(sourceState.devices)) ? sourceState.devices : []).filter((d:any)=>{
-      if(d.available){ return false; }
-      let flows = 0;
-      ["video","audio","data","audiochannel","mqtt","websocket","unknown"].forEach((t)=>{
-        flows += ((d.senders && d.senders[t]) ? d.senders[t].length : 0) + ((d.receivers && d.receivers[t]) ? d.receivers[t].length : 0);
+    // Recomputed inside rebuild() (see computeOfflineDevices) instead of a
+    // `$:` on sourceState — the subscribe callback reassigns sourceState on
+    // EVERY patch, so a burst of N patches used to trigger N full walks over
+    // all devices × 7 flow types plus a re-render of the dialog list. Now it
+    // rides the same per-frame coalescing as the rest of the page.
+    let offlineDevices:any[] = [];
+    function computeOfflineDevices(){
+      offlineDevices = ((sourceState && Array.isArray(sourceState.devices)) ? sourceState.devices : []).filter((d:any)=>{
+        if(d.available){ return false; }
+        let flows = 0;
+        ["video","audio","data","audiochannel","mqtt","websocket","unknown"].forEach((t)=>{
+          flows += ((d.senders && d.senders[t]) ? d.senders[t].length : 0) + ((d.receivers && d.receivers[t]) ? d.receivers[t].length : 0);
+        });
+        return flows > 0;
       });
-      return flows > 0;
-    });
+    }
     function openForgetAllDialog(){
       if(forgetAllModal){ forgetAllModal.showModal(); }
     }
