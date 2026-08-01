@@ -400,12 +400,33 @@ class CrosspointUpdateThread{
             parentPort.postMessage(JSON.stringify({
                 log:{severity:"info", topic:"Crosspoint", text:"Shadow State was modified.", raw:null}
             }));
-            try{
-                fs.writeFileSync("./state/crosspoint.json", JSON.stringify(this.crosspointShadow));
-            }catch(e){
-                console.error("Error writing to file: ./state/crosspoint.json");
-            }
+            this.persistShadow();
         }
+    }
+
+    // Debounced, non-blocking persistence of the shadow. The write used to
+    // be a synchronous writeFileSync in the middle of the tick — on a busy
+    // registry that blocked the worker's event loop several times a second
+    // for the size of the whole shadow. Written to a temp file and renamed
+    // so a crash mid-write cannot leave a truncated crosspoint.json behind.
+    private persistTimer:any = null;
+    private persistShadow(){
+        if(this.persistTimer){ return; }
+        this.persistTimer = setTimeout(()=>{
+            this.persistTimer = null;
+            let data = "";
+            try{ data = JSON.stringify(this.crosspointShadow); }catch(e){ return; }
+            const tmp = "./state/crosspoint.json.tmp";
+            fs.writeFile(tmp, data, (err:any)=>{
+                if(err){
+                    console.error("Error writing to file: " + tmp);
+                    return;
+                }
+                fs.rename(tmp, "./state/crosspoint.json", (err2:any)=>{
+                    if(err2){ console.error("Error renaming to ./state/crosspoint.json"); }
+                });
+            });
+        }, 2000);
     }
 
     doUpdate(){
@@ -773,11 +794,7 @@ class CrosspointUpdateThread{
             parentPort.postMessage(JSON.stringify({
                 log:{severity:"info", topic:"Crosspoint", text:"Shadow State was modified.", raw:null}
             }));
-            try{
-                fs.writeFileSync("./state/crosspoint.json", JSON.stringify(this.crosspointShadow));
-            }catch(e){
-                console.error("Error writing to file: ./state/crosspoint.json");
-            }
+            this.persistShadow();
         }
     }
 

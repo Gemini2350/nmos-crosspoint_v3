@@ -210,7 +210,11 @@ export class NmosRegistryConnector {
         // Resolve + remember the domains BEFORE the enabled check — the
         // Setup page shows them either way ("what would be searched").
         const domains = this.dnssdSearchDomains();
+        let domainsChanged = domains.join(",") !== this.lastDnssdDomains.join(",");
         this.lastDnssdDomains = domains;
+        // The Setup page shows the searched domains; they can change without
+        // any registry event, and updateSyncConnectionState no longer polls.
+        if(domainsChanged){ this.updateSyncConnectionState(); }
         try{
             if(this.settings?.registryDiscovery?.unicastDnssd === false) return;
         }catch(e){}
@@ -1088,27 +1092,25 @@ export class NmosRegistryConnector {
             dnssdEnabled = this.settings?.registryDiscovery?.unicastDnssd !== false;
             dnssdOverride = "" + (this.settings?.registryDiscovery?.domain || "");
         }catch(e){}
-        this.syncConnectionState.setState({
+        const next = {
             registries: list,
             dnssd: { enabled: dnssdEnabled, override: dnssdOverride, domains: this.lastDnssdDomains }
-        });
+        };
 
-        // Re-arm the periodic refresh as a SINGLE timer. This method is also
-        // called directly on connection open/close and on registry switch;
-        // without clearing the previous timer first, every such call used to
-        // spawn an additional independent 2 s loop, so the number of
-        // structuredClone()+setState passes per second grew without bound
-        // over the lifetime of the process. Keeping one handle caps it at
-        // exactly one refresh every 2 s.
-        if(this.connectionStateTimer != null){
-            clearTimeout(this.connectionStateTimer);
+        // Publish only on an actual change. This used to re-arm itself every
+        // 2 s forever — recomputing and re-publishing identical data (with a
+        // structuredClone per registry) even with zero clients connected.
+        // Everything that can change it already calls this method directly:
+        // ws open/close, registry switch, discovery results.
+        let serialized = "";
+        try{ serialized = JSON.stringify(next); }catch(e){ serialized = ""; }
+        if(serialized && serialized === this.lastConnectionStateJson){
+            return;
         }
-        this.connectionStateTimer = setTimeout(()=>{
-            this.connectionStateTimer = null;
-            this.updateSyncConnectionState();
-        }, 2000);
+        this.lastConnectionStateJson = serialized;
+        this.syncConnectionState.setState(next);
     }
-    private connectionStateTimer:any = null;
+    private lastConnectionStateJson = "";
 
 
     reconnectOnChanges(senderId:string){

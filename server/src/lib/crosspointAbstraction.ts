@@ -46,6 +46,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 SyncLog.info("crosspoint", "Worker Thread exit with code: "+ code);
             }else{
                 SyncLog.error("crosspoint", "Worker Thread exit with code: "+ code);
+                // A fresh worker has an empty mirror — the next post must
+                // carry the full nmosState again.
+                this.workerNeedsNmosState = true;
                 setTimeout(()=>{this.startWorker()},1000);
             }
         });
@@ -924,19 +927,41 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // Reconcile IS-12 monitoring connections against the registry
         // (new ncp devices get a WebSocket, vanished ones are torn down).
         try{ Bcp008Monitor.instance?.updateFromNmos(state); }catch(e){}
-        this.update();
+        this.update(true);
     }
 
-    update(){
+    /** Set whenever the worker (re)starts: the next post must carry a full
+     *  nmosState so the fresh worker has a complete mirror. */
+    private workerNeedsNmosState = true;
+
+    /** @param withNmosState true when the registry state itself changed.
+     *  Alias / virtual-sender triggers only need the worker to redo its
+     *  pass — they used to ship the whole multi-MB registry mirror along
+     *  for nothing. */
+    update(withNmosState = false){
         // Post the object directly — worker_threads transfers it via V8
         // structured clone, which is both faster than JSON.stringify+parse
         // and avoids materialising a multi-megabyte intermediate string on
         // every tick (the nmosState of a large registry easily exceeds
         // several MB; this used to run up to 10×/second).
-        this.worker.postMessage({
-            nmosState:this.nmosState,
-            virtualSenders:this.virtualSenders
-        })
+        const msg:any = { virtualSenders: this.virtualSenders };
+        if(withNmosState || this.workerNeedsNmosState){
+            // Only the collections the worker actually reads. `nodes` and
+            // `channelmapping` are never touched over there and were pure
+            // structured-clone ballast on every tick.
+            const s:any = this.nmosState;
+            msg.nmosState = s ? {
+                devices: s.devices,
+                sources: s.sources,
+                senders: s.senders,
+                receivers: s.receivers,
+                flows: s.flows,
+                senderActiveData: s.senderActiveData,
+                sendersManifestDetail: s.sendersManifestDetail,
+            } : s;
+            this.workerNeedsNmosState = false;
+        }
+        this.worker.postMessage(msg)
     }
 
     /** Re-run enrichment on the CURRENT crosspoint state and publish the
@@ -1498,6 +1523,23 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // Lets the matrix hide the status hearts entirely when the feature
         // is switched off (vs. grey "device doesn't support it" hearts).
         (this.crosspointState as any).bcp008Enabled = this.settings?.bcp008?.enabled !== false;
+
+        // Drop cache entries for devices that no longer exist. Both caches
+        // are keyed by crosspoint device id and were only ever written —
+        // forgotten devices and old nmosgrp_<md5> keys (the hash changes
+        // when a group is renamed) stayed for the process lifetime.
+        try{
+            let liveIds = new Set<string>();
+            for(const d of (this.crosspointState as CrosspointState).devices){
+                if(d && typeof d.id === "string"){ liveIds.add(d.id); }
+            }
+            for(const k of Object.keys(this.nodeLabelCache)){
+                if(!liveIds.has(k)){ delete this.nodeLabelCache[k]; }
+            }
+            for(const k of Object.keys(this.nodeIdCache)){
+                if(!liveIds.has(k)){ delete this.nodeIdCache[k]; }
+            }
+        }catch(e){}
     }
 
     /** BCP-008 status for one flow, or undefined when nothing monitors it.
