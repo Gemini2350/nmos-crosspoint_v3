@@ -417,6 +417,30 @@ $cp-border: 1px solid transparent;
                     min-width: $cp-sizePP;
                     padding: 36px 4px 36px 4px;
                     margin:-32px auto -32px auto;
+
+                    // The sender header is rotated (vertical-rl), so the
+                    // badge inherited that: icon and counter stacked along
+                    // the column and `margin: 0 3px` put its spacing on the
+                    // CROSS axis — leaving no gap to the last letter while
+                    // nudging it off centre. Render the badge itself
+                    // horizontally (icon + count side by side, like the
+                    // receiver side) and move the spacing onto the text
+                    // flow axis.
+                    // Render the badge horizontally (icon + count side by
+                    // side, exactly like the receiver side) and put its
+                    // spacing on the text-flow axis. Inheriting the rotation
+                    // stacked icon over count, pushed the box ~5px off the
+                    // column centre and left `margin: 0 3px` on the cross
+                    // axis — so it sat glued to the last letter. Upright
+                    // numerals in this rotated header are the established
+                    // pattern (see .cp-status-count).
+                    .cp-mon {
+                        writing-mode: horizontal-tb;
+                        text-orientation: initial;
+                        margin: 6px 0 2px 0;
+                        justify-content: center;
+                        gap: 2px;
+                    }
                 }
 
                 .cp-label {

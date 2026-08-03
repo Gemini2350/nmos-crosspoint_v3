@@ -1264,7 +1264,7 @@
                     {#each senderGroups as sg}
                       <th class="cp-node-band" colspan={groupSenderCols(sg)}>
                         {#if bandLabelVisible(sg)}
-                          <span class="cp-node-band-label" use:OverlayMenuService.tooltip data-tooltip="NMOS Node: {sg.label}">{sg.label}</span>
+                          <span class="cp-node-band-label" use:OverlayMenuService.tooltip data-tooltip="{sg.label}">{sg.label}</span>
                         {/if}
                       </th>
                     {/each}
@@ -1325,7 +1325,7 @@
                          single-device nodes, so the left edge looks uniform. -->
                     <td class="cp-node-vband" rowspan={groupReceiverRows(rg)}>
                       {#if bandLabelVisible(rg)}
-                        <span class="cp-node-vband-label" use:OverlayMenuService.tooltip data-tooltip="NMOS Node: {rg.label}">{rg.label}</span>
+                        <span class="cp-node-vband-label" use:OverlayMenuService.tooltip data-tooltip="{rg.label}">{rg.label}</span>
                       {/if}
                     </td>
                   {/if}
