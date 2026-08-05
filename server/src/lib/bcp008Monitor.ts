@@ -89,6 +89,10 @@ const COUNTER_METHODS_SENDER = [
     { label: "Transmission errors", id: { level: 4, index: 1 } },
 ];
 
+// Floor between two device-model re-discoveries. New senders/receivers show
+// up within this window; without it a device that bumps its IS-04 version
+// (or its NcBlock.members) frequently caused a continuous re-walk.
+const REDISCOVER_MIN_MS = 30000;
 const RECONNECT_MIN_MS = 5000;
 const RECONNECT_MAX_MS = 60000;
 const COMMAND_TIMEOUT_MS = 8000;
@@ -374,7 +378,7 @@ class DeviceMonitorConnection {
 
     // ----- discovery + initial read -----
 
-    private async discover() {
+    private async discover(pollOnlyNew = false) {
       this.discovering = true;
       try {
         const membersResult: any = await this.command(ROOT_BLOCK_OID, METHOD_GET_MEMBERS, { recurse: true });
@@ -447,8 +451,13 @@ class DeviceMonitorConnection {
         // device model changed (new sender/receiver appeared) and triggers a
         // re-discovery — push-driven, no polling.
         this.send({ messageType: MT_SUBSCRIPTION, subscriptions: [...found.map(m => m.oid), ...Array.from(this.knownBlocks)] });
-        await this.pollAll();
-        SyncLog.log("info", "BCP-008", "Monitoring " + found.length + " sender/receiver monitors via " + this.url);
+        // Initial discovery reads everything; a re-discovery reads only
+        // monitors it has never seen (the known ones are kept current by the
+        // subscription).
+        const toPoll = pollOnlyNew ? found.filter(m => !this.lastByOid.has(m.oid)) : found;
+        await this.pollAll(toPoll);
+        SyncLog.log("info", "BCP-008", "Monitoring " + found.length + " sender/receiver monitors via " + this.url
+            + (pollOnlyNew ? " (re-discovery, read " + toPoll.length + " new)" : ""));
       } finally {
         this.discovering = false;
       }
@@ -459,24 +468,34 @@ class DeviceMonitorConnection {
     private knownBlocks: Set<number> = new Set([ROOT_BLOCK_OID]);
     private discovering = false;
     private rediscoverTimer: any = null;
+    private lastRediscover = 0;
 
-    /** Debounced re-discovery — a model change usually emits a burst. */
+    /** Debounced + rate-limited re-discovery. A model change is rare, but
+     *  the triggers are blunt: an IS-04 device version bump means "something
+     *  about this device changed" and some devices bump it constantly. Each
+     *  re-discovery walks the whole device model, so without a floor between
+     *  runs a chatty device turned this into a continuous command stream
+     *  (seen in the field: a steady flow of Gets on the device's NMOS port).
+     *  New senders/receivers therefore appear within REDISCOVER_MIN_MS. */
     scheduleRediscover(reason: string) {
         if (this.disposed || this.rediscoverTimer) return;
-        SyncLog.log("verbose", "BCP-008", "Re-discovering device model on " + this.url + " (" + reason + ").");
+        const since = Date.now() - this.lastRediscover;
+        const delay = Math.max(1000, REDISCOVER_MIN_MS - since);
+        SyncLog.log("verbose", "BCP-008", "Re-discovering device model on " + this.url + " (" + reason + ") in " + delay + "ms.");
         this.rediscoverTimer = setTimeout(() => {
             this.rediscoverTimer = null;
+            this.lastRediscover = Date.now();
             this.rediscover().catch((e: any) => {
                 SyncLog.log("verbose", "BCP-008", "Re-discovery failed on " + this.url + ": " + (e?.message || e));
             });
-        }, 1000);
+        }, delay);
     }
 
     private async rediscover() {
         if (this.disposed || this.discovering) return;
         if (!this.ws || this.ws.readyState !== 1) return;   // reconnect re-discovers anyway
         const before = this.monitors.map(m => m.flowId);
-        await this.discover();
+        await this.discover(true);
         // Monitors that vanished take their status with them.
         const now = new Set(this.monitors.map(m => m.flowId));
         for (const flowId of before) {
@@ -524,8 +543,12 @@ class DeviceMonitorConnection {
         return monitors;
     }
 
-    private async pollAll() {
-        for (const m of this.monitors) {
+    /** @param list monitors to read — defaults to all. A re-discovery passes
+     *  only the NEW ones: every already-known monitor keeps its state fresh
+     *  through the subscription, so re-reading its 14 properties would be
+     *  pure polling traffic (14 Gets × monitor × re-discovery). */
+    private async pollAll(list: MonitorRef[] = this.monitors) {
+        for (const m of list) {
             try {
                 const status = await this.getProperty(m.oid, PROP_OVERALL_STATUS);
                 let message = "";
