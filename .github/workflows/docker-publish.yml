@@ -43,6 +43,13 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "Image version: $v"
 
+      # QEMU provides the arm64 emulation the prod-deps stage needs (the
+      # JS build stages run natively — see the Dockerfile header).
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -68,18 +75,15 @@ jobs:
             type=match,pattern=v(.*),group=1
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
-      # amd64 only. arm64 was dropped: it has to be cross-built under QEMU
-      # emulation on the amd64 runners, and the CPU-heavy vite/tsc steps in
-      # this image take 30-60+ min emulated (effectively hang). All target
-      # hosts are x86_64, so there's no consumer for an arm64 image. To
-      # re-enable Pi / Apple-Silicon support later: add back the
-      # `docker/setup-qemu-action@v3` step and set
-      # `platforms: linux/amd64,linux/arm64`.
-      - name: Build and push (linux/amd64)
+      # Multi-arch: amd64 (servers) + arm64 (Raspberry Pi, Apple Silicon,
+      # ARM cloud instances). arm64 used to be prohibitively slow because
+      # EVERYTHING ran under QEMU; the Dockerfile now pins vite/tsc to
+      # $BUILDPLATFORM so only the production `npm ci` is emulated.
+      - name: Build and push (linux/amd64, linux/arm64)
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

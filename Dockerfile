@@ -5,8 +5,17 @@
 #                            which writes the bundle to /build/server/public.
 #   Stage 2: server-builder — installs server/ deps (dev included) and runs
 #                            tsc to produce server/dist.
-#   Stage 3: runtime       — slim final image with only the server runtime
+#   Stage 3: prod-deps     — production node_modules for the TARGET arch.
+#   Stage 4: runtime       — slim final image with only the server runtime
 #                            and the pre-built UI assets. No build tooling.
+#
+# Multi-arch: both builders are pinned to $BUILDPLATFORM so vite and tsc
+# always run NATIVELY on the build host — their output is plain JavaScript
+# and therefore architecture-independent. Only the stages that produce
+# native binaries (prod-deps) and the final image run under the target
+# platform, so an arm64 build costs one npm install under emulation instead
+# of a fully emulated tsc + vite run (which took 30-60+ min and was the
+# reason arm64 was dropped before).
 #
 # Layer-caching trick: package*.json is copied BEFORE the source tree, so
 # the (slow) `npm ci` step is only re-run when dependencies actually change.
@@ -14,7 +23,7 @@
 # --------------------------------------------------------------------------
 
 # ============================== UI builder ===============================
-FROM node:20 AS ui-builder
+FROM --platform=$BUILDPLATFORM node:20 AS ui-builder
 WORKDIR /build/ui
 
 # Dependency install — cached unless package*.json changes.
@@ -29,11 +38,24 @@ RUN npm run build
 
 
 # ============================ Server builder =============================
-FROM node:20 AS server-builder
+FROM --platform=$BUILDPLATFORM node:20 AS server-builder
 WORKDIR /build/server
 
-# Native build deps for @discordjs/opus (libopus headers + a C++ toolchain)
-# — needed by the audio-monitor feature. node:20 already ships Python.
+# Only tsc runs here — no native modules are compiled in this stage, so it
+# needs no toolchain and can stay on the build host's architecture.
+COPY server/package*.json ./
+RUN npm ci --no-audit --no-fund --prefer-offline
+
+COPY server/ ./
+RUN npm run build
+
+
+# ============================ Production deps ============================
+# Runs under the TARGET platform: @discordjs/opus ships a native binding, so
+# these modules must match the architecture of the final image.
+FROM node:20 AS prod-deps
+WORKDIR /build/server
+
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential python3 \
@@ -41,10 +63,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 COPY server/package*.json ./
-RUN npm ci --no-audit --no-fund --prefer-offline
-
-COPY server/ ./
-RUN npm run build
+RUN npm ci --omit=dev --no-audit --no-fund --prefer-offline \
+ && npm cache clean --force
 
 
 # ============================== Runtime ==================================
@@ -56,13 +76,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends libopus0 \
  && rm -rf /var/lib/apt/lists/*
 
-# node_modules come straight from the builder stage — the native bindings
-# for @discordjs/opus/werift are compiled there against the same glibc as
-# this node:20-slim image, so no rebuild is needed at runtime.
+# node_modules come from the prod-deps stage — same architecture and the
+# same glibc as this node:20-slim image, so no rebuild is needed here.
 COPY server/package*.json ./
-COPY --from=server-builder /build/server/node_modules ./node_modules
-RUN npm prune --omit=dev --no-audit --no-fund \
- && npm cache clean --force
+COPY --from=prod-deps /build/server/node_modules ./node_modules
 
 # Compiled JS and the UI bundle (from the two previous stages).
 COPY --from=server-builder /build/server/dist  ./dist
