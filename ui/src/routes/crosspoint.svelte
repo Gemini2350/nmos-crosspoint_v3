@@ -1397,7 +1397,7 @@
                     {#each senderGroups as sg}
                     {@const inStrip = !!(sg.devices[0] && sg.devices[0].isNode)}
                     {#each sg.devices as dev}
-                      <th class="cp-device" class:cp-grp={inStrip} class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
+                      <th class="cp-device" class:cp-grp={inStrip} class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen} class:cp-top={dev.isNode || !inStrip}
                           class:expanded={dev.isNode ? dev.isOpen : isSenderExpanded(dev.id)}
                           on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
@@ -1448,7 +1448,7 @@
               {#each receiverGroups as rg}
               {@const inStrip = !!(rg.devices[0] && rg.devices[0].isNode)}
               {#each rg.devices as dev, devIdx}
-                <tr class="cp-device" class:cp-grp={inStrip} class:cp-node-row={dev.isNode} class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
+                <tr class="cp-device" class:cp-grp={inStrip} class:cp-node-row={dev.isNode} class:cp-top={dev.isNode || !inStrip} class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
                   <td class="cp-line-stick" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--

@@ -463,6 +463,13 @@ export class NmosRegistryConnector {
                 this.updateSyncConnectionState();
             };
             this.connections[fullResource].ws.onopen = () => {
+                // A fresh subscription always starts with the registry's full
+                // current state. Use that snapshot to reconcile: anything we
+                // still hold that is NOT in it is gone — removed while we were
+                // disconnected, or dropped by a registry that never sent (or
+                // whose) removal grain we missed. Without this such resources
+                // stay "online" in the crosspoint forever.
+                this.startRegistryResync(fullResource, resource, nmosRegistryUrl);
                 this.updateSyncConnectionState();
             };
 
@@ -502,7 +509,9 @@ export class NmosRegistryConnector {
 
             this.connections[fullResource].ws.onmessage = (message) => {
                 if(myGen !== this.registryGen) return;
-                this.updateState(JSON.parse(message.data),version);
+                let parsed:any = JSON.parse(message.data);
+                this.collectRegistryResync(fullResource, parsed);
+                this.updateState(parsed,version,nmosRegistryUrl);
             };
 
             SyncLog.log("info",  "NMOS","Subscribed to Registry: " + nmosRegistryUrl + ", " + resource + ", " + version );
@@ -621,8 +630,68 @@ export class NmosRegistryConnector {
 
     }
 
+    // ----- Registry re-sync -----
+    // Everything the registry still has arrives right after a subscription
+    // opens. We collect those ids for a short window and then drop whatever we
+    // hold that did not show up: resources that disappeared while we were
+    // disconnected produce no removal grain, so nothing else would ever clear
+    // them and the crosspoint would keep showing them as online.
+    private static RESYNC_WINDOW_MS = 4000;
+    private startRegistryResync(fullResource:string, resource:string, registryUrl:string){
+        let conn:any = this.connections[fullResource];
+        if(!conn) return;
+        try{ if(conn.resyncTimer){ clearTimeout(conn.resyncTimer); } }catch(e){}
+        conn.resyncIds = new Set<string>();
+        conn.resyncTimer = setTimeout(()=>{
+            this.finishRegistryResync(fullResource, resource, registryUrl);
+        }, NmosRegistryConnector.RESYNC_WINDOW_MS);
+    }
+    private collectRegistryResync(fullResource:string, message:any){
+        let conn:any = this.connections[fullResource];
+        if(!conn || !conn.resyncIds) return;
+        try{
+            message.grain.data.forEach((g:any)=>{
+                if(typeof g.path === "string" && g.hasOwnProperty("post")){ conn.resyncIds.add(g.path); }
+            });
+        }catch(e){}
+    }
+    private finishRegistryResync(fullResource:string, resource:string, registryUrl:string){
+        let conn:any = this.connections[fullResource];
+        if(!conn || !conn.resyncIds) return;
+        const seen:Set<string> = conn.resyncIds;
+        conn.resyncIds  = null;
+        conn.resyncTimer = null;
+
+        const type = resource.replace(/^\//, "");
+        if(!this.nmosState[type]) return;
+        // With a single registry an entry that carries no source stamp is ours
+        // too (it predates this build). With several registries connected we
+        // only ever touch what we know came from THIS one.
+        const soleRegistry = this.nmosRegistryList.length <= 1;
+        let removed:string[] = [];
+        for(const id of Object.keys(this.nmosState[type])){
+            if(seen.has(id)) continue;
+            const src = this.nmosState[type][id]?.["_sourceRegistry"];
+            if(src === registryUrl || (!src && soleRegistry)){
+                delete this.nmosState[type][id];
+                removed.push(id);
+            }
+        }
+        if(removed.length > 0){
+            SyncLog.log("info", "NMOS", "Re-sync with " + registryUrl + ": dropped " + removed.length + " " + type +
+                " the registry no longer has.", { ids: removed.slice(0, 20) });
+            if(type === "nodes"){
+                removed.forEach((id)=>{ try{ DdnsService.instance?.removeNode(id).catch(()=>{}); }catch(e){} });
+            }
+            this.scheduleSyncNmos();
+            // Same follow-up as a removal grain: without this the crosspoint
+            // keeps its last availability verdict and the entries stay green.
+            this.updateCrosspoint();
+        }
+    }
+
     updateNewNmosItemTimer:any|null = null;
-    private updateState(message: any, version:string) {
+    private updateState(message: any, version:string, registryUrl:string = "") {
         //console.log("updates from registry: " + message.type)
         let newItem = false;
         let type = "";
@@ -654,6 +723,7 @@ export class NmosRegistryConnector {
                                 }
 
                                 postData["_sourceVersion"] = version;
+                                if(registryUrl){ postData["_sourceRegistry"] = registryUrl; }
 
                                 NmosRegistryConnector.hookCallbackList[type].forEach((f)=>{
                                     f(g.path, postData);
@@ -704,9 +774,14 @@ export class NmosRegistryConnector {
 
                         }
                     } else {
-                        // remove element
+                        // Remove element. NO version guard here: the cascade
+                        // keeps exactly ONE live subscription per resource, and
+                        // after a reconnect it may sit on a different Query API
+                        // version than the one that added the entry. Requiring a
+                        // match meant such removals were dropped on the floor and
+                        // the resource stayed "online" in the crosspoint forever.
                         try {
-                            if(this.nmosState[type][g.path]["_sourceVersion"] == version){
+                            if(this.nmosState[type][g.path]){
                                 delete this.nmosState[type][g.path];
                                 // DNS Push: a node that's gone from the
                                 // registry should not keep a stale DNS entry.
