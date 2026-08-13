@@ -50,10 +50,20 @@
     function deviceDisplayLabel(dev:any){
       return dev?.displayLabel || dev?.alias || dev?.name || "";
     }
-    // Device-only name (no "<Node> - " prefix) — used when the device sits
-    // inside a node band, where the node name is already shown in the band.
+    // Device-only name (no "<Node> - " prefix). Every device label now
+    // carries its node as a separate small line above it, so the combined
+    // "<Node> - <Device>" form is never rendered in the matrix.
     function deviceDisplayLabelShort(dev:any){
       return dev?.displayLabelShort || deviceDisplayLabel(dev);
+    }
+
+    // Only render the node line when there IS a node name and it isn't just
+    // a repeat of the device name (some devices register node and device
+    // under the same label — showing it twice looks like a bug).
+    function nodeTagVisible(dev:any):boolean{
+      let n = ("" + (dev?.nodeLabel || "")).trim();
+      if(!n) return false;
+      return n.toLowerCase() !== ("" + deviceDisplayLabelShort(dev)).trim().toLowerCase();
     }
 
     // ----- Node grouping (same rule as the Details page) -----
@@ -93,42 +103,10 @@
       return out;
     }
 
-    // Number of matrix columns a sender device currently occupies — must
-    // mirror the thead markup exactly (1 device column + one column per
-    // flow while expanded).
-    function senderDevCols(dev:any):number{
-      let cols = 1;
-      if(isSenderExpanded(dev.id)){
-        flowTypes.forEach((t)=>{ cols += (dev.senders && Array.isArray(dev.senders[t])) ? dev.senders[t].length : 0; });
-      }
-      return cols;
-    }
-    function groupSenderCols(g:CpNodeGroup):number{
-      let cols = 0;
-      g.devices.forEach((d)=>{ cols += senderDevCols(d); });
-      return cols;
-    }
-    // Only render the band header row (and shift the sticky header down)
-    // when at least one node actually has multiple devices.
-    $: hasSenderBands = senderGroups.some(g => g.grouped);
-    // Same for the vertical node strip left of the receiver rows.
-    $: hasReceiverBands = receiverGroups.some(g => g.grouped);
-
-    // Row count of a receiver device (device row + one row per flow while
-    // expanded) — the vertical node strip spans the whole group via rowspan,
-    // so this must mirror the tbody markup exactly.
-    function receiverDevRows(dev:any):number{
-      let rows = 1;
-      if(isReceiverExpanded(dev.id)){
-        flowTypes.forEach((t)=>{ rows += (dev.receivers && Array.isArray(dev.receivers[t])) ? dev.receivers[t].length : 0; });
-      }
-      return rows;
-    }
-    function groupReceiverRows(g:CpNodeGroup):number{
-      let rows = 0;
-      g.devices.forEach((d)=>{ rows += receiverDevRows(d); });
-      return rows;
-    }
+    // NOTE the band/strip geometry helpers (senderDevCols, groupSenderCols,
+    // receiverDevRows, groupReceiverRows, bandLabelVisible) went away with
+    // the node bands: every device label carries its own node line now, so
+    // there is no colspan/rowspan left that has to mirror the markup.
 
     // Force a matrix re-render. The template renders rows/columns from the
     // GROUP arrays and connect cells from the flat arrays — every state
@@ -142,16 +120,6 @@
       senderGroups = [...senderGroups];
       receiverGroups = [...receiverGroups];
     }
-
-    // Single-device node whose band text would just repeat the device label
-    // right next to it → leave the band empty (geometry stays uniform, no
-    // duplicated name). Grouped nodes always show their label.
-    function bandLabelVisible(g:CpNodeGroup):boolean{
-      if(g.grouped){ return true; }
-      let d = g.devices[0];
-      return !!d && g.label.toLowerCase() !== deviceDisplayLabelShort(d).toLowerCase();
-    }
-
 
     function getFlowTypeIcon(type:any, source=true){
       if(source){
@@ -1089,12 +1057,12 @@
     }
 
     // A BCP-008 statusMessage / overallStatusMessage is retained by the device
-    // until the next counter reset, so once the status has recovered (below
-    // PartiallyHealthy) the text describes a PAST condition, not the current
-    // one. Prefix it with "previous" so that's unambiguous in the modal.
+    // until the next counter reset, so on a recovered status it describes a
+    // PAST condition. Devices word that themselves ("Previously: no essence
+    // …"), so we show the message verbatim — prefixing it here produced
+    // "previous: Previously: …".
     function monitorMsg(status:number, message:string){
-      if(!message) return "";
-      return status >= 2 ? message : "previous: " + message;
+      return message || "";
     }
 
     // Status modal (click on the symbol): full breakdown + counter reset.
@@ -1250,7 +1218,7 @@
     </ul>
 
 
-    <div class="cp-container" class:cp-has-node-bands={hasSenderBands} class:cp-has-node-vbands={hasReceiverBands} class:cp-scrolling={isScrolling} on:scroll={onMatrixScroll}>
+    <div class="cp-container" class:cp-scrolling={isScrolling} on:scroll={onMatrixScroll}>
       <div class="cp-limit-container">
 
       <!-- Axis legend in the (otherwise empty) sticky corner: senders run
@@ -1262,27 +1230,15 @@
 </div>
       <table class="cp-table">
         <thead>
-                {#if hasSenderBands}
-                <tr class="cp-node-band-row">
-                    {#if hasReceiverBands}<th class="cp-node-vcol"></th>{/if}
-                    <th class="cp-node-band-corner"></th>
-                    {#each senderGroups as sg}
-                      <th class="cp-node-band" colspan={groupSenderCols(sg)}>
-                        {#if bandLabelVisible(sg)}
-                          <span class="cp-node-band-label" use:OverlayMenuService.tooltip data-tooltip="{sg.label}">{sg.label}</span>
-                        {/if}
-                      </th>
-                    {/each}
-                </tr>
-                {/if}
                 <tr>
-                    {#if hasReceiverBands}<th class="cp-node-vcol"></th>{/if}
                     <th class="cp-corner"></th>
                     {#each senderGroups as sg}
                     {#each sg.devices as dev}
                       <th class="cp-device" class:expanded={isSenderExpanded(dev.id)} on:click={()=>toggleExpandSender(dev.id)}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
-                        --><span class="cp-label {(dev.hidden?"hidden":"")}">{hasSenderBands ? deviceDisplayLabelShort(dev) : deviceDisplayLabel(dev)}<!--
+                        --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
+                        -->{#if nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
+                        -->{deviceDisplayLabelShort(dev)}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
                               data-tooltip={"BCP-008: " + dev.monitorSummaryTx.count + (dev.monitorSummaryTx.count === 1 ? " sender " : " senders ") + (dev.monitorSummaryTx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryTx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryTx.count}</span>{/if}<!--
@@ -1325,18 +1281,11 @@
               {#each receiverGroups as rg}
               {#each rg.devices as dev, devIdx}
                 <tr class="cp-device" class:expanded={isReceiverExpanded(dev.id)}>
-                  {#if hasReceiverBands && devIdx === 0}
-                    <!-- Every node group gets its vertical strip — including
-                         single-device nodes, so the left edge looks uniform. -->
-                    <td class="cp-node-vband" rowspan={groupReceiverRows(rg)}>
-                      {#if bandLabelVisible(rg)}
-                        <span class="cp-node-vband-label" use:OverlayMenuService.tooltip data-tooltip="{rg.label}">{rg.label}</span>
-                      {/if}
-                    </td>
-                  {/if}
                   <td class="cp-line-stick" on:click={()=>toggleExpandReceiver(dev.id)}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
-                    --><span class="cp-label {(dev.hidden?"hidden":"")}">{hasReceiverBands ? deviceDisplayLabelShort(dev) : deviceDisplayLabel(dev)}<!--
+                    --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
+                    -->{#if nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
+                    -->{deviceDisplayLabelShort(dev)}<!--
                     -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip
                           data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryRx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryRx.count}</span>{/if}<!--

@@ -84,10 +84,11 @@ $cp-border: 1px solid transparent;
                 font-size: 15px;
                 line-height: 1;
             }
-            // Bottom edge of the corner, reading into the sender columns.
+            // Top edge of the corner, next to the sender column headers —
+            // NOT down by the matrix, where it read as a label for the grid.
             .cp-axis-senders {
                 right: 10px;
-                bottom: 8px;
+                top: 10px;
             }
             // Left edge, rotated a quarter turn CLOCKWISE so it reads
             // top-to-bottom and the shared arrow glyph ends up pointing down
@@ -158,6 +159,35 @@ $cp-border: 1px solid transparent;
                     display:block
                 }
             }
+        }
+
+        // NMOS node of a device, shown as its own small line right above the
+        // device name — on BOTH axes, for every device, whether its node has
+        // one device or ten. Replaces the old node band / vertical strip,
+        // which had to truncate node names into a 20px column. Deliberately
+        // grey rather than tinted: it is context, the device name stays the
+        // thing you read.
+        .cp-node-tag {
+            display: block;
+            font-size: 9px;
+            line-height: 10px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: theme('colors.neutral-500');
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        // Two lines have to fit the SAME 32px row as a one-line label —
+        // the matrix cells are 32px and the grid must stay square. Tighten
+        // the label box only where a node line is actually present, so
+        // devices without a node keep the roomier single-line look.
+        .cp-label:has(.cp-node-tag) {
+            padding-top: 1px;
+            padding-bottom: 1px;
+            line-height: 19px;
         }
 
         // BCP-008 health badge next to sender/receiver labels: orange
@@ -600,114 +630,28 @@ $cp-border: 1px solid transparent;
         // ----- Node bands: devices grouped by their NMOS node -----
         // Slim, deliberately subtle: muted text + a thin bracket line, no
         // filled pill — the bands are orientation aids, not primary content.
-        .cp-table thead tr.cp-node-band-row th {
-            position: sticky;
-            top: 0;
-            z-index: 9;
-            height: $cp-bandSize;
-            min-height: $cp-bandSize;
-            max-height: $cp-bandSize;
-            min-width: 0;
-            max-width: none;
-            padding: 0;
-            vertical-align: bottom;
-            background-color: theme('colors.base-100');
+        
 
-            &.cp-node-band-corner {
-                left: 0;
-                z-index: 11;
-                min-width: $cp-headerSize;
-                max-width: $cp-headerSize;
-            }
-        }
-
-        .cp-node-band-label {
-            // Absolutely positioned so a LONG node label can never widen the
-            // (possibly few and narrow) columns it spans — a band cell that
-            // pushed its column wider used to shatter the header pill stack
-            // below it. The sticky th is the positioning context; the text
-            // simply ellipsises inside whatever width the columns dictate.
-            position: absolute;
-            left: 8px;
-            right: 8px;
-            bottom: 0;
-            padding: 1px 8px 2px 8px;
-            font-size: 11px;
-            font-weight: 500;
-            line-height: 15px;
-            color: theme('colors.slate.500');
-            border-bottom: 1px solid rgba(150, 150, 150, 0.3);
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            text-align: center;
-            cursor: default;
-        }
+        
 
         // Narrow extra column hosting the vertical node strip (only rendered
         // while at least one receiver group exists).
-        .cp-table thead th.cp-node-vcol {
-            min-width: $cp-vbandSize;
-            max-width: $cp-vbandSize;
-            background-color: theme('colors.base-100');
-        }
+        
         .cp-table thead th.cp-corner {
             min-width: $cp-headerSize;
             max-width: $cp-headerSize;
         }
         // The strip itself: one rowspan cell per node group (single-device
         // nodes included), vertical text bracketing the node's receiver rows.
-        .cp-table tbody td.cp-node-vband {
-            min-width: $cp-vbandSize;
-            max-width: $cp-vbandSize;
-            position: sticky;
-            left: 0;
-            z-index: 9;
-            background-color: theme('colors.base-100');
-
-            .cp-node-vband-label {
-                position: absolute;
-                top: 3px;
-                bottom: 3px;
-                left: 2px;
-                writing-mode: vertical-rl;
-                text-orientation: mixed;
-                font-size: 11px;
-                font-weight: 500;
-                color: theme('colors.slate.500');
-                border-left: 1px solid rgba(150, 150, 150, 0.3);
-                padding-left: 2px;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                cursor: default;
-            }
-        }
+        
 
         // With the band row present the whole header grows by $cp-bandSize:
         // the device header row sticks below the band row and the corner
         // cross covers the taller intersection.
-        &.cp-has-node-bands {
-            .cp-header-cross {
-                height: calc(#{$cp-headerSize} + #{$cp-bandSize});
-            }
-            .cp-table thead tr:not(.cp-node-band-row) th {
-                top: $cp-bandSize;
-            }
-        }
+        
         // With the vertical strip column present everything sticky-left
         // shifts right by its width.
-        &.cp-has-node-vbands {
-            .cp-header-cross {
-                width: calc(#{$cp-headerSize} + #{$cp-vbandSize});
-            }
-            .cp-table tbody tr td.cp-line-stick {
-                left: $cp-vbandSize;
-            }
-            .cp-table thead tr.cp-node-band-row th.cp-node-band-corner {
-                left: $cp-vbandSize;
-            }
-        }
+        
 
         .cp-connect-flow {
             div {
