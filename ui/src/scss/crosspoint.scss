@@ -16,12 +16,15 @@ $cp-color-data:theme('colors.blue.500');
 // Connection-state colours (broadcast convention):
 //   green  = active, confirmed by NMOS — everything is fine
 //   grey dashed OUTLINE = prepared / preview / hover — staged, nothing on the wire yet
-//   orange = problems (BCP-008 partially healthy) and the brief working/pending fill
-//   red    = errors / unhealthy / TAKE
+//   amber  = BCP-008 partially healthy (a status warning)
 //   orange = working / pending — command sent, waiting for confirmation
-//   red    = reserved for ERRORS only
+//   red    = errors / unhealthy / TAKE
 $cp-color-green:#46aa14;
 $cp-color-orange:#f97316;
+// BCP-008 "partially healthy" — deliberately a yellower amber than the
+// orange used for the working/pending connection fill, so a status warning
+// and a switch in progress can't be confused at a glance.
+$cp-color-warn:#f59e0b;
 $cp-color-red:#e21e1e;
 
 
@@ -180,6 +183,15 @@ $cp-border: 1px solid transparent;
             white-space: nowrap;
         }
 
+        // A folded node stands in for several devices. Alias / hide /
+        // disconnect belong to a real device, so they stay hidden here —
+        // otherwise they would act on a synthetic entry that has no NMOS
+        // counterpart. Unfold the node to reach them.
+        .cp-node-entry {
+            .cp-edit { display: none !important; }
+            .cp-label { font-weight: 700; }
+        }
+
         // Two lines have to fit the SAME 32px row as a one-line label —
         // the matrix cells are 32px and the grid must stay square. Tighten
         // the label box only where a node line is actually present, so
@@ -204,7 +216,7 @@ $cp-border: 1px solid transparent;
             vertical-align: middle;
             cursor: default;
             svg { width: 14px; height: 14px; }
-            &.cp-mon-warn { color: $cp-color-orange; }
+            &.cp-mon-warn { color: $cp-color-warn; }
             &.cp-mon-err  { color: $cp-color-red; }
         }
 
@@ -231,7 +243,7 @@ $cp-border: 1px solid transparent;
             &:hover { opacity: 1; }
 
             &.cp-status-ok       svg { color: $cp-color-green; }
-            &.cp-status-warn     svg { color: $cp-color-orange; }
+            &.cp-status-warn     svg { color: $cp-color-warn; }
             &.cp-status-err      svg { color: $cp-color-red; }
             &.cp-status-inactive svg { color: theme('colors.neutral-500'); }
 
@@ -756,7 +768,7 @@ $cp-border: 1px solid transparent;
                     // status of all connections between the two devices
                     // wins, so a single bad stream is visible while folded.
                     &.cp-health-warn {
-                        background-color: $cp-color-orange;
+                        background-color: $cp-color-warn;
                     }
                     &.cp-health-err {
                         background-color: $cp-color-red;
@@ -800,7 +812,7 @@ $cp-border: 1px solid transparent;
                 // would otherwise out-rank the generic health colours and
                 // pin the dot to green.
                 &.active.cp-health-warn {
-                    background-color: $cp-color-orange;
+                    background-color: $cp-color-warn;
                 }
                 &.active.cp-health-err {
                     background-color: $cp-color-red;
@@ -991,7 +1003,7 @@ html[data-theme="light"] {
                     // out-rank the health colours (higher specificity than
                     // the generic .cp-health-* rules).
                     &.active.cp-health-warn {
-                        background-color: $cp-color-orange;
+                        background-color: $cp-color-warn;
                     }
                     &.active.cp-health-err {
                         background-color: $cp-color-red;
@@ -1025,7 +1037,7 @@ html[data-theme="light"] {
     font-weight: 600;
     background-color: theme('colors.neutral-600');
     &.cp-status-ok   { background-color: #46aa14; }
-    &.cp-status-warn { background-color: #f97316; }
+    &.cp-status-warn { background-color: #f59e0b; }
     &.cp-status-err  { background-color: #e21e1e; }
 }
 // Domain state as a traffic-light dot (green / orange / red, grey =
@@ -1039,7 +1051,7 @@ html[data-theme="light"] {
     margin-right: 8px;
     background-color: theme('colors.neutral-600');
     &.cp-status-ok   { background-color: #46aa14; }
-    &.cp-status-warn { background-color: #f97316; }
+    &.cp-status-warn { background-color: #f59e0b; }
     &.cp-status-err  { background-color: #e21e1e; }
 }
 .cp-monitor-dot-label {

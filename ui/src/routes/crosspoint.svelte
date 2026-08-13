@@ -103,6 +103,79 @@
       return out;
     }
 
+    // ----- Node level -----
+    // A node with SEVERAL devices can be folded into a single row/column.
+    // Instead of a separate rendering path, the fold produces one synthetic
+    // "device" whose flow lists are the merged flows of the whole node — so
+    // the cell index, the aggregation and the geometry keep working exactly
+    // as they do for a real device, one level up. A node with a single
+    // device is never folded: there would be nothing to reveal, and the
+    // extra click would only get in the way.
+    let searchExpandedNodes:{[dir:string]:string[]} = { senders:[], receivers:[] };
+    function isNodeExpanded(dir:string, key:string):boolean{
+      if(searchExpandedNodes[dir] && searchExpandedNodes[dir].includes(key)){ return true; }
+      let list = filter.expandedNodes ? filter.expandedNodes[dir] : null;
+      return Array.isArray(list) && list.includes(key);
+    }
+    function toggleExpandNode(dir:string, key:string){
+      if(!filter.expandedNodes){ filter.expandedNodes = { senders:[], receivers:[] }; }
+      if(!Array.isArray(filter.expandedNodes[dir])){ filter.expandedNodes[dir] = []; }
+      let idx = searchExpandedNodes[dir].indexOf(key);
+      if(idx != -1){ searchExpandedNodes[dir].splice(idx,1); }
+      idx = filter.expandedNodes[dir].indexOf(key);
+      if(idx == -1){ filter.expandedNodes[dir].push(key); }
+      else{ filter.expandedNodes[dir].splice(idx,1); }
+      saveFilter();
+      doFilter();
+    }
+
+    function mergeFlows(devices:any[], side:"senders"|"receivers"){
+      let out:any = {};
+      flowTypes.forEach((t)=>{
+        let list:any[] = [];
+        devices.forEach((d)=>{ if(d[side] && Array.isArray(d[side][t])){ list = list.concat(d[side][t]); } });
+        out[t] = list;
+      });
+      return out;
+    }
+    function mergeMonitorSummary(devices:any[], key:string){
+      let worst = 0, count = 0;
+      devices.forEach((d)=>{
+        let s = d[key];
+        if(s && s.worst >= 2){ worst = Math.max(worst, s.worst); count += (s.count || 0); }
+      });
+      return worst >= 2 ? { worst, count } : null;
+    }
+    /** One synthetic device standing in for a whole folded node. */
+    function makeNodeEntry(g:CpNodeGroup, side:"senders"|"receivers"){
+      return {
+        id: "cpnode_" + g.key,
+        isNode: true,
+        nodeKey: g.key,
+        deviceCount: g.devices.length,
+        name: g.label, alias: g.label,
+        displayLabel: g.label, displayLabelShort: g.label,
+        nodeLabel: "",              // the label IS the node — no second line
+        hidden: false,
+        available: g.devices.some((d:any)=>d.available),
+        senders: side === "senders" ? mergeFlows(g.devices, "senders") : mergeFlows([], "senders"),
+        receivers: side === "receivers" ? mergeFlows(g.devices, "receivers") : mergeFlows([], "receivers"),
+        monitorSummaryTx: mergeMonitorSummary(g.devices, "monitorSummaryTx"),
+        monitorSummaryRx: mergeMonitorSummary(g.devices, "monitorSummaryRx"),
+      };
+    }
+    /** Replace the devices of every folded multi-device node with its
+     *  synthetic entry — headers, rows and cells all read the group arrays,
+     *  so doing it here keeps every axis consistent by construction. */
+    function collapseNodes(groups:CpNodeGroup[], dir:"senders"|"receivers"):CpNodeGroup[]{
+      return groups.map((g)=>{
+        if(g.devices.length > 1 && !isNodeExpanded(dir, g.key)){
+          return { ...g, devices: [ makeNodeEntry(g, dir) ] };
+        }
+        return g;
+      });
+    }
+
     // NOTE the band/strip geometry helpers (senderDevCols, groupSenderCols,
     // receiverDevRows, groupReceiverRows, bandLabelVisible) went away with
     // the node bands: every device label carries its own node line now, so
@@ -233,6 +306,7 @@
       receivers = [];
       searchExpandedReceivers = [];
       searchExpandedSenders = [];
+      searchExpandedNodes = { senders:[], receivers:[] };
 
       if(sourceState.devices){
         sourceState.devices.forEach((dev:any)=>{
@@ -351,6 +425,10 @@
             if(flowFound && !self){
               searchExpandedReceivers.push(dev.id);
             }
+            if(flowFound || self){
+              let nk = dev.nodeId || dev.id;
+              if(!searchExpandedNodes.receivers.includes(nk)){ searchExpandedNodes.receivers.push(nk); }
+            }
 
             
             if(flowFound || self ){
@@ -381,6 +459,10 @@
             if(flowFound && !self){
               searchExpandedSenders.push(dev.id);
             }
+            if(flowFound || self){
+              let nk = dev.nodeId || dev.id;
+              if(!searchExpandedNodes.senders.includes(nk)){ searchExpandedNodes.senders.push(nk); }
+            }
 
 
             if(flowFound || self ){
@@ -394,9 +476,9 @@
         // the flat arrays in group order — the tbody connect-cell loops
         // iterate the flat arrays, so their column/row sequence must match
         // the grouped header markup exactly.
-        senderGroups = groupDevicesByNode(senders);
+        senderGroups = collapseNodes(groupDevicesByNode(senders), "senders");
         senders = flattenGroups(senderGroups);
-        receiverGroups = groupDevicesByNode(receivers);
+        receiverGroups = collapseNodes(groupDevicesByNode(receivers), "receivers");
         receivers = flattenGroups(receiverGroups);
 
         rebuildCellIndex();
@@ -441,10 +523,15 @@
     function collapseAll(){
       filter.expanded.senders = [];
       filter.expanded.receivers = [];
+      filter.expandedNodes = { senders:[], receivers:[] };
+      searchExpandedNodes = { senders:[], receivers:[] };
       searchExpandedSenders = [];
       searchExpandedReceivers = [];
       saveFilter();
-      refreshMatrix();
+      // doFilter, not refreshMatrix: folding the NODE level happens while
+      // the axes are built, so the rows/columns have to be rebuilt. Device
+      // expansion alone is read in the template and would repaint fine.
+      doFilter();
     }
 
     function toggleExpandSender(id:string){
@@ -506,7 +593,15 @@
 
 
     function connect (srcDev:any,src:any,dstDev:any, dst:any, force = false) {
-     
+
+        // A folded node stands for every device behind it — switching from
+        // there could change a dozen connections on one stray click. Such a
+        // cell drills in instead: it unfolds the node(s) it belongs to.
+        if((srcDev && srcDev.isNode) || (dstDev && dstDev.isNode)){
+          if(srcDev && srcDev.isNode){ toggleExpandNode("senders", srcDev.nodeKey); }
+          if(dstDev && dstDev.isNode){ toggleExpandNode("receivers", dstDev.nodeKey); }
+          return;
+        }
 
 
         if(src && dst){
@@ -627,6 +722,9 @@
     let previewTimer:any = null;
     
     function getDeviceConnectionPreview(srcDev:any,src:any,dstDev:any, dst:any){
+      // No preview across a folded node: the preview asks the server which
+      // flows a click would connect, and a node cell doesn't connect.
+      if((srcDev && srcDev.isNode) || (dstDev && dstDev.isNode)){ return; }
       // Cancel the pending preview first — moving the pointer quickly across
       // the matrix used to leave orphan timers that later fired a full
       // repaint for a cell the pointer had long left.
@@ -1234,10 +1332,11 @@
                     <th class="cp-corner"></th>
                     {#each senderGroups as sg}
                     {#each sg.devices as dev}
-                      <th class="cp-device" class:expanded={isSenderExpanded(dev.id)} on:click={()=>toggleExpandSender(dev.id)}><!--
+                      <th class="cp-device" class:cp-node-entry={dev.isNode} class:expanded={isSenderExpanded(dev.id)}
+                          on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                         --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                        -->{#if nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
+                        -->{#if dev.isNode}<span class="cp-node-tag">{dev.deviceCount} devices</span>{:else if nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
                         -->{deviceDisplayLabelShort(dev)}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
@@ -1281,10 +1380,11 @@
               {#each receiverGroups as rg}
               {#each rg.devices as dev, devIdx}
                 <tr class="cp-device" class:expanded={isReceiverExpanded(dev.id)}>
-                  <td class="cp-line-stick" on:click={()=>toggleExpandReceiver(dev.id)}><!--
+                  <td class="cp-line-stick" class:cp-node-entry={dev.isNode}
+                      on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                    -->{#if nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
+                    -->{#if dev.isNode}<span class="cp-node-tag">{dev.deviceCount} devices</span>{:else if nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
                     -->{deviceDisplayLabelShort(dev)}<!--
                     -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip
