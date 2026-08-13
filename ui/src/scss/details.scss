@@ -1,6 +1,8 @@
 // Colors aligned with crosspoint.scss
 $det-color-video: theme('colors.green.500');
-$det-color-audio: theme('colors.amber.500');
+// true yellow, kept clear of the amber used for BCP-008 / leg warnings
+$det-color-audio: theme('colors.yellow.400');
+$det-color-audio-fill: theme('colors.yellow.500');
 $det-color-data:  theme('colors.blue.500');
 
 .details-page {
@@ -439,7 +441,7 @@ $det-color-data:  theme('colors.blue.500');
 
         &.active {
             &.cp-type-video { background-color: $det-color-video; }
-            &.cp-type-audio { background-color: $det-color-audio; }
+            &.cp-type-audio { background-color: $det-color-audio-fill; }
             &.cp-type-data  { background-color: $det-color-data;  }
             svg { color: #ffffff; }
         }

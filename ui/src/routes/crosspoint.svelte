@@ -50,20 +50,20 @@
     function deviceDisplayLabel(dev:any){
       return dev?.displayLabel || dev?.alias || dev?.name || "";
     }
-    // Device-only name (no "<Node> - " prefix). Every device label now
-    // carries its node as a separate small line above it, so the combined
-    // "<Node> - <Device>" form is never rendered in the matrix.
+    // Device-only name (no "<Node> - " prefix), used for the device rows
+    // inside an open node strip, where the strip above already names the node.
     function deviceDisplayLabelShort(dev:any){
       return dev?.displayLabelShort || deviceDisplayLabel(dev);
     }
 
-    // Only render the node line when there IS a node name and it isn't just
-    // a repeat of the device name (some devices register node and device
-    // under the same label — showing it twice looks like a bug).
-    function nodeTagVisible(dev:any):boolean{
-      let n = ("" + (dev?.nodeLabel || "")).trim();
-      if(!n) return false;
-      return n.toLowerCase() !== ("" + deviceDisplayLabelShort(dev)).trim().toLowerCase();
+    /** Exactly one line per entry — never a node line stacked on a device line:
+     *   node strip (node with several devices)  → the node name
+     *   device row inside an open strip         → the device name alone
+     *   node with a single device               → "<Node> - <Device>"
+     *  The combined form is what the server already composes in displayLabel. */
+    function deviceRowLabel(dev:any, inStrip:boolean){
+      if(dev?.isNode || inStrip){ return deviceDisplayLabelShort(dev); }
+      return deviceDisplayLabel(dev);
     }
 
     // ----- Node grouping (same rule as the Details page) -----
@@ -1350,8 +1350,7 @@
                           on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                         --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                        -->{#if !dev.isNode && !inStrip && nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
-                        -->{deviceDisplayLabelShort(dev)}<!--
+                        -->{deviceRowLabel(dev, inStrip)}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
                               data-tooltip={"BCP-008: " + dev.monitorSummaryTx.count + (dev.monitorSummaryTx.count === 1 ? " sender " : " senders ") + (dev.monitorSummaryTx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryTx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryTx.count}</span>{/if}<!--
@@ -1399,8 +1398,7 @@
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                    -->{#if !dev.isNode && !inStrip && nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
-                    -->{deviceDisplayLabelShort(dev)}<!--
+                    -->{deviceRowLabel(dev, inStrip)}<!--
                     -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip
                           data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryRx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryRx.count}</span>{/if}<!--

@@ -10,7 +10,12 @@ $cp-vbandSize: 20px;      /* vertical node strip left of the receiver rows */
 $cp-color-grey:#aaaaaa;
 $cp-color-dark-grey:#333333;
 $cp-color-video: theme('colors.green.500');
-$cp-color-audio:theme('colors.amber.500');
+// Audio is a true yellow, NOT amber: amber is reserved for the BCP-008
+// "partially healthy" warning ($cp-color-warn below), and a microphone icon
+// must never be mistaken for a status warning. The fill variant is one step
+// darker so the white icon on the active tile stays readable.
+$cp-color-audio:theme('colors.yellow.400');
+$cp-color-audio-fill:theme('colors.yellow.500');
 $cp-color-data:theme('colors.blue.500');
 
 // Connection-state colours (broadcast convention):
@@ -164,25 +169,6 @@ $cp-border: 1px solid transparent;
             }
         }
 
-        // NMOS node of a device, shown as its own small line right above the
-        // device name — on BOTH axes, for every device, whether its node has
-        // one device or ten. Replaces the old node band / vertical strip,
-        // which had to truncate node names into a 20px column. Deliberately
-        // grey rather than tinted: it is context, the device name stays the
-        // thing you read.
-        .cp-node-tag {
-            display: block;
-            font-size: 9px;
-            line-height: 10px;
-            font-weight: 700;
-            letter-spacing: 0.05em;
-            text-transform: uppercase;
-            color: theme('colors.neutral-500');
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
         // A node group is one continuous tinted block: the strip, its
         // devices and their flows share the same backing, running seamlessly
         // across the label column AND the matrix cells. No borders or accent
@@ -206,16 +192,6 @@ $cp-border: 1px solid transparent;
         thead th.cp-device.cp-grp,
         thead th.cp-flow.cp-grp {
             background-color: theme('colors.base-content / 7%');
-        }
-
-        // Two lines have to fit the SAME 32px row as a one-line label —
-        // the matrix cells are 32px and the grid must stay square. Tighten
-        // the label box only where a node line is actually present, so
-        // devices without a node keep the roomier single-line look.
-        .cp-label:has(.cp-node-tag) {
-            padding-top: 1px;
-            padding-bottom: 1px;
-            line-height: 19px;
         }
 
         // BCP-008 health badge next to sender/receiver labels: orange
@@ -330,7 +306,7 @@ $cp-border: 1px solid transparent;
             &.active {
 
                 &.cp-type-video { background-color: $cp-color-video; }
-                &.cp-type-audio { background-color: $cp-color-audio; }
+                &.cp-type-audio { background-color: $cp-color-audio-fill; }
                 &.cp-type-data { background-color: $cp-color-data; }
 
                 svg {
@@ -905,7 +881,7 @@ html[data-theme="light"] {
     
                 &.active {
                     &.cp-type-video { background-color: $cp-color-video; }
-                    &.cp-type-audio { background-color: $cp-color-audio; }
+                    &.cp-type-audio { background-color: $cp-color-audio-fill; }
                     &.cp-type-data { background-color: $cp-color-data; }
     
                     svg {
