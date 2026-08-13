@@ -489,13 +489,18 @@ class CrosspointUpdateThread{
             return labels.length;
         };
 
+        // Per direction: a device with several receiver groups needs its
+        // receiver groups counted, not its sender groups. Sharing the
+        // sender-derived count was why a device like a gateway with three
+        // receiver groups produced three rows that all read just the device
+        // name — indistinguishable, and it looked like the same device three
+        // times over.
+        const groupLabelCountRx: Map<string, number> = new Map();
         if(this.nmosState){
             for(const devId of Object.keys(this.nmosState.devices || {})){
                 const dev: any = this.nmosState.devices[devId];
-                // NOTE the receiver path historically counted the device's
-                // SENDER list too (see the comment further down); both
-                // directions therefore use the same sender-derived count.
                 groupLabelCount.set(devId, countGroups(dev && dev.senders, this.nmosState.senders));
+                groupLabelCountRx.set(devId, countGroups(dev && dev.receivers, this.nmosState.receivers));
             }
         }
 
@@ -653,13 +658,17 @@ class CrosspointUpdateThread{
                     groupId = 'nmosgrp_' +md5(group+recv.device_id);
                     groupHint = true;
                     if(this.nmosState.devices.hasOwnProperty(recv.device_id)){
-                        // Plain device label — no " - <group>" suffix here.
-                        // The removed loop looked up the device's SENDER id
-                        // list inside nmosState.receivers, so it never found
-                        // anything and the suffix branch was unreachable.
-                        // Kept as-is on purpose: making it work would rename
-                        // every existing receiver group in the field.
-                        groupLabel = this.nmosState.devices[recv.device_id].label;
+                        // Name the group, exactly like the sender side does.
+                        // This used to be the plain device label for every
+                        // group: a device with three receiver groups produced
+                        // three rows all reading "<device>", which looks like
+                        // the same device listed three times instead of three
+                        // groups of one device.
+                        if((groupLabelCountRx.get(recv.device_id) || 0) > 1){
+                            groupLabel = this.nmosState.devices[recv.device_id].label + " - " + group;
+                        }else{
+                            groupLabel = this.nmosState.devices[recv.device_id].label;
+                        }
 
                     }else{
                         groupLabel = group;

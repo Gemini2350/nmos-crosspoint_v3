@@ -196,10 +196,12 @@
         available: g.devices.some((d:any)=>d.available),
         senders: side === "senders" ? flows : noFlows,
         receivers: side === "receivers" ? flows : noFlows,
-        // Rolled-up health only while folded — open, the device rows below
-        // show their own and repeating it here would double the counts.
-        monitorSummaryTx: open ? null : mergeMonitorSummary(g.devices, "monitorSummaryTx"),
-        monitorSummaryRx: open ? null : mergeMonitorSummary(g.devices, "monitorSummaryRx"),
+        // Rolled-up health, folded AND open: the node's overall status is what
+        // you look at first, and losing it the moment you open the node is
+        // exactly when you need it. The devices below repeat their own share
+        // of it — that is a breakdown, not a double count.
+        monitorSummaryTx: mergeMonitorSummary(g.devices, "monitorSummaryTx"),
+        monitorSummaryRx: mergeMonitorSummary(g.devices, "monitorSummaryRx"),
       };
     }
     /** Replace the devices of every folded multi-device node with its
