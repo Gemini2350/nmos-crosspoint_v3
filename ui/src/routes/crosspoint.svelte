@@ -1343,13 +1343,14 @@
                 <tr>
                     <th class="cp-corner"></th>
                     {#each senderGroups as sg}
+                    {@const inStrip = !!(sg.devices[0] && sg.devices[0].isNode)}
                     {#each sg.devices as dev}
-                      <th class="cp-device" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
+                      <th class="cp-device" class:cp-grp={inStrip} class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
                           class:expanded={dev.isNode ? dev.isOpen : isSenderExpanded(dev.id)}
                           on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                         --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                        -->{#if !dev.isNode && nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
+                        -->{#if !dev.isNode && !inStrip && nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
                         -->{deviceDisplayLabelShort(dev)}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
@@ -1364,7 +1365,7 @@
                       {#if isSenderExpanded(dev.id)}
                         {#each flowTypes as type}
                           {#each dev.senders[type] as flow}
-                            <th class="cp-flow"><!--
+                            <th class="cp-flow" class:cp-grp={inStrip}><!--
                               -->{#if !bcp008On}<span class="cp-expand"></span>{:else if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
                                     on:click|stopPropagation={()=>openMonitorModal(flow)}
                                     use:OverlayMenuService.tooltip data-tooltip={monitorText(flow.monitor)}><Icon src={Heart}></Icon>{#if (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}</span>{:else}<span class="cp-type cp-status cp-status-none"
@@ -1391,13 +1392,14 @@
             </thead>
             <tbody>
               {#each receiverGroups as rg}
+              {@const inStrip = !!(rg.devices[0] && rg.devices[0].isNode)}
               {#each rg.devices as dev, devIdx}
-                <tr class="cp-device" class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
+                <tr class="cp-device" class:cp-grp={inStrip} class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
                   <td class="cp-line-stick" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                    -->{#if !dev.isNode && nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
+                    -->{#if !dev.isNode && !inStrip && nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
                     -->{deviceDisplayLabelShort(dev)}<!--
                     -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip
@@ -1435,7 +1437,7 @@
 
                 {#each flowTypes as type}
                   {#each dev.receivers[type] as flow}
-                    <tr class="cp-flow">
+                    <tr class="cp-flow" class:cp-grp={inStrip}>
                       <td class="cp-line-stick">
                         {#if !bcp008On}<span class="cp-expand"></span>{:else if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
                               on:click|stopPropagation={()=>openMonitorModal(flow)}
