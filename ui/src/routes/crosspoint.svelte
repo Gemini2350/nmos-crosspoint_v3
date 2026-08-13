@@ -65,6 +65,22 @@
       if(dev?.isNode || inStrip){ return deviceDisplayLabelShort(dev); }
       return deviceDisplayLabel(dev);
     }
+    /** The node part of a row label, rendered underlined so the node is
+     *  recognisable even where it shares the line with a device. Empty unless
+     *  the label really is "<Node> - <Device>" — an operator alias replaces
+     *  the whole name, and then there is no node part to mark. */
+    function labelNodePart(dev:any, inStrip:boolean){
+      if(dev?.isNode){ return deviceDisplayLabelShort(dev); }
+      if(inStrip){ return ""; }
+      let n = ("" + (dev?.nodeLabel || "")).trim();
+      if(!n){ return ""; }
+      return deviceDisplayLabel(dev) === n + " - " + deviceDisplayLabelShort(dev) ? n : "";
+    }
+    function labelRestPart(dev:any, inStrip:boolean){
+      let n = labelNodePart(dev, inStrip);
+      if(!n || dev?.isNode){ return ""; }
+      return " - " + deviceDisplayLabelShort(dev);
+    }
 
     // ----- Node grouping (same rule as the Details page) -----
     // Devices sharing an NMOS node are clustered next to each other and get
@@ -1402,7 +1418,7 @@
                           on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                         --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                        -->{deviceRowLabel(dev, inStrip)}<!--
+                        -->{#if labelNodePart(dev, inStrip)}<span class="cp-node-name">{labelNodePart(dev, inStrip)}</span>{labelRestPart(dev, inStrip)}{:else}{deviceRowLabel(dev, inStrip)}{/if}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
                               data-tooltip={"BCP-008: " + dev.monitorSummaryTx.count + (dev.monitorSummaryTx.count === 1 ? " sender " : " senders ") + (dev.monitorSummaryTx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryTx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryTx.count}</span>{/if}<!--
@@ -1453,7 +1469,7 @@
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                    -->{deviceRowLabel(dev, inStrip)}<!--
+                    -->{#if labelNodePart(dev, inStrip)}<span class="cp-node-name">{labelNodePart(dev, inStrip)}</span>{labelRestPart(dev, inStrip)}{:else}{deviceRowLabel(dev, inStrip)}{/if}<!--
                     -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip
                           data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryRx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryRx.count}</span>{/if}<!--

@@ -178,29 +178,25 @@ $cp-border: 1px solid transparent;
             }
         }
 
-        // A node group is one continuous tinted block: the strip, its
-        // devices and their flows share the same backing, running seamlessly
-        // across the label column AND the matrix cells. No borders or accent
-        // bars — the surface alone marks what belongs together. Single-device
-        // nodes have no strip and therefore no tint.
+        // Hierarchy without any tinted surfaces: the top entry of a block —
+        // a node strip, or a device that is its own node — is simply set in
+        // bolder type, everything nested under it keeps the normal weight and
+        // is stepped in. No grey blocks, in the label column or the matrix.
         // The strip carries a rename pencil (it renames the NMOS node, not a
         // device) — hiding/disconnecting only makes sense per device.
-        .cp-node-entry {
+        .cp-top {
             .cp-label {
                 font-weight: 700;
                 letter-spacing: 0.02em;
             }
             .cp-expand svg { stroke-width: 2.4; }
         }
-        // The block itself — same tint on every row/column of the group so
-        // the surface is unbroken.
-        tbody tr.cp-grp td.cp-line-stick,
-        tbody tr.cp-grp td.cp-connect-device div,
-        tbody tr.cp-grp td.cp-connect-flow div,
-        tbody tr.cp-grp td.cp-connect-mismatch div,
-        thead th.cp-device.cp-grp,
-        thead th.cp-flow.cp-grp {
-            background-color: theme('colors.base-content / 7%');
+        // The node name itself, underlined — on a "<Node> - <Device>" row it
+        // marks which half is the node without a second line or a tint.
+        .cp-node-name {
+            text-decoration: underline;
+            text-underline-offset: 2px;
+            text-decoration-thickness: 1px;
         }
 
         // BCP-008 health badge next to sender/receiver labels: orange
@@ -417,13 +413,11 @@ $cp-border: 1px solid transparent;
             }
         }
 
-        // ----- The label column is a stack of blocks -----
-        // A block starts at the TOP level — a node strip, or a device that is
-        // its own node ("<Node> - <Device>") — and runs through everything
-        // nested under it. The top level is grey, everything below sits on the
-        // page colour, so one look tells you what is a heading and what hangs
-        // off it. Rounding happens only at the two ends of a block, 4px of air
-        // separate blocks; inside a block there is no break at all.
+        // ----- The label column -----
+        // Every row is the same 32px cell, so the matrix stays a clean square
+        // grid. The label carries no card of its own any more; it only keeps
+        // the page colour so it can overlap its neighbours (the -32px trick)
+        // without letting anything shine through.
         tbody tr td.cp-line-stick {
             min-height: 32px;
             max-height: 32px;
@@ -431,40 +425,14 @@ $cp-border: 1px solid transparent;
             padding-bottom: 0px;
             .cp-label {
                 // Air between the label column and the first matrix cell.
-                // Taken off the card's own width, NOT from cell padding or the
-                // -32px overhang: both of those change how much room is left
-                // in the row and push the type tile onto a second line.
+                // Taken off the label's own width, NOT from cell padding or
+                // the -32px overhang: both of those change how much room is
+                // left in the row and push the type tile onto a second line.
                 max-width: $cp-headerSize - $cp-gutter;
                 min-width: $cp-headerSize - $cp-gutter;
                 background-color: $cp-color-page;
                 border-radius: 0px;
             }
-        }
-        tbody tr.cp-top td.cp-line-stick {
-            min-height: 36px;
-            max-height: 36px;
-            padding-top: 4px;
-            .cp-label {
-                background-color: $cp-color-dark-grey;
-                border-radius: $cp-round $cp-round 0px 0px;
-            }
-        }
-        // Last row of a block: the next row opens a new one, or there is none.
-        tbody tr:last-child td.cp-line-stick,
-        tbody tr:has(+ tr.cp-top) td.cp-line-stick {
-            min-height: 36px;
-            max-height: 36px;
-            padding-bottom: 4px;
-            .cp-label { border-radius: 0px 0px $cp-round $cp-round; }
-        }
-        // A block without children (folded node, folded device) is one pill.
-        tbody tr.cp-top:last-child td.cp-line-stick,
-        tbody tr.cp-top:has(+ tr.cp-top) td.cp-line-stick {
-            min-height: 32px;
-            max-height: 32px;
-            padding-top: 0px;
-            padding-bottom: 0px;
-            .cp-label { border-radius: $cp-round; }
         }
 
         // ----- Hierarchy: node → device → flow -----
@@ -612,11 +580,9 @@ $cp-border: 1px solid transparent;
                 }
 
 
-                // ----- Blocks, turned 90° (sender axis) -----
-                // Identical model to the receiver rows: a block starts at a
-                // top-level column (node strip, or a device that is its own
-                // node), the top level is grey, everything nested under it
-                // sits on the page colour, rounding only at the two ends.
+                // ----- Sender columns -----
+                // Same model as the receiver rows: no card colours, every
+                // column the same width so the matrix stays a square grid.
                 & {
                     min-width: 32px;
                     max-width: 32px;
@@ -625,40 +591,15 @@ $cp-border: 1px solid transparent;
                     .cp-label {
                         background-color: $cp-color-page;
                         border-radius: 0px;
-                        // same gutter as the receiver rows, one axis over:
-                        // the card stops short of the first matrix row
+                        // gutter to the matrix, one axis over: the label stops
+                        // short of the first row
                         max-height: $cp-headerSize - $cp-gutter;
                         min-height: $cp-headerSize - $cp-gutter;
                     }
                 }
-                &.cp-top {
-                    min-width: 36px;
-                    max-width: 36px;
-                    padding-left: 4px;
-                    .cp-label {
-                        background-color: $cp-color-dark-grey;
-                        border-radius: $cp-round 0px 0px $cp-round;
-                    }
-                }
-                &:last-child,
-                &:has(+ .cp-top) {
-                    min-width: 36px;
-                    max-width: 36px;
-                    padding-right: 4px;
-                    .cp-label { border-radius: 0px $cp-round $cp-round 0px; }
-                }
-                &.cp-top:last-child,
-                &.cp-top:has(+ .cp-top) {
-                    min-width: 32px;
-                    max-width: 32px;
-                    padding-left: 0px;
-                    padding-right: 0px;
-                    .cp-label { border-radius: $cp-round; }
-                }
 
                 // Hierarchy step. The column reads top-down, so a level moves
-                // the chevron / heart AND the text down; the label is pulled
-                // back up by the same amount so the card stays put.
+                // the chevron / heart AND the text down.
                 &.cp-device.cp-grp:not(.cp-node-entry),
                 &.cp-flow:not(.cp-grp) {
                     .cp-expand, .cp-type.cp-status { position: relative; top: $cp-indent; }
@@ -1010,11 +951,12 @@ html[data-theme="light"] {
                 }
             }
     
-            // Top level grey, everything nested under it on the page colour
-            // (see the block model in the default theme above).
-            tbody tr.cp-top td.cp-line-stick .cp-label,
-            thead th.cp-top .cp-label {
-                background-color: theme('colors.base-300');
+            // No card colours at all — the level is carried by weight and
+            // indentation (see the default theme above). The label still
+            // paints the page colour so its -32px overhang covers cleanly.
+            tbody tr td.cp-line-stick .cp-label,
+            thead th .cp-label {
+                background-color: theme('colors.base-100');
             }
     
     
@@ -1030,14 +972,6 @@ html[data-theme="light"] {
     
     
     
-                    // Top level grey, everything nested under it on the page
-                    // colour — the old rules coloured every expanded device
-                    // and every flow column grey, which flattened the levels.
-                    &.cp-top {
-                        .cp-label {
-                            background-color: theme('colors.base-300');
-                        }
-                    }
                  }
     
                 }
