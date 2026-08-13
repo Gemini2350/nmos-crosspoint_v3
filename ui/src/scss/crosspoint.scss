@@ -184,20 +184,33 @@ $cp-border: 1px solid transparent;
         // is stepped in. No grey blocks, in the label column or the matrix.
         // The strip carries a rename pencil (it renames the NMOS node, not a
         // device) — hiding/disconnecting only makes sense per device.
+        // Three levels, three steps of type: the node is the biggest and
+        // boldest, the device sits between, the flows are smallest and
+        // quietest. Size AND contrast decrease together — the hierarchy is
+        // readable without a single line, box or tint.
         .cp-top {
             .cp-label {
                 font-weight: 700;
+                font-size: 15px;
                 letter-spacing: 0.02em;
             }
             .cp-expand svg { stroke-width: 2.4; }
         }
-        // The node name itself, underlined — on a "<Node> - <Device>" row it
-        // marks which half is the node without a second line or a tint.
-        .cp-node-name {
-            text-decoration: underline;
-            text-underline-offset: 2px;
-            text-decoration-thickness: 1px;
+        tbody tr:not(.cp-top):not(.cp-flow) td.cp-line-stick .cp-label,
+        thead th:not(.cp-top):not(.cp-flow) .cp-label {
+            font-size: 13.5px;
+            opacity: 0.84;
         }
+        tbody tr.cp-flow td.cp-line-stick .cp-label,
+        thead th.cp-flow .cp-label {
+            font-size: 12.5px;
+            font-weight: 400;
+            opacity: 0.66;
+        }
+        // The node name inside a "<Node> - <Device>" row. Kept as its own
+        // element so the node half can be styled separately — no underline,
+        // that read as a link.
+        .cp-node-name { }
 
         // BCP-008 health badge next to sender/receiver labels: orange
         // triangle = partially healthy, red circle = unhealthy. Green is

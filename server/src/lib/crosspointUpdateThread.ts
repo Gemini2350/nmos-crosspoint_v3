@@ -134,6 +134,7 @@ class CrosspointUpdateThread{
 
         if(data.hasOwnProperty('nmosState')){
             this.nmosState = data.nmosState;
+            this.pruneOrphanedFlows();
             this.updateRequest ++;
         }
 
@@ -447,6 +448,47 @@ class CrosspointUpdateThread{
         //let timeTaken = Date.now() - start;
         //console.log("- - - - - - - - Crosspoint Update -- Total time taken : " + timeTaken + " milliseconds");
         
+    }
+
+    /** A registry can outlive the truth: a device that stops advertising a
+     *  receiver leaves the old receiver resource behind in /receivers, because
+     *  the registry only garbage-collects when the whole NODE's registration
+     *  expires. The device resource itself still enumerates what it really has
+     *  — seen in the field on an AT300 that listed 3 receivers while the
+     *  registry's receiver collection carried 7 with its device_id.
+     *  So: when a device enumerates its members, anything not in that list is
+     *  a leftover and is dropped from our copy of the state. Devices that
+     *  leave the lists empty (allowed, the fields are informative) are left
+     *  alone — no list, no claim, nothing to check against. */
+    private lastOrphanLog = 0;
+    private pruneOrphanedFlows(){
+        if(!this.nmosState || !this.nmosState.devices) return;
+        let dropped: { [id:string]: string } = {};
+        for(const kind of ["senders", "receivers"]){
+            const pool:any = (this.nmosState as any)[kind];
+            if(!pool) continue;
+            for(const id of Object.keys(pool)){
+                const res:any = pool[id];
+                const dev:any = res && res.device_id ? (this.nmosState as any).devices[res.device_id] : null;
+                if(!dev) continue;
+                const list:any = dev[kind];
+                if(!Array.isArray(list) || list.length === 0) continue;
+                if(list.indexOf(id) === -1){
+                    dropped[id] = kind + " " + (res.label || id);
+                    delete pool[id];
+                }
+            }
+        }
+        const count = Object.keys(dropped).length;
+        if(count > 0 && Date.now() - this.lastOrphanLog > 60000){
+            this.lastOrphanLog = Date.now();
+            parentPort.postMessage(JSON.stringify({
+                log:{ severity:"info", topic:"NMOS",
+                      text:"Ignoring " + count + " registry entr" + (count === 1 ? "y" : "ies") +
+                           " that their own device no longer lists.",
+                      raw:{ dropped: Object.values(dropped).slice(0, 20) } }
+            }));
+        }
     }
 
     updateShadow(){
