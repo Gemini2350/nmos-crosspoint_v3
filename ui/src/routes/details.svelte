@@ -693,15 +693,35 @@
     // all devices × 7 flow types plus a re-render of the dialog list. Now it
     // rides the same per-frame coalescing as the rest of the page.
     let offlineDevices:any[] = [];
+    // Senders/receivers the registry no longer has, on a device that IS still
+    // online — a device that drops a single sender leaves it behind in the
+    // shadow, and "Forget offline" used to walk whole devices only, so those
+    // strays could only be cleared one Forget button at a time.
+    let staleFlows:any[] = [];
     function computeOfflineDevices(){
-      offlineDevices = ((sourceState && Array.isArray(sourceState.devices)) ? sourceState.devices : []).filter((d:any)=>{
+      const types = ["video","audio","data","audiochannel","mqtt","websocket","unknown"];
+      const devices = ((sourceState && Array.isArray(sourceState.devices)) ? sourceState.devices : []);
+      offlineDevices = devices.filter((d:any)=>{
         if(d.available){ return false; }
         let flows = 0;
-        ["video","audio","data","audiochannel","mqtt","websocket","unknown"].forEach((t)=>{
+        types.forEach((t)=>{
           flows += ((d.senders && d.senders[t]) ? d.senders[t].length : 0) + ((d.receivers && d.receivers[t]) ? d.receivers[t].length : 0);
         });
         return flows > 0;
       });
+      let stale:any[] = [];
+      devices.forEach((d:any)=>{
+        if(!d.available){ return; }        // covered by the device sweep above
+        types.forEach((t)=>{
+          ((d.senders && d.senders[t]) ? d.senders[t] : []).forEach((f:any)=>{
+            if(!f.available){ stale.push({ devId:String(d.id), flowId:String(f.id), label:(d.displayLabel || d.name || "") + " · " + (f.alias || f.name || f.id) }); }
+          });
+          ((d.receivers && d.receivers[t]) ? d.receivers[t] : []).forEach((f:any)=>{
+            if(!f.available){ stale.push({ devId:String(d.id), flowId:String(f.id), label:(d.displayLabel || d.name || "") + " · " + (f.alias || f.name || f.id) }); }
+          });
+        });
+      });
+      staleFlows = stale;
     }
     function openForgetAllDialog(){
       if(forgetAllModal){ forgetAllModal.showModal(); }
@@ -716,9 +736,13 @@
       // while other devices never got a delete at all, which is why the
       // button had to be pressed several times.
       const ids = offlineDevices.map((d:any)=>String(d.id));
+      const flows = staleFlows.map((f:any)=>({ devId:String(f.devId), flowId:String(f.flowId) }));
       if(forgetAllModal){ forgetAllModal.close(); }
       for(const id of ids){
         try{ await ServerConnector.post("crosspoint", { action:"delete", devId: id, flowId:"" }); }catch(e){}
+      }
+      for(const f of flows){
+        try{ await ServerConnector.post("crosspoint", { action:"delete", devId: f.devId, flowId: f.flowId }); }catch(e){}
       }
     }
 
@@ -888,11 +912,11 @@
         </button>
       </li>
       <li class="nav-spacer"></li>
-      {#if offlineDevices.length > 0}
+      {#if offlineDevices.length + staleFlows.length > 0}
       <li class="det-forget-offline-li">
         <button class="btn btn-sm det-flow-forget det-forget-offline" on:click={openForgetAllDialog}
-                use:OverlayMenuService.tooltip data-tooltip="Forget every offline device: releases their multicast leases and clears the cached state">
-          Forget offline ({offlineDevices.length})
+                use:OverlayMenuService.tooltip data-tooltip="Forget everything the registry no longer has: offline devices and single senders/receivers that vanished from a device that is still online">
+          Forget offline ({offlineDevices.length + staleFlows.length})
         </button>
       </li>
       {/if}
@@ -1295,16 +1319,20 @@
       <form method="dialog">
         <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
       </form>
-      <h3 class="font-bold text-lg">Forget all offline devices?</h3>
+      <h3 class="font-bold text-lg">Forget everything the registry dropped?</h3>
       <p class="det-forget-text">
-        This forgets <strong>{offlineDevices.length}</strong> offline device{offlineDevices.length === 1 ? "" : "s"}:
+        This forgets <strong>{offlineDevices.length}</strong> offline device{offlineDevices.length === 1 ? "" : "s"}{#if staleFlows.length > 0}{" "}
+        and <strong>{staleFlows.length}</strong> stray sender{staleFlows.length === 1 ? "" : "s"}/receiver{staleFlows.length === 1 ? "" : "s"} on devices that are still online{/if}:
         multicast leases go back into the pool, the cached crosspoint state
-        (aliases, sort numbers, …) is cleared, and a device that comes back
-        online later is treated as a fresh device.
+        (aliases, sort numbers, …) is cleared, and anything that comes back
+        online later is treated as fresh.
       </p>
       <ul class="det-forget-list det-forget-list-scroll">
         {#each offlineDevices as d}
           <li>{d.displayLabel || d.alias || d.name || d.id}</li>
+        {/each}
+        {#each staleFlows as f}
+          <li>{f.label}</li>
         {/each}
       </ul>
       <div class="modal-action">

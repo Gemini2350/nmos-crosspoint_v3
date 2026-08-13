@@ -76,6 +76,11 @@
       label:string;
       grouped:boolean;
       devices:any[];
+      // for the rename modal: the NMOS node id plus its registry name, so the
+      // strip can be renamed exactly like the node header on the Details page
+      nodeId:string;
+      labelRaw:string;
+      alias:string;
     }
     let senderGroups:CpNodeGroup[] = [];
     let receiverGroups:CpNodeGroup[] = [];
@@ -87,11 +92,15 @@
         let key = dev.nodeId || dev.id;
         let g = byKey[key];
         if(!g){
-          g = { key, label: dev.nodeLabel || deviceDisplayLabel(dev), grouped:false, devices:[] };
+          g = { key, label: dev.nodeLabel || deviceDisplayLabel(dev), grouped:false, devices:[],
+                nodeId: dev.nodeId || "", labelRaw: dev.nodeLabelRaw || "", alias: dev.nodeAlias || "" };
           byKey[key] = g;
           groups.push(g);
         }
         if(dev.nodeLabel){ g.label = dev.nodeLabel; }
+        if(dev.nodeId){ g.nodeId = dev.nodeId; }
+        if(dev.nodeLabelRaw){ g.labelRaw = dev.nodeLabelRaw; }
+        if(dev.nodeAlias){ g.alias = dev.nodeAlias; }
         g.devices.push(dev);
       });
       groups.forEach((g)=>{ g.grouped = g.devices.length > 1; });
@@ -163,6 +172,10 @@
         name: g.label, alias: g.label,
         displayLabel: g.label, displayLabelShort: g.label,
         nodeLabel: "",              // the label IS the node — no second line
+        // rename target: the NMOS node itself, not a device
+        nodeId: g.nodeId,
+        nodeLabelRaw: g.labelRaw || g.label,
+        nodeAlias: g.alias,
         hidden: false,
         available: g.devices.some((d:any)=>d.available),
         senders: side === "senders" ? flows : noFlows,
@@ -1252,11 +1265,34 @@
 
 
     function editFlowLabel(flow:any){
+      clearNodeField();
       openLabelEditor(flow.id, flow.name, flow.alias)
     }
 
+    // A device row of a single-device node reads "<Node> - <Device>", so the
+    // dialog offers BOTH names: the device alias and the node name itself
+    // (the latter is stored per node id and shows up on every page).
     function editDevLabel(dev:any){
+      labelModalNodeId    = dev.nodeId || "";
+      labelModalNodeName  = dev.nodeLabelRaw || dev.nodeLabel || "";
+      labelModalNodeOrig  = dev.nodeAlias || "";
+      labelModalNodeValue = dev.nodeAlias || labelModalNodeName;
       openLabelEditor(dev.id, dev.name, dev.alias)
+    }
+
+    // Renaming a node strip renames the NMOS NODE, not a device: the server
+    // keeps those aliases per node id ("node_<id>", state/nodeAliases.json)
+    // and every page — Details included — picks the new name up from there.
+    function editNodeLabel(dev:any){
+      if(!dev || !dev.nodeId){ return; }
+      clearNodeField();
+      openLabelEditor("node_" + dev.nodeId, dev.nodeLabelRaw || dev.displayLabel, dev.nodeAlias || dev.nodeLabelRaw || dev.displayLabel);
+    }
+    function clearNodeField(){
+      labelModalNodeId = "";
+      labelModalNodeName = "";
+      labelModalNodeValue = "";
+      labelModalNodeOrig = "";
     }
 
 
@@ -1266,7 +1302,14 @@
       let labelModalName:string = "";
       let labelModalAlias:string = "";
       let labelModalValue:string = "";
+      let labelModalIsNode:boolean = false;
+      // optional second field: the NMOS node behind the edited device
+      let labelModalNodeId:string = "";
+      let labelModalNodeName:string = "";
+      let labelModalNodeValue:string = "";
+      let labelModalNodeOrig:string = "";
       function openLabelEditor(id:string, name:string, alias:string){
+        labelModalIsNode = id.startsWith("node_");
         labelModalId = id;
         labelModalName = name;
         labelModalAlias = alias;
@@ -1280,6 +1323,15 @@
       }
       function changeLabelSend(){
         ServerConnector.post("changealias",{id:labelModalId, alias:labelModalValue})
+        // second field, only when the device sits behind a known node and the
+        // operator actually touched the node name
+        if(labelModalNodeId){
+          let v = (labelModalNodeValue || "").trim();
+          if(v === labelModalNodeName){ v = ""; }        // back to the registry name = no alias
+          if(v !== labelModalNodeOrig){
+            ServerConnector.post("changealias",{id:"node_" + labelModalNodeId, alias:v})
+          }
+        }
         labelModal.close()
       }
 
@@ -1355,9 +1407,12 @@
                               use:OverlayMenuService.tooltip
                               data-tooltip={"BCP-008: " + dev.monitorSummaryTx.count + (dev.monitorSummaryTx.count === 1 ? " sender " : " senders ") + (dev.monitorSummaryTx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryTx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryTx.count}</span>{/if}<!--
                         --><span class="cp-edit">
-                          <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
-                          <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
-                          
+                          {#if dev.isNode}
+                            {#if dev.nodeId}<span on:click={(e)=>{e.stopPropagation(); editNodeLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename node"><Icon src={Pencil}></Icon></span>{/if}
+                          {:else}
+                            <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
+                            <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
+                          {/if}
                         </span></span><!--
                         --><span class="cp-type-spacer"></span><!--
                       --></th>
@@ -1393,7 +1448,7 @@
               {#each receiverGroups as rg}
               {@const inStrip = !!(rg.devices[0] && rg.devices[0].isNode)}
               {#each rg.devices as dev, devIdx}
-                <tr class="cp-device" class:cp-grp={inStrip} class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
+                <tr class="cp-device" class:cp-grp={inStrip} class:cp-node-row={dev.isNode} class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
                   <td class="cp-line-stick" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
@@ -1403,9 +1458,13 @@
                           use:OverlayMenuService.tooltip
                           data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryRx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryRx.count}</span>{/if}<!--
                         --><span class="cp-edit">
-                          <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
-                          <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
-                          <span on:click={(e)=>{e.stopPropagation(); connect(null, null, dev,null);}} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip data-tooltip="disconnect"><Icon src={Link}></Icon></span>
+                          {#if dev.isNode}
+                            {#if dev.nodeId}<span on:click={(e)=>{e.stopPropagation(); editNodeLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename node"><Icon src={Pencil}></Icon></span>{/if}
+                          {:else}
+                            <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
+                            <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
+                            <span on:click={(e)=>{e.stopPropagation(); connect(null, null, dev,null);}} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip data-tooltip="disconnect"><Icon src={Link}></Icon></span>
+                          {/if}
                         </span><!--
                     --></span><!--
                   --></td>
@@ -1499,10 +1558,14 @@
         <form method="dialog">
           <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
         </form>
-        <h3 class="font-bold text-lg">Change Alias</h3>
-        <span>Source Name: {labelModalName}</span><br/>
+        <h3 class="font-bold text-lg">{labelModalIsNode ? "Rename Node" : "Change Alias"}</h3>
+        <span>{labelModalIsNode ? "Node Name" : "Source Name"}: {labelModalName}</span><br/>
         <span>Alias: {labelModalAlias}</span>
           <input on:keypress={(e)=>{if(e.keyCode == 13) changeLabelSend()}} bind:this={labelModalInput} bind:value={labelModalValue} type="text" placeholder="Type here" class="input input-bordered w-full max-w-xs" />
+        {#if labelModalNodeId}
+          <br/><span>Node Name: {labelModalNodeName}</span>
+          <input on:keypress={(e)=>{if(e.keyCode == 13) changeLabelSend()}} bind:value={labelModalNodeValue} type="text" placeholder="Type here" class="input input-bordered w-full max-w-xs" />
+        {/if}
         <div class="modal-action">
           <form method="dialog">
             <!-- if there is a button in form, it will close the modal -->

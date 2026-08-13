@@ -7,6 +7,9 @@ $cp-headerSize: 232px;    /* 160 +padding + padding + 32 +32  text+expander + in
 $cp-bandSize: 24px;       /* slim node band above sender columns */
 $cp-vbandSize: 20px;      /* vertical node strip left of the receiver rows */
 
+// one step of the node → device → flow indentation
+$cp-indent: 10px;
+
 $cp-color-grey:#aaaaaa;
 $cp-color-dark-grey:#333333;
 $cp-color-video: theme('colors.green.500');
@@ -174,12 +177,12 @@ $cp-border: 1px solid transparent;
         // across the label column AND the matrix cells. No borders or accent
         // bars — the surface alone marks what belongs together. Single-device
         // nodes have no strip and therefore no tint.
+        // The strip carries a rename pencil (it renames the NMOS node, not a
+        // device) — hiding/disconnecting only makes sense per device.
         .cp-node-entry {
-            .cp-edit { display: none !important; }
             .cp-label {
                 font-weight: 700;
                 letter-spacing: 0.02em;
-                background-color: transparent;
             }
             .cp-expand svg { stroke-width: 2.4; }
         }
@@ -408,13 +411,13 @@ $cp-border: 1px solid transparent;
             }
         }
 
-        .cp-device.expanded .cp-line-stick {
+        .cp-device.expanded:not(.cp-grp) .cp-line-stick {
             min-height: 36px;
             max-height: 36px;
             padding-top:4px;
             .cp-label {
             background-color:$cp-color-dark-grey;
-            border-radius: $cp-round $cp-round 0px 0px; 
+            border-radius: $cp-round $cp-round 0px 0px;
         }}
 
         .cp-flow .cp-line-stick {
@@ -422,7 +425,7 @@ $cp-border: 1px solid transparent;
             background-color: $cp-color-dark-grey ;
         }}
 
-        .cp-flow:has(+ .cp-device) .cp-line-stick {
+        .cp-flow:not(.cp-grp):has(+ .cp-device) .cp-line-stick {
             min-height: 36px;
             max-height: 36px;
             padding-bottom:4px;
@@ -430,6 +433,61 @@ $cp-border: 1px solid transparent;
             border-radius: 0px 0px $cp-round $cp-round;
 
         }}
+
+        // ----- A node group is ONE card -----
+        // Node strip, its devices and their flows are a single surface: the
+        // same backing on every row, rounded only at the two ends of the
+        // group, and none of the 4px breaks that separate individual device
+        // cards — those breaks made the strip look like a box sitting above
+        // unrelated devices.
+        tbody tr.cp-grp td.cp-line-stick {
+            min-height: 32px;
+            max-height: 32px;
+            padding-top: 0px;
+            padding-bottom: 0px;
+            .cp-label {
+                background-color: $cp-color-dark-grey;
+                border-radius: 0px;
+            }
+        }
+        tbody tr.cp-grp.cp-node-row td.cp-line-stick {
+            min-height: 36px;
+            max-height: 36px;
+            padding-top: 4px;
+            .cp-label { border-radius: $cp-round $cp-round 0px 0px; }
+        }
+        // Last row of a group — the next row belongs to another group (which
+        // always starts with its node strip) or to no group at all.
+        tbody tr.cp-grp:last-child td.cp-line-stick,
+        tbody tr.cp-grp:has(+ tr.cp-node-row) td.cp-line-stick,
+        tbody tr.cp-grp:has(+ tr:not(.cp-grp)) td.cp-line-stick {
+            min-height: 36px;
+            max-height: 36px;
+            padding-bottom: 4px;
+            .cp-label { border-radius: 0px 0px $cp-round $cp-round; }
+        }
+        // A folded group is a single row: rounded all round.
+        tbody tr.cp-grp.cp-node-row:not(.expanded) td.cp-line-stick {
+            min-height: 32px;
+            max-height: 32px;
+            padding-top: 0px;
+            padding-bottom: 0px;
+            .cp-label { border-radius: $cp-round; }
+        }
+
+        // ----- Hierarchy: node → device → flow -----
+        // Each level starts one small step further in. The step is INSIDE the
+        // label (padding, not margin), so the group surface stays a single
+        // unbroken block — only the text moves. `padding-inline-start` keeps
+        // the same rule working for the vertical sender headers, where the
+        // inline axis runs top-to-bottom.
+        tbody tr.cp-grp.cp-device:not(.cp-node-row) td.cp-line-stick .cp-label,
+        tbody tr.cp-flow:not(.cp-grp) td.cp-line-stick .cp-label {
+            padding-inline-start: 36px + $cp-indent;
+        }
+        tbody tr.cp-grp.cp-flow td.cp-line-stick .cp-label {
+            padding-inline-start: 36px + 2 * $cp-indent;
+        }
 
         
 
@@ -555,30 +613,77 @@ $cp-border: 1px solid transparent;
                 }
 
 
-                &.cp-device.expanded {
+                &.cp-device.expanded:not(.cp-grp) {
                     min-width: 36px;
                     max-width:36px;
                     padding-left: 4px;
                     .cp-label {
                     background-color:$cp-color-dark-grey;
-                    border-radius: $cp-round 0px 0px $cp-round; 
+                    border-radius: $cp-round 0px 0px $cp-round;
                     }
                 }
-            
-            
+
+
                 &.cp-flow {
                     .cp-label {
                         background-color: $cp-color-dark-grey ;
                     }
                 }
-            
-                &.cp-flow:has(+ .cp-device) {
+
+                &.cp-flow:not(.cp-grp):has(+ .cp-device) {
                     min-width: 36px;
                     max-width:36px;
                     padding-right: 4px;
                     .cp-label {
-                        border-radius: 0px $cp-round $cp-round 0px; 
+                        border-radius: 0px $cp-round $cp-round 0px;
                     }
+                }
+
+                // ----- A node group is ONE card (sender axis) -----
+                // Same rule as the receiver rows, turned 90°: strip, devices
+                // and flows share one uninterrupted surface, rounded only at
+                // the two ends of the group.
+                &.cp-grp {
+                    min-width: 32px;
+                    max-width: 32px;
+                    padding-left: 0px;
+                    padding-right: 0px;
+                    .cp-label {
+                        background-color: $cp-color-dark-grey;
+                        border-radius: 0px;
+                    }
+                }
+                &.cp-grp.cp-node-entry {
+                    min-width: 36px;
+                    max-width: 36px;
+                    padding-left: 4px;
+                    .cp-label { border-radius: $cp-round 0px 0px $cp-round; }
+                }
+                &.cp-grp:has(+ .cp-node-entry),
+                &.cp-grp:has(+ :not(.cp-grp)),
+                &.cp-grp:last-child {
+                    min-width: 36px;
+                    max-width: 36px;
+                    padding-right: 4px;
+                    .cp-label { border-radius: 0px $cp-round $cp-round 0px; }
+                }
+                &.cp-grp.cp-node-entry:not(.expanded) {
+                    min-width: 32px;
+                    max-width: 32px;
+                    padding-left: 0px;
+                    padding-right: 0px;
+                    .cp-label { border-radius: $cp-round; }
+                }
+
+                // Hierarchy step, see the receiver rows: on this axis the
+                // inline axis runs downward, so the same property indents the
+                // header text from the top of the column.
+                &.cp-device.cp-grp:not(.cp-node-entry) .cp-label,
+                &.cp-flow:not(.cp-grp) .cp-label {
+                    padding-inline-start: 36px + $cp-indent;
+                }
+                &.cp-flow.cp-grp .cp-label {
+                    padding-inline-start: 36px + 2 * $cp-indent;
                 }
 
                 .cp-expand svg {
@@ -932,6 +1037,14 @@ html[data-theme="light"] {
                 .cp-label {
                     background-color: theme('colors.base-300'); ;
                 }
+            }
+
+            // Node group as one card — every row of the group carries the
+            // card colour, not just the expanded ones (see the group block
+            // in the dark theme above).
+            tbody tr.cp-grp td.cp-line-stick .cp-label,
+            thead th.cp-grp .cp-label {
+                background-color: theme('colors.base-300');
             }
     
     
