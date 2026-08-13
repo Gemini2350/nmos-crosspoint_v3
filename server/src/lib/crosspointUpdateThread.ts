@@ -134,7 +134,7 @@ class CrosspointUpdateThread{
 
         if(data.hasOwnProperty('nmosState')){
             this.nmosState = data.nmosState;
-            this.pruneOrphanedFlows();
+            this.warnOrphanedFlows();
             this.updateRequest ++;
         }
 
@@ -450,20 +450,19 @@ class CrosspointUpdateThread{
         
     }
 
-    /** A registry can outlive the truth: a device that stops advertising a
-     *  receiver leaves the old receiver resource behind in /receivers, because
-     *  the registry only garbage-collects when the whole NODE's registration
-     *  expires. The device resource itself still enumerates what it really has
-     *  — seen in the field on an AT300 that listed 3 receivers while the
-     *  registry's receiver collection carried 7 with its device_id.
-     *  So: when a device enumerates its members, anything not in that list is
-     *  a leftover and is dropped from our copy of the state. Devices that
-     *  leave the lists empty (allowed, the fields are informative) are left
-     *  alone — no list, no claim, nothing to check against. */
+    /** Diagnostic only — we do NOT filter. A registry can list a sender or
+     *  receiver whose own device resource does not reference it: the device
+     *  dropped it, but the registry only garbage-collects when the whole
+     *  NODE's registration expires (seen on an AT300 that lists 3 receivers
+     *  while the registry carries 7 with its device_id). The crosspoint shows
+     *  what the registry says — that is the contract — but it says so in the
+     *  log, with names and ids, so the inconsistency can be taken to whoever
+     *  owns the device or the registry. Rate-limited to once a minute.
+     */
     private lastOrphanLog = 0;
-    private pruneOrphanedFlows(){
+    private warnOrphanedFlows(){
         if(!this.nmosState || !this.nmosState.devices) return;
-        let dropped: { [id:string]: string } = {};
+        let orphans: string[] = [];
         for(const kind of ["senders", "receivers"]){
             const pool:any = (this.nmosState as any)[kind];
             if(!pool) continue;
@@ -474,19 +473,17 @@ class CrosspointUpdateThread{
                 const list:any = dev[kind];
                 if(!Array.isArray(list) || list.length === 0) continue;
                 if(list.indexOf(id) === -1){
-                    dropped[id] = kind + " " + (res.label || id);
-                    delete pool[id];
+                    orphans.push(kind.slice(0, -1) + " \"" + (res.label || id) + "\" (" + id + ") on device \"" + (dev.label || res.device_id) + "\"");
                 }
             }
         }
-        const count = Object.keys(dropped).length;
-        if(count > 0 && Date.now() - this.lastOrphanLog > 60000){
+        if(orphans.length > 0 && Date.now() - this.lastOrphanLog > 60000){
             this.lastOrphanLog = Date.now();
             parentPort.postMessage(JSON.stringify({
-                log:{ severity:"info", topic:"NMOS",
-                      text:"Ignoring " + count + " registry entr" + (count === 1 ? "y" : "ies") +
-                           " that their own device no longer lists.",
-                      raw:{ dropped: Object.values(dropped).slice(0, 20) } }
+                log:{ severity:"warning", topic:"NMOS",
+                      text:"Registry inconsistency: " + orphans.length + " resource(s) are registered under a device that does not list them. " +
+                           "They are shown as-is — the registry is the source of truth — but the device or the registry needs fixing.",
+                      raw:{ orphans: orphans.slice(0, 20) } }
             }));
         }
     }
@@ -515,35 +512,32 @@ class CrosspointUpdateThread{
         // senders (resp. receivers) of the device per flow — the answer is
         // identical for every flow of a device, so a 200-sender device cost
         // 40 000 iterations per tick for a value that fits in one Map.
-        const groupLabelCount: Map<string, number> = new Map();
-        const countGroups = (idList: any, pool: any) => {
-            let labels: string[] = [];
-            if(Array.isArray(idList)){
-                for(const id of idList){
-                    const r = pool ? pool[id] : null;
-                    const tags = r && r.tags && r.tags["urn:x-nmos:tag:grouphint/v1.0"];
-                    if(Array.isArray(tags) && tags.length > 0){
-                        const g = ("" + (tags[0] ?? "")).split(':')[0];
-                        if(!labels.includes(g)){ labels.push(g); }
-                    }
-                }
+        // How many distinct grouphint groups a device has, per direction —
+        // the answer decides whether a group row is named "<device>" or
+        // "<device> - <group>". Counted from the sender / receiver
+        // COLLECTIONS, not from the device's own member lists: those lists can
+        // be shorter than what the registry actually carries (an AT300 in the
+        // field lists 3 receivers while 7 are registered under it), and every
+        // group we render comes from the collection. Counting the wrong side
+        // produced several rows that all read just the device name.
+        const groupLabelCount: Map<string, number> = new Map();     // senders
+        const groupLabelCountRx: Map<string, number> = new Map();   // receivers
+        const tallyGroups = (pool: any, target: Map<string, number>) => {
+            const perDevice: Map<string, Set<string>> = new Map();
+            for(const id of Object.keys(pool || {})){
+                const r: any = pool[id];
+                const tags = r && r.tags && r.tags["urn:x-nmos:tag:grouphint/v1.0"];
+                if(!Array.isArray(tags) || tags.length === 0) continue;
+                const g = ("" + (tags[0] ?? "")).split(':')[0];
+                const devId = r.device_id || "";
+                if(!perDevice.has(devId)){ perDevice.set(devId, new Set()); }
+                perDevice.get(devId).add(g);
             }
-            return labels.length;
+            perDevice.forEach((groups, devId)=>{ target.set(devId, groups.size); });
         };
-
-        // Per direction: a device with several receiver groups needs its
-        // receiver groups counted, not its sender groups. Sharing the
-        // sender-derived count was why a device like a gateway with three
-        // receiver groups produced three rows that all read just the device
-        // name — indistinguishable, and it looked like the same device three
-        // times over.
-        const groupLabelCountRx: Map<string, number> = new Map();
         if(this.nmosState){
-            for(const devId of Object.keys(this.nmosState.devices || {})){
-                const dev: any = this.nmosState.devices[devId];
-                groupLabelCount.set(devId, countGroups(dev && dev.senders, this.nmosState.senders));
-                groupLabelCountRx.set(devId, countGroups(dev && dev.receivers, this.nmosState.receivers));
-            }
+            tallyGroups(this.nmosState.senders, groupLabelCount);
+            tallyGroups(this.nmosState.receivers, groupLabelCountRx);
         }
 
         if(this.nmosState){
