@@ -146,22 +146,31 @@
       });
       return worst >= 2 ? { worst, count } : null;
     }
-    /** One synthetic device standing in for a whole folded node. */
-    function makeNodeEntry(g:CpNodeGroup, side:"senders"|"receivers"){
+    /** The node strip. Folded it stands in for the whole node and carries
+     *  the merged flows, so cells, aggregation and geometry work exactly as
+     *  for a real device one level up. Unfolded it stays on screen as the
+     *  group header (otherwise there is no way to fold it again) but WITHOUT
+     *  flows: the same flow must not map to both the strip and its device,
+     *  or one of the two would lose its dots in the cell index. */
+    function makeNodeEntry(g:CpNodeGroup, side:"senders"|"receivers", open = false){
+      const noFlows = mergeFlows([], side);
+      const flows = open ? noFlows : mergeFlows(g.devices, side);
       return {
         id: "cpnode_" + g.key,
         isNode: true,
+        isOpen: open,
         nodeKey: g.key,
-        deviceCount: g.devices.length,
         name: g.label, alias: g.label,
         displayLabel: g.label, displayLabelShort: g.label,
         nodeLabel: "",              // the label IS the node — no second line
         hidden: false,
         available: g.devices.some((d:any)=>d.available),
-        senders: side === "senders" ? mergeFlows(g.devices, "senders") : mergeFlows([], "senders"),
-        receivers: side === "receivers" ? mergeFlows(g.devices, "receivers") : mergeFlows([], "receivers"),
-        monitorSummaryTx: mergeMonitorSummary(g.devices, "monitorSummaryTx"),
-        monitorSummaryRx: mergeMonitorSummary(g.devices, "monitorSummaryRx"),
+        senders: side === "senders" ? flows : noFlows,
+        receivers: side === "receivers" ? flows : noFlows,
+        // Rolled-up health only while folded — open, the device rows below
+        // show their own and repeating it here would double the counts.
+        monitorSummaryTx: open ? null : mergeMonitorSummary(g.devices, "monitorSummaryTx"),
+        monitorSummaryRx: open ? null : mergeMonitorSummary(g.devices, "monitorSummaryRx"),
       };
     }
     /** Replace the devices of every folded multi-device node with its
@@ -169,10 +178,13 @@
      *  so doing it here keeps every axis consistent by construction. */
     function collapseNodes(groups:CpNodeGroup[], dir:"senders"|"receivers"):CpNodeGroup[]{
       return groups.map((g)=>{
-        if(g.devices.length > 1 && !isNodeExpanded(dir, g.key)){
-          return { ...g, devices: [ makeNodeEntry(g, dir) ] };
+        // A node with a single device is never folded: there would be
+        // nothing to reveal and the extra click would only get in the way.
+        if(g.devices.length <= 1){ return g; }
+        if(!isNodeExpanded(dir, g.key)){
+          return { ...g, devices: [ makeNodeEntry(g, dir, false) ] };
         }
-        return g;
+        return { ...g, devices: [ makeNodeEntry(g, dir, true), ...g.devices ] };
       });
     }
 
@@ -1332,11 +1344,12 @@
                     <th class="cp-corner"></th>
                     {#each senderGroups as sg}
                     {#each sg.devices as dev}
-                      <th class="cp-device" class:cp-node-entry={dev.isNode} class:expanded={isSenderExpanded(dev.id)}
+                      <th class="cp-device" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
+                          class:expanded={dev.isNode ? dev.isOpen : isSenderExpanded(dev.id)}
                           on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                         --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                        -->{#if dev.isNode}<span class="cp-node-tag">{dev.deviceCount} devices</span>{:else if nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
+                        -->{#if !dev.isNode && nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
                         -->{deviceDisplayLabelShort(dev)}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
@@ -1379,12 +1392,12 @@
             <tbody>
               {#each receiverGroups as rg}
               {#each rg.devices as dev, devIdx}
-                <tr class="cp-device" class:expanded={isReceiverExpanded(dev.id)}>
-                  <td class="cp-line-stick" class:cp-node-entry={dev.isNode}
+                <tr class="cp-device" class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
+                  <td class="cp-line-stick" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                    -->{#if dev.isNode}<span class="cp-node-tag">{dev.deviceCount} devices</span>{:else if nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
+                    -->{#if !dev.isNode && nodeTagVisible(dev)}<span class="cp-node-tag">{dev.nodeLabel}</span>{/if}<!--
                     -->{deviceDisplayLabelShort(dev)}<!--
                     -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip

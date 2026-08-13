@@ -183,13 +183,44 @@ $cp-border: 1px solid transparent;
             white-space: nowrap;
         }
 
-        // A folded node stands in for several devices. Alias / hide /
-        // disconnect belong to a real device, so they stay hidden here —
-        // otherwise they would act on a synthetic entry that has no NMOS
+        // A folded node is a STRIP, not another device row: tinted band with
+        // its own edge so the eye separates "group" from "device" instantly.
+        // Alias / hide / disconnect belong to a real device, so they stay
+        // hidden here — they would act on a synthetic entry with no NMOS
         // counterpart. Unfold the node to reach them.
         .cp-node-entry {
+            // Tint from the text colour, so the strip keeps the same weight
+            // in both themes (a fixed base-300 was nearly invisible on the
+            // light one).
+            background-color: theme('colors.base-content / 9%');
             .cp-edit { display: none !important; }
-            .cp-label { font-weight: 700; }
+            .cp-label {
+                font-weight: 700;
+                letter-spacing: 0.02em;
+                background-color: transparent;
+            }
+            // The chevron is the affordance that this strip opens up.
+            .cp-expand svg { stroke-width: 2.4; }
+        }
+        // Carry the tint across the whole row so the strip reads as one
+        // continuous band instead of a chip in the name column. Kept lighter
+        // than the label part — the grid should stay the loudest thing here.
+        tbody tr.cp-device:has(td.cp-node-entry) td.cp-connect-device div {
+            background-color: theme('colors.base-content / 5%');
+        }
+        // Receiver side: a horizontal band across the label column, with a
+        // solid edge on the side the devices unfold from.
+        tbody td.cp-line-stick.cp-node-entry {
+            border-top: 1px solid theme('colors.base-content / 20%');
+            border-bottom: 1px solid theme('colors.base-content / 20%');
+            box-shadow: inset 4px 0 0 0 theme('colors.base-content / 45%');
+        }
+        // Sender side: the same strip stood on end (the header is rotated),
+        // so it becomes a vertical bar over the full header height.
+        thead th.cp-device.cp-node-entry {
+            border-left: 1px solid theme('colors.base-content / 20%');
+            border-right: 1px solid theme('colors.base-content / 20%');
+            box-shadow: inset 0 -4px 0 0 theme('colors.base-content / 45%');
         }
 
         // Two lines have to fit the SAME 32px row as a one-line label —
