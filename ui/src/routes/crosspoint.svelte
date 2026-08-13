@@ -1253,7 +1253,12 @@
     <div class="cp-container" class:cp-has-node-bands={hasSenderBands} class:cp-has-node-vbands={hasReceiverBands} class:cp-scrolling={isScrolling} on:scroll={onMatrixScroll}>
       <div class="cp-limit-container">
 
-      <div class="cp-header-cross"></div>
+      <!-- Axis legend in the (otherwise empty) sticky corner: senders run
+           to the right along the header, receivers down the left edge. -->
+      <div class="cp-header-cross">
+        <span class="cp-axis cp-axis-senders">Senders <span class="cp-axis-arrow">→</span></span>
+        <span class="cp-axis cp-axis-receivers">Receivers <span class="cp-axis-arrow">→</span></span>
+      </div>
 </div>
       <table class="cp-table">
         <thead>

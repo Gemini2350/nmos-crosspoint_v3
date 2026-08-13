@@ -61,8 +61,47 @@ $cp-border: 1px solid transparent;
             width:$cp-headerSize;
             height:$cp-headerSize;
             background-color: theme('colors.base-100');
-            span {
-                
+
+            // Axis legend: which way each side of the matrix runs. Both
+            // labels use the same arrow glyph; the receiver one is rotated
+            // with its whole box, so the arrow ends up pointing down along
+            // the receiver rows without needing a second character.
+            .cp-axis {
+                position: absolute;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                white-space: nowrap;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.04em;
+                text-transform: uppercase;
+                color: theme('colors.neutral-500');
+                pointer-events: none;
+                user-select: none;
+            }
+            .cp-axis-arrow {
+                font-size: 15px;
+                line-height: 1;
+            }
+            // Bottom edge of the corner, reading into the sender columns.
+            .cp-axis-senders {
+                right: 10px;
+                bottom: 8px;
+            }
+            // Left edge, rotated a quarter turn CLOCKWISE so it reads
+            // top-to-bottom and the shared arrow glyph ends up pointing down
+            // along the receiver rows. Anchored at the top-left corner so
+            // the rotated box grows downwards from there.
+            // NOTE `left` must be at least the label's own height: rotating
+            // around the top-left corner swings the box's height out to the
+            // LEFT of the anchor, so a smaller value pushes it out of the
+            // corner (label height is ~18px at this font size).
+            .cp-axis-receivers {
+                left: 32px;
+                top: 12px;
+                transform-origin: left top;
+                transform: rotate(90deg);
             }
         }
         .cp-limit-container {
