@@ -1868,9 +1868,49 @@ export class NmosRegistryConnector {
                 });
             }
 
+            // transport_params is positional, so a PATCH that touches leg 0
+            // must still carry an entry for leg 1. An empty object is legal
+            // IS-05 ("leave this leg as it is"), but several devices choke on
+            // it — they either reject the PATCH or wipe the leg. Send the
+            // leg's CURRENT active parameters instead: same meaning, spelled
+            // out in the device's own vocabulary. Only where no active
+            // snapshot exists do we fall back to {}.
+            let activeParams:any[] = [];
+            try{
+                let active:any = (this.nmosState as any).senderActiveData?.[senderId];
+                if(active && Array.isArray(active.transport_params)){
+                    activeParams = active.transport_params;
+                }
+            }catch(e){}
+
             let transportParams:any[] = [];
+            let legsWithoutSnapshot = 0;
             for(let i=0;i<legCount;i++){
-                transportParams.push({});
+                let cur = activeParams[i];
+                if(cur && typeof cur === "object" && !Array.isArray(cur)){
+                    // Drop empty values while copying: an inactive sender can
+                    // report destination_ip "" / null, and echoing that back
+                    // is exactly the kind of thing a device rejects.
+                    let copy:any = {};
+                    for(let k of Object.keys(cur)){
+                        let v = (cur as any)[k];
+                        if(v === null || v === undefined || v === ""){ continue; }
+                        copy[k] = v;
+                    }
+                    if(Object.keys(copy).length > 0){
+                        transportParams.push(copy);
+                    }else{
+                        transportParams.push({});
+                        legsWithoutSnapshot++;
+                    }
+                }else{
+                    transportParams.push({});
+                    legsWithoutSnapshot++;
+                }
+            }
+            if(legsWithoutSnapshot > 0){
+                SyncLog.log("verbose", "nmos", "setFlowMulticast " + senderId + ": " + legsWithoutSnapshot +
+                    " of " + legCount + " leg(s) have no IS-05 active snapshot — sending an empty object for those.");
             }
 
             // Preserve the sender's current master_enable across the PATCH.
