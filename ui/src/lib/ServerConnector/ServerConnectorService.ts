@@ -333,7 +333,28 @@ class _ServerConnector {
           this.connectionState.next("connected");
 
             this.reconnectTime = 1;
+            this.authDone = false;
             setTimeout(() => {
+              // A subscription sent before the connection is authenticated is
+              // answered with permissionDenied — the server has no way to know
+              // yet who is asking. On a reconnect of a logged-in session that
+              // race produced a "Permission denied for Sync: crosspoint" toast
+              // even though the very next resendSync() after 'auth' succeeded.
+              // With credentials in hand we wait for 'auth'; without them the
+              // connection stays anonymous and there is nothing to wait for.
+              if (this.pass != "") {
+                // Safety net: if that authentication never completes (server
+                // without users, changed password, ...) subscribe anyway after
+                // a moment and let the server decide — better a denial we can
+                // report than a client that quietly stops asking.
+                setTimeout(() => {
+                  if (this.authDone || !this.connected) return;
+                  for (let key of Object.keys(this.syncList)) {
+                    this.subscribeSync(this.syncList[key].channel, this.syncList[key].objectId);
+                  }
+                }, 3000);
+                return;
+              }
               for (let key of Object.keys(this.syncList)) {
                 this.subscribeSync(
                   this.syncList[key].channel,
@@ -414,6 +435,7 @@ class _ServerConnector {
             break;
           case 'auth':
             this.user = message.user;
+            this.authDone = true;
             this.authRequest.next({request:false, username:message.user,denied:false, authDone:true});
             this.resendSync();
             this.resetAuthTimer();
@@ -426,6 +448,10 @@ class _ServerConnector {
             this.serverRejectedOnce = true;
             if(this.user == "__noAuth"){
               this.requestAuth();
+            }else if(this.pass != "" && !this.authDone){
+              // Authentication is still in flight: resendSync() runs the
+              // moment 'auth' lands, so this denial is already handled.
+              // Reporting it would only be noise.
             }else{
               this.addFeedback({
                 level:"error",
@@ -435,6 +461,7 @@ class _ServerConnector {
         }
       }
 
+      private authDone = false;
       public requestAuth(denied = false){
         this.authRequest.next({request:true, username:this.lastUsername,denied, authDone:false});
       }
