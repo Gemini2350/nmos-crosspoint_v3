@@ -311,11 +311,12 @@ $cp-border: 1px solid transparent;
 
         }
 
-        // Essence type as a quiet chip, not a colour block: a 20px tile with
-        // the type colour at low opacity, a hairline of the same colour and
-        // the glyph in full colour. Active only deepens the tint. The loudest
-        // thing in the matrix should be a switched connection, not a label
-        // telling you that audio is audio.
+        // Essence type as a bare glyph — no tile, no frame, just the outline
+        // in the type colour. A coloured block competes with the connection
+        // markers for attention, and in the matrix the switched connection
+        // has to win that fight. The box itself stays (layout is measured in
+        // these 20px), only its surface is gone. Inactive flows keep the
+        // colour but step back in opacity; active is full strength.
         .cp-type {
             display:inline-block;
             position:relative;
@@ -324,27 +325,21 @@ $cp-border: 1px solid transparent;
             height: $cp-typeSize;
             width: $cp-typeSize;
             border-radius: $cp-padding;
-            border: 1px solid transparent;
+            background-color: transparent;
 
-            background-color: theme('colors.base-content / 8%');
-            &.cp-type-video { background-color: rgba(34,197,94,.15);  border-color: rgba(34,197,94,.38); }
-            &.cp-type-audio { background-color: rgba(139,92,246,.15); border-color: rgba(139,92,246,.38); }
-            &.cp-type-data  { background-color: rgba(59,130,246,.15); border-color: rgba(59,130,246,.38); }
             &.cp-type-video svg{ color: $cp-color-video; }
             &.cp-type-audio svg{ color: $cp-color-audio; }
             &.cp-type-data svg{ color: $cp-color-data; }
+            &.cp-type-video, &.cp-type-audio, &.cp-type-data { opacity: 0.6; }
 
             svg {
                 color:theme('colors.neutral-400');
-                width: 14px;
-                height: 14px;
+                width: 17px;
+                height: 17px;
             }
 
             &.active {
-
-                &.cp-type-video { background-color: rgba(34,197,94,.34);  border-color: rgba(34,197,94,.6); }
-                &.cp-type-audio { background-color: rgba(139,92,246,.34); border-color: rgba(139,92,246,.6); }
-                &.cp-type-data  { background-color: rgba(59,130,246,.34); border-color: rgba(59,130,246,.6); }
+                &.cp-type-video, &.cp-type-audio, &.cp-type-data { opacity: 1; }
             }
             &.prepareddisconnect {
                 svg {
@@ -974,7 +969,7 @@ html[data-theme="light"] {
             // neutral, type-less tile needs a light-theme value here; the old
             // solid-fill / white-glyph rules were what made the matrix shout.
             .cp-type {
-                background-color: theme('colors.base-content / 8%');
+                background-color: transparent;
                 // Only the type-LESS chip is grey here; the theme selector
                 // this block sits under outranks the default rules, so the
                 // three type colours have to be repeated or the glyphs turn
