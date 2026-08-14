@@ -520,6 +520,13 @@ class CrosspointUpdateThread{
         // field lists 3 receivers while 7 are registered under it), and every
         // group we render comes from the collection. Counting the wrong side
         // produced several rows that all read just the device name.
+        // Where every NMOS sender / receiver belongs RIGHT NOW, by grouphint.
+        // A device that regroups its senders (same UUID, new grouphint) would
+        // otherwise leave the flow behind in its old group as well: the flow
+        // is still registered, so it stays "online" there, the stale group
+        // never empties, and the duplicate-multicast check sees one sender
+        // twice and flags it against itself.
+        const flowBelongsTo: { [flowId:string]: string } = {};
         const groupLabelCount: Map<string, number> = new Map();     // senders
         const groupLabelCountRx: Map<string, number> = new Map();   // receivers
         const tallyGroups = (pool: any, target: Map<string, number>) => {
@@ -610,6 +617,7 @@ class CrosspointUpdateThread{
                     }
                 }
                 this.crosspointShadow.devices[groupId]["available"] = true;
+                flowBelongsTo["nmos_"+send.id] = groupId;
 
                 let type = this.getNmosSenderClass(send.id);
 
@@ -740,6 +748,7 @@ class CrosspointUpdateThread{
 
 
                 this.crosspointShadow.devices[groupId]["available"] = true;
+                flowBelongsTo["nmos_"+recv.id] = groupId;
 
                 let type = this.getNmosReceiverClass(recv.id);
 
@@ -789,6 +798,40 @@ class CrosspointUpdateThread{
         // the main thread, then come back through the registry's WebSocket
         // subscription exactly like any other NMOS sender — so the standard
         // nmos_<id> path below picks them up for free.
+
+
+        // ----- One flow, one group -----
+        // A device is free to move a sender or receiver into another group at
+        // any time: same UUID, new grouphint. The entry then has to LEAVE its
+        // old group, or it lives in both — still registered, so still shown as
+        // online, keeping an otherwise empty group alive and making the
+        // duplicate-multicast check compare the sender with itself (both
+        // copies carry the same multicast, hence a DUP badge on a sender that
+        // clashes with nothing). Only entries we have just placed are touched;
+        // flows of devices that are simply offline are none of our business
+        // here — those are the Forget button's job.
+        try {
+            for(const devId of Object.keys(this.crosspointShadow.devices)){
+                const d:any = this.crosspointShadow.devices[devId];
+                if(!d) continue;
+                for(const kind of ["senders", "receivers"]){
+                    for(const t of Object.keys(d[kind] || {})){
+                        for(const fid of Object.keys(d[kind][t] || {})){
+                            const belongs = flowBelongsTo[fid];
+                            if(belongs && belongs !== devId){
+                                delete d[kind][t][fid];
+                                changed = true;
+                                parentPort.postMessage(JSON.stringify({
+                                    log:{ severity:"info", topic:"Crosspoint",
+                                          text:"Group changed: moved " + fid + " out of its previous group.",
+                                          raw:{ from: d.name || devId, to: belongs } }
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        } catch(e) {}
 
 
         // ----- Prune ghost devices -----
