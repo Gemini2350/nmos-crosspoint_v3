@@ -2,6 +2,9 @@ $cp-size: 24px;
 $cp-padding: 4px;
 $cp-round: 6px;
 $cp-sizePP: 32px;
+$cp-typeSize: 20px;   /* essence-type chip — smaller than the old 24px tile */
+$cp-color-gridline:   theme('colors.base-content / 13%');
+$cp-color-gridline-5: theme('colors.base-content / 26%');
 $cp-textLength: 160px;
 $cp-headerSize: 232px;    /* 160 +padding + padding + 32 +32  text+expander + info */
 $cp-bandSize: 24px;       /* slim node band above sender columns */
@@ -18,12 +21,12 @@ $cp-gutter: 8px;
 $cp-color-grey:#aaaaaa;
 $cp-color-dark-grey:#333333;
 $cp-color-video: theme('colors.green.500');
-// Audio is a true yellow, NOT amber: amber is reserved for the BCP-008
-// "partially healthy" warning ($cp-color-warn below), and a microphone icon
-// must never be mistaken for a status warning. The fill variant is one step
-// darker so the white icon on the active tile stays readable.
-$cp-color-audio:theme('colors.yellow.400');
-$cp-color-audio-fill:theme('colors.yellow.500');
+// Hue tells you WHAT flows, warmth tells you HOW it is doing: video green,
+// audio violet, data blue — and yellow / amber / orange / red belong to
+// status alone. Audio used to be yellow, one shade away from the BCP-008
+// warning; violet has no neighbour among the status colours at all.
+$cp-color-audio:#8b5cf6;
+$cp-color-audio-fill:#7c3aed;
 $cp-color-data:theme('colors.blue.500');
 
 // Connection-state colours (broadcast convention):
@@ -53,6 +56,7 @@ $cp-border: 1px solid transparent;
         height:100%;
 
         overflow:scroll;
+        position: relative;   /* anchor for the crosshair strips */
         
 
         // While scrolling: no hover targets. Cells streaming under the
@@ -264,11 +268,16 @@ $cp-border: 1px solid transparent;
                 svg { color: theme('colors.neutral-600'); }
             }
 
+            // Counter badge. It deliberately overhangs its heart, so every
+            // box on the way to the cell has to let it through — a single
+            // `overflow:hidden` up the chain and the digits are shaved off.
             .cp-status-count {
                 position: absolute;
-                right: -5px;
-                bottom: -5px;
-                min-width: 14px;
+                right: -6px;
+                bottom: -6px;
+                min-width: 15px;
+                box-sizing: content-box;
+                overflow: visible;
                 height: 14px;
                 padding: 0 3px;
                 border-radius: 7px;
@@ -302,34 +311,40 @@ $cp-border: 1px solid transparent;
 
         }
 
+        // Essence type as a quiet chip, not a colour block: a 20px tile with
+        // the type colour at low opacity, a hairline of the same colour and
+        // the glyph in full colour. Active only deepens the tint. The loudest
+        // thing in the matrix should be a switched connection, not a label
+        // telling you that audio is audio.
         .cp-type {
             display:inline-block;
             position:relative;
-            padding:4px;
-            margin:4px;
-            height: $cp-size;
-            width: $cp-size;
+            padding:3px;
+            margin:6px;
+            height: $cp-typeSize;
+            width: $cp-typeSize;
             border-radius: $cp-padding;
+            border: 1px solid transparent;
 
-            background-color: theme('colors.neutral-600');
+            background-color: theme('colors.base-content / 8%');
+            &.cp-type-video { background-color: rgba(34,197,94,.15);  border-color: rgba(34,197,94,.38); }
+            &.cp-type-audio { background-color: rgba(139,92,246,.15); border-color: rgba(139,92,246,.38); }
+            &.cp-type-data  { background-color: rgba(59,130,246,.15); border-color: rgba(59,130,246,.38); }
             &.cp-type-video svg{ color: $cp-color-video; }
             &.cp-type-audio svg{ color: $cp-color-audio; }
             &.cp-type-data svg{ color: $cp-color-data; }
 
-            
             svg {
                 color:theme('colors.neutral-400');
+                width: 14px;
+                height: 14px;
             }
 
             &.active {
 
-                &.cp-type-video { background-color: $cp-color-video; }
-                &.cp-type-audio { background-color: $cp-color-audio-fill; }
-                &.cp-type-data { background-color: $cp-color-data; }
-
-                svg {
-                    color:theme('colors.white');
-                }
+                &.cp-type-video { background-color: rgba(34,197,94,.34);  border-color: rgba(34,197,94,.6); }
+                &.cp-type-audio { background-color: rgba(139,92,246,.34); border-color: rgba(139,92,246,.6); }
+                &.cp-type-data  { background-color: rgba(59,130,246,.34); border-color: rgba(59,130,246,.6); }
             }
             &.prepareddisconnect {
                 svg {
@@ -425,6 +440,35 @@ $cp-border: 1px solid transparent;
                 }
             }
         }
+
+        // Crosshair strips (see moveCrosshair in crosspoint.svelte). They lie
+        // OVER everything, sticky header and label column included — that is
+        // the point: the tint has to reach the name at the edge. Kept faint
+        // and click-through.
+        .cp-cross-row, .cp-cross-col {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            opacity: 0;
+            z-index: 30;
+            background-color: theme('colors.base-content / 7%');
+            will-change: transform;
+        }
+        .cp-cross-row { width: 100%; height: $cp-sizePP; }
+        .cp-cross-col { width: $cp-sizePP; height: 100%; }
+
+        // ----- One grid across the whole page -----
+        // The matrix lines carry on into the label column and up through the
+        // sender header, so a row can be followed from its name to the last
+        // column without losing the track. Every fifth line is a little
+        // stronger — the same trick a ruler uses; at forty senders you find
+        // column 23 without counting.
+        tbody td.cp-line-stick { border-bottom: 1px solid $cp-color-gridline; }
+        thead th.cp-device, thead th.cp-flow { border-right: 1px solid $cp-color-gridline; }
+        tbody tr:nth-child(5n) td.cp-line-stick { border-bottom-color: $cp-color-gridline-5; }
+        thead th.cp-device:nth-child(5n),
+        thead th.cp-flow:nth-child(5n) { border-right-color: $cp-color-gridline-5; }
 
         // ----- The label column -----
         // Every row is the same 32px cell, so the matrix stays a clean square
@@ -548,9 +592,18 @@ $cp-border: 1px solid transparent;
                     .cp-mon {
                         writing-mode: horizontal-tb;
                         text-orientation: initial;
-                        margin: 6px 0 2px 0;
+                        // The label is 32px wide and clips (it has to, for the
+                        // ellipsis on long names) but only 24px of that is
+                        // content — a two-digit badge got its digits shaved
+                        // off at the edge. Reclaim the padding and centre in
+                        // the full column width.
+                        margin: 6px -4px 2px -4px;
+                        width: $cp-sizePP;
+                        box-sizing: border-box;
                         justify-content: center;
                         gap: 2px;
+                        font-size: 10px;
+                        svg { width: 12px; height: 12px; }
                     }
                 }
 
@@ -755,8 +808,13 @@ $cp-border: 1px solid transparent;
                     position: absolute;
                     border-radius: $cp-round;
                     display:block;
+                    // A quarter smaller than the cell it sits in: the dot
+                    // still carries the eye, but the grid can breathe around
+                    // it. Shape is untouched — the device level stays a
+                    // circle, flow level a rounded square.
                     height:$cp-size;
                     width:$cp-size;
+                    transform: scale(0.76);
                     cursor: pointer;
                     
                     &.active {
@@ -911,25 +969,23 @@ html[data-theme="light"] {
     
             }
     
+            // The chip style itself (tint + hairline + coloured glyph) is
+            // theme-independent — see the default block above. Only the
+            // neutral, type-less tile needs a light-theme value here; the old
+            // solid-fill / white-glyph rules were what made the matrix shout.
             .cp-type {
-                background-color: theme('colors.neutral-800');
+                background-color: theme('colors.base-content / 8%');
+                // Only the type-LESS chip is grey here; the theme selector
+                // this block sits under outranks the default rules, so the
+                // three type colours have to be repeated or the glyphs turn
+                // grey in the light theme.
+                svg {
+                    color:theme('colors.neutral-500');
+                }
                 &.cp-type-video svg{ color: $cp-color-video; }
                 &.cp-type-audio svg{ color: $cp-color-audio; }
-                &.cp-type-data svg{ color: $cp-color-data; }
-    
-                svg {
-                    color:theme('colors.neutral-400');
-                }
-    
-                &.active {
-                    &.cp-type-video { background-color: $cp-color-video; }
-                    &.cp-type-audio { background-color: $cp-color-audio-fill; }
-                    &.cp-type-data { background-color: $cp-color-data; }
-    
-                    svg {
-                        color:theme('colors.white');
-                    }
-                }
+                &.cp-type-data  svg{ color: $cp-color-data; }
+
                 &.prepareddisconnect {
                     svg {
                         color:theme('colors.neutral-500');

@@ -1,8 +1,9 @@
 // Colors aligned with crosspoint.scss
 $det-color-video: theme('colors.green.500');
-// true yellow, kept clear of the amber used for BCP-008 / leg warnings
-$det-color-audio: theme('colors.yellow.400');
-$det-color-audio-fill: theme('colors.yellow.500');
+// violet — hue tells you what flows, warm colours belong to status alone
+// (same rule as crosspoint.scss)
+$det-color-audio: #8b5cf6;
+$det-color-audio-fill: #7c3aed;
 $det-color-data:  theme('colors.blue.500');
 
 .details-page {

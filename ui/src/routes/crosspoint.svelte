@@ -553,6 +553,50 @@
     // large matrices. pointer-events are disabled during the scroll and
     // restored 150ms after the last scroll event.
     let isScrolling = false;
+    let crossRowEl:any = null;
+    let crossColEl:any = null;
+    let crossFrame:any = null;
+    /** Position the two crosshair strips over the cell under the pointer.
+     *  Coordinates are taken in the container's CONTENT space (rect delta plus
+     *  scroll offset), so the strips travel with the matrix while it scrolls. */
+    function moveCrosshair(e:any){
+      if(isScrolling || !crossRowEl || !crossColEl) return;
+      if(crossFrame) return;                       // at most one update per frame
+      crossFrame = requestAnimationFrame(()=>{
+        crossFrame = null;
+        try{
+          let cell = e.target && e.target.closest ? e.target.closest("td,th") : null;
+          let container = crossRowEl.parentElement;
+          if(!cell || !container){ hideCrosshair(); return; }
+          let cr = container.getBoundingClientRect();
+          let br = cell.getBoundingClientRect();
+          let x = br.left - cr.left + container.scrollLeft;
+          let y = br.top  - cr.top  + container.scrollTop;
+          // Bound the strips to the TABLE, not the container: past the last
+          // column or row there is nothing to point at, and a stripe running
+          // on into the empty area just looks broken. The table does not
+          // start at the container's origin (the sticky corner sits above
+          // it), so both edges come from its own rectangle.
+          let table:any = container.querySelector("table.cp-table");
+          let tr = table ? table.getBoundingClientRect() : br;
+          let tx = tr.left - cr.left + container.scrollLeft;
+          let ty = tr.top  - cr.top  + container.scrollTop;
+          crossRowEl.style.transform = "translate(" + tx + "px," + y + "px)";
+          crossRowEl.style.height    = br.height + "px";
+          crossRowEl.style.width     = tr.width + "px";
+          crossColEl.style.transform = "translate(" + x + "px," + ty + "px)";
+          crossColEl.style.width     = br.width + "px";
+          crossColEl.style.height    = tr.height + "px";
+          crossRowEl.style.opacity = "1";
+          crossColEl.style.opacity = "1";
+        }catch(err){ hideCrosshair(); }
+      });
+    }
+    function hideCrosshair(){
+      if(crossRowEl) crossRowEl.style.opacity = "0";
+      if(crossColEl) crossColEl.style.opacity = "0";
+    }
+
     let scrollIdleTimer:any = null;
     function onMatrixScroll(){
       isScrolling = true;
@@ -1398,7 +1442,15 @@
     </ul>
 
 
-    <div class="cp-container" class:cp-scrolling={isScrolling} on:scroll={onMatrixScroll}>
+    <div class="cp-container" class:cp-scrolling={isScrolling} on:scroll={onMatrixScroll}
+         on:mousemove={moveCrosshair} on:mouseleave={hideCrosshair}>
+      <!-- Crosshair. Two strips laid over the matrix, positioned from the cell
+           under the pointer — in a 40-column matrix that is what tells you
+           which row belongs to which name. Deliberately NOT Svelte state:
+           re-rendering the matrix on every mouse move is exactly what made
+           hover expensive before. Two element styles, nothing else. -->
+      <div class="cp-cross-row" bind:this={crossRowEl}></div>
+      <div class="cp-cross-col" bind:this={crossColEl}></div>
       <div class="cp-limit-container">
 
       <!-- Axis legend in the (otherwise empty) sticky corner: senders run
