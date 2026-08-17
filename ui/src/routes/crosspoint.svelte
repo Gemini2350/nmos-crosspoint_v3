@@ -2,7 +2,7 @@
     import type { Source } from "postcss";
     import ServerConnector from "../lib/ServerConnector/ServerConnectorService"
       import type { Subject } from "rxjs";
-      import { onDestroy, onMount } from "svelte";
+      import { afterUpdate, onDestroy, onMount } from "svelte";
       import { createEventDispatcher } from 'svelte';
 
       import { Icon, ChevronRight, ChevronDoubleUp, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart } from "svelte-hero-icons";
@@ -597,9 +597,96 @@
       if(crossColEl) crossColEl.style.opacity = "0";
     }
 
+    // ----- The open group keeps its name at the edge -----
+    // Scroll into a long node and its name leaves the screen — upwards on the
+    // receiver axis, to the left on the sender axis — exactly when you need to
+    // know whose flows you are looking at. Table `position:sticky` cannot do
+    // this (a sticky cell is bounded by its row group, and all sender columns
+    // live in ONE row), so the name rides on two overlay chips.
+    //
+    // What is at the edge is ASKED, not remembered: one hit test per axis per
+    // frame. Pre-measuring group bounds meant carrying numbers that a fold-out
+    // had already invalidated — the column chip then named the wrong group.
+    let pinRowEl:any = null;
+    let pinColEl:any = null;
+    let pinFrame:any = null;
+
+    function updatePins(){
+      if(!pinRowEl || !pinColEl) return;
+      if(pinFrame) return;
+      pinFrame = requestAnimationFrame(()=>{
+        pinFrame = null;
+        try{
+          let container:any = pinRowEl.parentElement;
+          let table:any = container ? container.querySelector("table.cp-table") : null;
+          let corner:any = table ? table.querySelector("thead th.cp-corner") : null;
+          if(!container || !corner){ return; }
+          const cr = container.getBoundingClientRect();
+          const co = corner.getBoundingClientRect();
+          const st = container.scrollTop, sl = container.scrollLeft;
+          // The vertical edge comes from the header (sticky at top:0), the
+          // horizontal one from the label column (sticky at left:0). NOT from
+          // the corner cell: it is only pinned vertically, so its right edge
+          // travels with the scroll — which is why the column chip stayed
+          // hidden however far you scrolled.
+          let stickCell:any = table.querySelector("tbody td.cp-line-stick");
+          const edgeX = stickCell ? stickCell.getBoundingClientRect().right : co.right;
+          const labelW = edgeX - cr.left;
+
+          // --- receiver rows: which group owns the first row below the header?
+          // Walked over the group boxes with FRESH rectangles. A hit test at
+          // that point lands on the header's own layout layer instead of a
+          // row, and remembered bounds go stale the moment a node is folded
+          // out — both were tried, both named the wrong group.
+          let groupTb:any = null;
+          for(const tb of Array.from(table.querySelectorAll("tbody")) as any[]){
+            const r = tb.getBoundingClientRect();
+            if(r.top <= co.bottom + 1 && r.bottom > co.bottom + 6){ groupTb = tb; }
+          }
+          let headRow:any = groupTb ? groupTb.querySelector("tr") : null;
+          let head:any = headRow ? headRow.querySelector(".cp-label") : null;
+          // Only worth a chip once the group's own name has left the screen.
+          if(groupTb && head && groupTb.rows.length > 1 &&
+             headRow.getBoundingClientRect().bottom <= co.bottom + 1){
+            pinRowEl.textContent = (head.textContent || "").replace(/\s+/g, " ").trim();
+            pinRowEl.style.transform = "translate(" + sl + "px," + (st + co.height) + "px)";
+            pinRowEl.style.opacity = "1";
+          }else{
+            pinRowEl.style.opacity = "0";
+          }
+
+          // --- sender columns: the same walk, one axis over ---
+          // The group whose SPAN contains the edge — its own header at or left
+          // of the edge, the next group's header right of it. Just taking the
+          // last one left of the edge named the previous group at boundaries.
+          let groupTh:any = null;
+          let tops:any[] = Array.from(table.querySelectorAll("thead th.cp-device.cp-top"));
+          for(let i = 0; i < tops.length; i++){
+            const left = tops[i].getBoundingClientRect().left;
+            const nextLeft = tops[i+1] ? tops[i+1].getBoundingClientRect().left : Infinity;
+            if(left <= edgeX + 1 && nextLeft > edgeX + 1){ groupTh = tops[i]; break; }
+          }
+          let labC:any = groupTh ? groupTh.querySelector(".cp-label") : null;
+          let nextTh:any = groupTh ? groupTh.nextElementSibling : null;
+          let groupHasMore = !!(nextTh && nextTh.classList && !nextTh.classList.contains("cp-top"));
+          if(groupTh && labC && groupHasMore &&
+             groupTh.getBoundingClientRect().right <= edgeX + 1){
+            pinColEl.textContent = (labC.textContent || "").replace(/\s+/g, " ").trim();
+            pinColEl.style.transform = "translate(" + (sl + labelW) + "px," + st + "px)";
+            pinColEl.style.opacity = "1";
+          }else{
+            pinColEl.style.opacity = "0";
+          }
+        }catch(e){}
+      });
+    }
+
     let scrollIdleTimer:any = null;
+    afterUpdate(()=>{ updatePins(); });
+
     function onMatrixScroll(){
       isScrolling = true;
+      updatePins();
       if(scrollIdleTimer){ clearTimeout(scrollIdleTimer); }
       scrollIdleTimer = setTimeout(()=>{ isScrolling = false; }, 150);
     }
@@ -1451,6 +1538,10 @@
            hover expensive before. Two element styles, nothing else. -->
       <div class="cp-cross-row" bind:this={crossRowEl}></div>
       <div class="cp-cross-col" bind:this={crossColEl}></div>
+      <!-- Name of the group currently at the top / left edge. Same reasoning
+           as the crosshair: moved by style, never by state. -->
+      <div class="cp-pin-row" bind:this={pinRowEl}></div>
+      <div class="cp-pin-col" bind:this={pinColEl}></div>
       <div class="cp-limit-container">
 
       <!-- Axis legend in the (otherwise empty) sticky corner: senders run

@@ -1,7 +1,7 @@
 $cp-size: 24px;
 $cp-padding: 4px;
 $cp-round: 6px;
-$cp-sizePP: 32px;
+$cp-sizePP: 28px;   /* one matrix cell — rows and columns follow it */
 $cp-typeSize: 20px;   /* essence-type chip — smaller than the old 24px tile */
 // The matrix draws its lines as an inset box-shadow on every cell
 // (rgba(255,255,255,.07) dark / rgba(0,0,0,.08) light). The label column and
@@ -163,7 +163,7 @@ $cp-border: 1px solid transparent;
             cursor:default;
             // 30px, not 36: the name sits closer to the expand chevron
             padding:4px 36px 4px 30px;
-            margin:0px -32px 0px -32px;
+            margin:0px (-$cp-sizePP) 0px (-$cp-sizePP);
             position:relative;
             &.hidden {
                 color:theme('colors.neutral-500');
@@ -330,7 +330,7 @@ $cp-border: 1px solid transparent;
             display:inline-block;
             position:relative;
             padding:3px;
-            margin:6px;
+            margin:4px;                 /* 20px glyph + 2x4 = one 28px cell */
             height: $cp-typeSize;
             width: $cp-typeSize;
             border-radius: $cp-padding;
@@ -462,6 +462,45 @@ $cp-border: 1px solid transparent;
         .cp-cross-row { width: 100%; height: $cp-sizePP; }
         .cp-cross-col { width: $cp-sizePP; height: 100%; }
 
+        // ----- Pinned group name -----
+        // The name of the group at the top / left edge of the visible matrix,
+        // laid over the grid and moved with the scroll offset (see the script:
+        // table sticky cannot do this). Styled exactly like the node entry it
+        // stands in for, so it reads as that row/column having stayed put.
+        .cp-pin-row, .cp-pin-col {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            opacity: 0;
+            z-index: 13;
+            background-color: theme('colors.base-200');
+            color: theme('colors.base-content');
+            font-weight: 600;
+            font-size: 15px;
+            letter-spacing: 0.02em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            will-change: transform;
+        }
+        .cp-pin-row {
+            width: $cp-headerSize - $cp-gutter;
+            height: $cp-sizePP;
+            line-height: $cp-sizePP;
+            padding: 0 8px 0 30px;
+            border-bottom: 1px solid $cp-color-gridline;
+        }
+        .cp-pin-col {
+            width: $cp-sizePP;
+            height: $cp-headerSize - $cp-gutter;
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            padding: 30px 0 8px 0;
+            text-align: left;
+            border-right: 1px solid $cp-color-gridline;
+        }
+
         // ----- One grid across the whole page -----
         // The matrix lines carry on into the label column and up through the
         // sender header, so a row can be followed from its name to the last
@@ -483,8 +522,8 @@ $cp-border: 1px solid transparent;
         // the page colour so it can overlap its neighbours (the -32px trick)
         // without letting anything shine through.
         tbody tr td.cp-line-stick {
-            min-height: 32px;
-            max-height: 32px;
+            min-height: $cp-sizePP;
+            max-height: $cp-sizePP;
             padding-top: 0px;
             padding-bottom: 0px;
             .cp-label {
@@ -589,7 +628,7 @@ $cp-border: 1px solid transparent;
                     // 30px like the receiver labels: the name starts closer to
                     // the expand chevron above it
                     padding: 30px 4px 36px 4px;
-                    margin:-32px auto -32px auto;
+                    margin:(-$cp-sizePP) auto (-$cp-sizePP) auto;
 
                     // The sender header is rotated (vertical-rl), so the
                     // badge inherited that: icon and counter stacked along
@@ -674,8 +713,8 @@ $cp-border: 1px solid transparent;
                 // Same model as the receiver rows: no card colours, every
                 // column the same width so the matrix stays a square grid.
                 & {
-                    min-width: 32px;
-                    max-width: 32px;
+                    min-width: $cp-sizePP;
+                    max-width: $cp-sizePP;
                     padding-left: 0px;
                     padding-right: 0px;
                     .cp-label {
@@ -763,6 +802,15 @@ $cp-border: 1px solid transparent;
         .cp-table thead th.cp-corner {
             min-width: $cp-headerSize;
             max-width: $cp-headerSize;
+            // The one cell where both sticky axes cross. It has to be pinned in
+            // BOTH and sit above the other header cells, opaque: otherwise the
+            // sender columns scrolling out to the left show through it, right
+            // over the receiver names' column.
+            position: sticky;
+            left: 0px;
+            top: 0px;
+            z-index: 14;
+            background-color: theme('colors.base-100');
         }
         // The strip itself: one rowspan cell per node group (single-device
         // nodes included), vertical text bracketing the node's receiver rows.
@@ -1054,6 +1102,8 @@ html[data-theme="light"] {
             thead th.cp-top .cp-label {
                 background-color: theme('colors.base-200');
             }
+            .cp-pin-row { border-bottom-color: $cp-color-gridline-light; }
+            .cp-pin-col { border-right-color: $cp-color-gridline-light; }
             tbody td.cp-line-stick { border-bottom-color: $cp-color-gridline-light; }
             thead th.cp-device, thead th.cp-flow, thead th.cp-corner {
                 border-right-color: $cp-color-gridline-light;
