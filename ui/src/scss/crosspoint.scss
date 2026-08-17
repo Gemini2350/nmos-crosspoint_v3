@@ -481,7 +481,7 @@ $cp-border: 1px solid transparent;
         // on the column that opens one. Taken as cell padding so the whole row
         // resp. column grows — the matrix cells move with it and the grid stays
         // aligned. The very first group needs no gap.
-        tbody + tbody tr:first-child td.cp-line-stick { padding-top: 3px; }
+        tbody + tbody tr:first-child td.cp-line-stick { padding-top: 1px; }
         thead th.cp-device.cp-top { padding-left: 3px; }
         thead th.cp-corner + th.cp-device.cp-top { padding-left: 0px; }
 
