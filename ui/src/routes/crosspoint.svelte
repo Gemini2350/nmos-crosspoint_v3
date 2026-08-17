@@ -609,10 +609,12 @@
     // had already invalidated — the column chip then named the wrong group.
     let pinRowEl:any = null;
     let pinColEl:any = null;
+    let pinRow2El:any = null;      // second level: the device inside the node
+    let pinCol2El:any = null;
     let pinFrame:any = null;
 
     function updatePins(){
-      if(!pinRowEl || !pinColEl) return;
+      if(!pinRowEl || !pinColEl || !pinRow2El || !pinCol2El) return;
       if(pinFrame) return;
       pinFrame = requestAnimationFrame(()=>{
         pinFrame = null;
@@ -633,11 +635,16 @@
           const edgeX = stickCell ? stickCell.getBoundingClientRect().right : co.right;
           const labelW = edgeX - cr.left;
 
-          // --- receiver rows: which group owns the first row below the header?
+          // A chip takes over the moment its row / column STARTS to slide
+          // under the edge, not once it has fully gone: waiting for that left a
+          // stretch where the real name was half swallowed and the chip was not
+          // there yet — the name appeared to dissolve.
+          const rowH = stickCell ? stickCell.getBoundingClientRect().height : 28;
+
+          // --- receiver rows ---
           // Walked over the group boxes with FRESH rectangles. A hit test at
-          // that point lands on the header's own layout layer instead of a
-          // row, and remembered bounds go stale the moment a node is folded
-          // out — both were tried, both named the wrong group.
+          // the edge lands on the header's own layout layer instead of a row,
+          // and remembered bounds go stale as soon as a node is folded out.
           let groupTb:any = null;
           for(const tb of Array.from(table.querySelectorAll("tbody")) as any[]){
             const r = tb.getBoundingClientRect();
@@ -645,20 +652,37 @@
           }
           let headRow:any = groupTb ? groupTb.querySelector("tr") : null;
           let head:any = headRow ? headRow.querySelector(".cp-label") : null;
-          // Only worth a chip once the group's own name has left the screen.
+          let rowLevel1 = false;
           if(groupTb && head && groupTb.rows.length > 1 &&
-             headRow.getBoundingClientRect().bottom <= co.bottom + 1){
+             headRow.getBoundingClientRect().top < co.bottom - 1){
             pinRowEl.textContent = (head.textContent || "").replace(/\s+/g, " ").trim();
             pinRowEl.style.transform = "translate(" + sl + "px," + (st + co.height) + "px)";
             pinRowEl.style.opacity = "1";
+            rowLevel1 = true;
           }else{
             pinRowEl.style.opacity = "0";
           }
+          // ... and the device inside it, one step below
+          let devRow:any = null;
+          if(rowLevel1 && groupTb){
+            let devs:any[] = Array.from(groupTb.querySelectorAll("tr.cp-device:not(.cp-top)"));
+            for(let i = 0; i < devs.length; i++){
+              const top = devs[i].getBoundingClientRect().top;
+              const nextTop = devs[i+1] ? devs[i+1].getBoundingClientRect().top : Infinity;
+              const isOpen = devs[i].nextElementSibling && devs[i].nextElementSibling.classList.contains("cp-flow");
+              if(isOpen && top < co.bottom - 1 && nextTop > co.bottom + rowH){ devRow = devs[i]; break; }
+            }
+          }
+          let devLab:any = devRow ? devRow.querySelector(".cp-label") : null;
+          if(devLab){
+            pinRow2El.textContent = (devLab.textContent || "").replace(/\s+/g, " ").trim();
+            pinRow2El.style.transform = "translate(" + sl + "px," + (st + co.height + rowH) + "px)";
+            pinRow2El.style.opacity = "1";
+          }else{
+            pinRow2El.style.opacity = "0";
+          }
 
-          // --- sender columns: the same walk, one axis over ---
-          // The group whose SPAN contains the edge — its own header at or left
-          // of the edge, the next group's header right of it. Just taking the
-          // last one left of the edge named the previous group at boundaries.
+          // --- sender columns: the same two levels, one axis over ---
           let groupTh:any = null;
           let tops:any[] = Array.from(table.querySelectorAll("thead th.cp-device.cp-top"));
           for(let i = 0; i < tops.length; i++){
@@ -669,13 +693,38 @@
           let labC:any = groupTh ? groupTh.querySelector(".cp-label") : null;
           let nextTh:any = groupTh ? groupTh.nextElementSibling : null;
           let groupHasMore = !!(nextTh && nextTh.classList && !nextTh.classList.contains("cp-top"));
+          let colLevel1 = false;
           if(groupTh && labC && groupHasMore &&
-             groupTh.getBoundingClientRect().right <= edgeX + 1){
+             groupTh.getBoundingClientRect().left < edgeX - 1){
             pinColEl.textContent = (labC.textContent || "").replace(/\s+/g, " ").trim();
             pinColEl.style.transform = "translate(" + (sl + labelW) + "px," + st + "px)";
             pinColEl.style.opacity = "1";
+            colLevel1 = true;
           }else{
             pinColEl.style.opacity = "0";
+          }
+          let devTh:any = null;
+          if(colLevel1 && groupTh){
+            let th:any = groupTh.nextElementSibling;
+            let devs:any[] = [];
+            while(th && !(th.classList && th.classList.contains("cp-top"))){
+              if(th.classList && th.classList.contains("cp-device")){ devs.push(th); }
+              th = th.nextElementSibling;
+            }
+            for(let i = 0; i < devs.length; i++){
+              const left = devs[i].getBoundingClientRect().left;
+              const nextLeft = devs[i+1] ? devs[i+1].getBoundingClientRect().left : Infinity;
+              const isOpen = devs[i].nextElementSibling && devs[i].nextElementSibling.classList.contains("cp-flow");
+              if(isOpen && left < edgeX - 1 && nextLeft > edgeX + rowH){ devTh = devs[i]; break; }
+            }
+          }
+          let devLabC:any = devTh ? devTh.querySelector(".cp-label") : null;
+          if(devLabC){
+            pinCol2El.textContent = (devLabC.textContent || "").replace(/\s+/g, " ").trim();
+            pinCol2El.style.transform = "translate(" + (sl + labelW + rowH) + "px," + st + "px)";
+            pinCol2El.style.opacity = "1";
+          }else{
+            pinCol2El.style.opacity = "0";
           }
         }catch(e){}
       });
@@ -1542,6 +1591,8 @@
            as the crosshair: moved by style, never by state. -->
       <div class="cp-pin-row" bind:this={pinRowEl}></div>
       <div class="cp-pin-col" bind:this={pinColEl}></div>
+      <div class="cp-pin-row2" bind:this={pinRow2El}></div>
+      <div class="cp-pin-col2" bind:this={pinCol2El}></div>
       <div class="cp-limit-container">
 
       <!-- Axis legend in the (otherwise empty) sticky corner: senders run

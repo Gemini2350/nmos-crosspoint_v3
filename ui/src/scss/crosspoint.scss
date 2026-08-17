@@ -78,7 +78,10 @@ $cp-border: 1px solid transparent;
         }
 
         .cp-header-cross {
-            z-index:10;
+            // Above the corner cell (14): that one had to become opaque so the
+            // sender columns scrolling out of view stop showing through it, and
+            // it swallowed this legend in the process.
+            z-index:15;
             position: sticky;
             top:0px;
             left: 0px;
@@ -205,7 +208,11 @@ $cp-border: 1px solid transparent;
                 font-weight: 600;
                 font-size: 15px;
                 letter-spacing: 0.02em;
-                background-color: theme('colors.base-200');
+                // An explicit tone for the dark design: base-200 and base-300
+                // both sit so close to the page there that the backing was
+                // simply not visible. The light design keeps base-200 (see its
+                // own block below), where the same step would be too loud.
+                background-color: #272e37;
             }
             .cp-expand svg { stroke-width: 2.4; }
         }
@@ -462,12 +469,28 @@ $cp-border: 1px solid transparent;
         .cp-cross-row { width: 100%; height: $cp-sizePP; }
         .cp-cross-col { width: $cp-sizePP; height: 100%; }
 
+        // Same specificity as the page-colour rule above, or that one wins and
+        // the dark design shows no backing at all (which is exactly what
+        // happened: only the light theme had a rule this specific).
+        tbody tr.cp-top td.cp-line-stick .cp-label,
+        thead th.cp-top .cp-label {
+            background-color: #272e37;
+        }
+
+        // A breath between node groups: 3px on the row that opens a group and
+        // on the column that opens one. Taken as cell padding so the whole row
+        // resp. column grows — the matrix cells move with it and the grid stays
+        // aligned. The very first group needs no gap.
+        tbody + tbody tr:first-child td.cp-line-stick { padding-top: 3px; }
+        thead th.cp-device.cp-top { padding-left: 3px; }
+        thead th.cp-corner + th.cp-device.cp-top { padding-left: 0px; }
+
         // ----- Pinned group name -----
         // The name of the group at the top / left edge of the visible matrix,
         // laid over the grid and moved with the scroll offset (see the script:
         // table sticky cannot do this). Styled exactly like the node entry it
         // stands in for, so it reads as that row/column having stayed put.
-        .cp-pin-row, .cp-pin-col {
+        .cp-pin-row, .cp-pin-col, .cp-pin-row2, .cp-pin-col2 {
             position: absolute;
             top: 0;
             left: 0;
@@ -484,14 +507,23 @@ $cp-border: 1px solid transparent;
             white-space: nowrap;
             will-change: transform;
         }
-        .cp-pin-row {
+        // Second level: the device inside the pinned node. Page colour and
+        // normal weight, stepped in — exactly the row it stands in for.
+        .cp-pin-row2, .cp-pin-col2 {
+            background-color: $cp-color-page;
+            font-weight: 400;
+            font-size: 14.5px;
+            opacity: 0;
+        }
+        .cp-pin-row, .cp-pin-row2 {
             width: $cp-headerSize - $cp-gutter;
             height: $cp-sizePP;
             line-height: $cp-sizePP;
             padding: 0 8px 0 30px;
             border-bottom: 1px solid $cp-color-gridline;
         }
-        .cp-pin-col {
+        .cp-pin-row2 { padding-left: 30px + $cp-indent; }
+        .cp-pin-col, .cp-pin-col2 {
             width: $cp-sizePP;
             height: $cp-headerSize - $cp-gutter;
             writing-mode: vertical-rl;
@@ -500,6 +532,7 @@ $cp-border: 1px solid transparent;
             text-align: left;
             border-right: 1px solid $cp-color-gridline;
         }
+        .cp-pin-col2 { padding-top: 30px + $cp-indent; }
 
         // ----- One grid across the whole page -----
         // The matrix lines carry on into the label column and up through the
@@ -511,10 +544,14 @@ $cp-border: 1px solid transparent;
         // fifth line is gone: with device, flow and node columns interleaved
         // nth-child hits arbitrary columns, which is what made the grid look
         // uneven and left some sender columns without a line at all.
-        tbody td.cp-line-stick { border-bottom: 1px solid $cp-color-gridline; }
-        thead th.cp-device, thead th.cp-flow, thead th.cp-corner {
-            border-right: 1px solid $cp-color-gridline;
+        // Drawn ON the card, not on the cell: a border on the cell runs the
+        // full width of the column, so it stuck out beyond the grey backing —
+        // and it stole a pixel from the content box, which shifted the card.
+        tbody td.cp-line-stick .cp-label { box-shadow: inset 0 -1px 0 0 $cp-color-gridline; }
+        thead th.cp-device .cp-label, thead th.cp-flow .cp-label {
+            box-shadow: inset -1px 0 0 0 $cp-color-gridline;
         }
+        thead th.cp-corner { border-right: 1px solid $cp-color-gridline; }
 
         // ----- The label column -----
         // Every row is the same 32px cell, so the matrix stays a clean square
@@ -628,7 +665,11 @@ $cp-border: 1px solid transparent;
                     // 30px like the receiver labels: the name starts closer to
                     // the expand chevron above it
                     padding: 30px 4px 36px 4px;
+                    // Flush with the top of the header, the gutter to the
+                    // matrix taken off the bottom only — centring it left a 4px
+                    // gap above the name that the grid lines ran straight past.
                     margin:(-$cp-sizePP) auto (-$cp-sizePP) auto;
+                    align-self: flex-start;
 
                     // The sender header is rotated (vertical-rl), so the
                     // badge inherited that: icon and counter stacked along
@@ -717,13 +758,24 @@ $cp-border: 1px solid transparent;
                     max-width: $cp-sizePP;
                     padding-left: 0px;
                     padding-right: 0px;
+                    &.cp-top .cp-label {
+                        // Set HERE, inside the header block: a flat
+                        // `thead th.cp-top .cp-label` rule ties on specificity
+                        // with the page-colour rule below and loses on source
+                        // order — which is why the sender node columns stayed
+                        // uncoloured while the receiver rows went grey.
+                        background-color: #272e37;
+                    }
                     .cp-label {
                         background-color: $cp-color-page;
                         border-radius: 0px;
                         // gutter to the matrix, one axis over: the label stops
-                        // short of the first row
+                        // short of the first row — and it starts at the very top
+                        // of the header, not centred in it
                         max-height: $cp-headerSize - $cp-gutter;
                         min-height: $cp-headerSize - $cp-gutter;
+                        margin-top: (-$cp-sizePP);
+                        margin-bottom: 0px;
                     }
                 }
 
@@ -1102,12 +1154,14 @@ html[data-theme="light"] {
             thead th.cp-top .cp-label {
                 background-color: theme('colors.base-200');
             }
-            .cp-pin-row { border-bottom-color: $cp-color-gridline-light; }
-            .cp-pin-col { border-right-color: $cp-color-gridline-light; }
-            tbody td.cp-line-stick { border-bottom-color: $cp-color-gridline-light; }
-            thead th.cp-device, thead th.cp-flow, thead th.cp-corner {
-                border-right-color: $cp-color-gridline-light;
+            .cp-pin-row, .cp-pin-row2 { border-bottom-color: $cp-color-gridline-light; }
+            .cp-pin-col, .cp-pin-col2 { border-right-color: $cp-color-gridline-light; }
+            .cp-pin-row2, .cp-pin-col2 { background-color: theme('colors.base-100'); }
+            tbody td.cp-line-stick .cp-label { box-shadow: inset 0 -1px 0 0 $cp-color-gridline-light; }
+            thead th.cp-device .cp-label, thead th.cp-flow .cp-label {
+                box-shadow: inset -1px 0 0 0 $cp-color-gridline-light;
             }
+            thead th.cp-corner { border-right-color: $cp-color-gridline-light; }
     
     
             
