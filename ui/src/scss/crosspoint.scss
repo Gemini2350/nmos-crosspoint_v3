@@ -3,8 +3,12 @@ $cp-padding: 4px;
 $cp-round: 6px;
 $cp-sizePP: 32px;
 $cp-typeSize: 20px;   /* essence-type chip — smaller than the old 24px tile */
-$cp-color-gridline:   theme('colors.base-content / 13%');
-$cp-color-gridline-5: theme('colors.base-content / 26%');
+// The matrix draws its lines as an inset box-shadow on every cell
+// (rgba(255,255,255,.07) dark / rgba(0,0,0,.08) light). The label column and
+// the sender header have to use EXACTLY that, or their lines read as thicker
+// than the grid they continue.
+$cp-color-gridline:       rgba(255,255,255,0.07);
+$cp-color-gridline-light: rgba(0,0,0,0.08);
 $cp-textLength: 160px;
 $cp-headerSize: 232px;    /* 160 +padding + padding + 32 +32  text+expander + info */
 $cp-bandSize: 24px;       /* slim node band above sender columns */
@@ -194,20 +198,25 @@ $cp-border: 1px solid transparent;
         // readable without a single line, box or tint.
         .cp-top {
             .cp-label {
-                font-weight: 700;
+                // Not shouting in bold — a calm weight on a faintly grey
+                // backing. base-200 is opaque on purpose: these cells are
+                // sticky, and anything translucent lets the rows underneath
+                // shine through while scrolling.
+                font-weight: 600;
                 font-size: 15px;
                 letter-spacing: 0.02em;
+                background-color: theme('colors.base-200');
             }
             .cp-expand svg { stroke-width: 2.4; }
         }
         tbody tr:not(.cp-top):not(.cp-flow) td.cp-line-stick .cp-label,
         thead th:not(.cp-top):not(.cp-flow) .cp-label {
-            font-size: 13.5px;
+            font-size: 14.5px;
             opacity: 0.84;
         }
         tbody tr.cp-flow td.cp-line-stick .cp-label,
         thead th.cp-flow .cp-label {
-            font-size: 12.5px;
+            font-size: 13.5px;
             font-weight: 400;
             opacity: 0.66;
         }
@@ -459,11 +468,14 @@ $cp-border: 1px solid transparent;
         // column without losing the track. Every fifth line is a little
         // stronger — the same trick a ruler uses; at forty senders you find
         // column 23 without counting.
+        // Same weight, same colour, every line — the ruler rhythm of every
+        // fifth line is gone: with device, flow and node columns interleaved
+        // nth-child hits arbitrary columns, which is what made the grid look
+        // uneven and left some sender columns without a line at all.
         tbody td.cp-line-stick { border-bottom: 1px solid $cp-color-gridline; }
-        thead th.cp-device, thead th.cp-flow { border-right: 1px solid $cp-color-gridline; }
-        tbody tr:nth-child(5n) td.cp-line-stick { border-bottom-color: $cp-color-gridline-5; }
-        thead th.cp-device:nth-child(5n),
-        thead th.cp-flow:nth-child(5n) { border-right-color: $cp-color-gridline-5; }
+        thead th.cp-device, thead th.cp-flow, thead th.cp-corner {
+            border-right: 1px solid $cp-color-gridline;
+        }
 
         // ----- The label column -----
         // Every row is the same 32px cell, so the matrix stays a clean square
@@ -486,6 +498,13 @@ $cp-border: 1px solid transparent;
                 border-radius: 0px;
             }
         }
+
+        // NOTE no sticky group header here. A sticky <td> is constrained by
+        // its row GROUP, so pinning node names at the scroll edge clipped them
+        // against the neighbouring group — and on the sender axis, where all
+        // columns live in one row, every group would pin to the same spot.
+        // The way that works for both axes is a floating overlay like the
+        // crosshair, driven by scroll position, not table sticky.
 
         // ----- Hierarchy: node → device → flow -----
         // Each level starts one step further in — the chevron / status heart
@@ -524,7 +543,11 @@ $cp-border: 1px solid transparent;
                 padding:0;
                 position: sticky;
                 top: 0px;
-                z-index: 9;
+                // ABOVE the label column (z 10): thead is painted before tbody,
+                // so with equal values the receiver names drew over the sender
+                // header while scrolling — sender and receiver names on top of
+                // each other at the crossing.
+                z-index: 11;
 
                 text-align: center;
                 vertical-align: top;
@@ -604,15 +627,21 @@ $cp-border: 1px solid transparent;
 
                 .cp-label {
                     .cp-edit {
-                        
-                        left:0px; 
-                        bottom:40px;
+                        // Bottom edge of the column, not floating in the middle
+                        // of the name: this is the mirror of the receiver side,
+                        // where the buttons sit at the far end of the label.
+                        left:0px;
+                        bottom:6px;
 
                         right: unset;
                         top:unset;
-                    
                     }
                 }
+                // The name keeps its full length and runs behind the buttons
+                // for long labels — the same overlay the receiver side uses.
+                // Shortening the label on hover clipped the text mid-word (a
+                // vertical ellipsis does not render) and left a seam in the
+                // grey backing.
 
                 .cp-type {
                     .cp-detail {
@@ -711,7 +740,7 @@ $cp-border: 1px solid transparent;
                 tr td.cp-line-stick  {
                     position: sticky;
                     left:0px;
-                    z-index:9;
+                    z-index:10;
                     min-height: $cp-sizePP;
                     max-height: $cp-sizePP;
                     max-width: $cp-headerSize;
@@ -1015,12 +1044,19 @@ html[data-theme="light"] {
                 }
             }
     
-            // No card colours at all — the level is carried by weight and
-            // indentation (see the default theme above). The label still
-            // paints the page colour so its -32px overhang covers cleanly.
+            // Page colour behind every label so the -32px overhang covers
+            // cleanly; the top level keeps its faint grey.
             tbody tr td.cp-line-stick .cp-label,
             thead th .cp-label {
                 background-color: theme('colors.base-100');
+            }
+            tbody tr.cp-top td.cp-line-stick .cp-label,
+            thead th.cp-top .cp-label {
+                background-color: theme('colors.base-200');
+            }
+            tbody td.cp-line-stick { border-bottom-color: $cp-color-gridline-light; }
+            thead th.cp-device, thead th.cp-flow, thead th.cp-corner {
+                border-right-color: $cp-color-gridline-light;
             }
     
     

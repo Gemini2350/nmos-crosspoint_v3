@@ -1514,9 +1514,14 @@
                     {/each}
                 </tr>
             </thead>
-            <tbody>
+            <!-- One tbody PER GROUP: a sticky <td> is constrained by its row
+                 group, not by its row. In a single tbody every node label
+                 could float to the same offset and they stacked on top of each
+                 other; per group each name sticks exactly as long as its own
+                 group is on screen, and the next group pushes it out. -->
               {#each receiverGroups as rg}
               {@const inStrip = !!(rg.devices[0] && rg.devices[0].isNode)}
+              <tbody>
               {#each rg.devices as dev, devIdx}
                 <tr class="cp-device" class:cp-grp={inStrip} class:cp-node-row={dev.isNode} class:cp-top={dev.isNode || !inStrip} class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
                   <td class="cp-line-stick" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
@@ -1614,8 +1619,8 @@
                 {/each}
                 {/if}
               {/each}
+              </tbody>
               {/each}
-            </tbody>
     </table>
     
     </div>
