@@ -288,9 +288,16 @@ $cp-border: 1px solid transparent;
             // box on the way to the cell has to let it through — a single
             // `overflow:hidden` up the chain and the digits are shaved off.
             .cp-status-count {
+                // LEFT of the heart on the receiver rows, ABOVE it in the
+                // sender header (see the thead block): at the bottom right the
+                // badge hung over the cell edge and the black circle got
+                // shaved off by the first overflow:hidden up the chain.
                 position: absolute;
-                right: -6px;
-                bottom: -6px;
+                right: auto;
+                bottom: auto;
+                left: -13px;
+                top: 50%;
+                transform: translateY(-50%);
                 min-width: 15px;
                 box-sizing: content-box;
                 overflow: visible;
@@ -485,7 +492,26 @@ $cp-border: 1px solid transparent;
         thead th.cp-device.cp-top { padding-left: 3px; }
         thead th.cp-corner + th.cp-device.cp-top { padding-left: 0px; }
 
-        // ----- Pinned group name -----
+        // A click on a cell that belongs to a folded node does NOT switch —
+        // it unfolds. Hovering says so with a plus. It hangs on the dot, not
+        // on the cell: the cell's ::before and ::after are the crosshair
+        // tints, and borrowing one of them would put the row/column highlight
+        // out of action for exactly these cells.
+        .cp-connect-expand div:hover span::after {
+            content: "+";
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: 700;
+            line-height: 1;
+            color: theme('colors.base-content / 70%');
+            pointer-events: none;
+        }
+
+        // ----- Pinned group name -----        // ----- Pinned group name -----
         // The name of the group at the top / left edge of the visible matrix,
         // laid over the grid and moved with the scroll offset (see the script:
         // table sticky cannot do this). Styled exactly like the node entry it
@@ -561,6 +587,11 @@ $cp-border: 1px solid transparent;
         tbody tr td.cp-line-stick {
             min-height: $cp-sizePP;
             max-height: $cp-sizePP;
+            // The card sat 2px below the matrix row it belongs to (the cell is
+            // taller than the card, and the leftover went to the top). Pulled
+            // up by exactly that: rows line up with the grid, and the gap
+            // above a group loses the same 2px.
+            .cp-label { position: relative; top: -2px; }
             padding-top: 0px;
             padding-bottom: 0px;
             .cp-label {
@@ -703,6 +734,15 @@ $cp-border: 1px solid transparent;
                         font-size: 10px;
                         svg { width: 12px; height: 12px; }
                     }
+                }
+                // The sender header reads top-down, so the count sits ABOVE its
+                // heart here — the mirror of "left of it" on the receiver rows.
+                .cp-type.cp-status .cp-status-count {
+                    left: 50%;
+                    top: -13px;
+                    right: auto;
+                    bottom: auto;
+                    transform: translateX(-50%);
                 }
 
                 .cp-label {
@@ -927,8 +967,11 @@ $cp-border: 1px solid transparent;
                 }
 
                 span {
-                    top: 4px;
-                    left: 4px;
+                    // Centred in the cell, derived from the cell size — these
+                    // were hard 4px/8px from the 32px days and sat 2px off
+                    // centre once the grid went to 28px.
+                    top: ($cp-sizePP - $cp-size) * 0.5;
+                    left: ($cp-sizePP - $cp-size) * 0.5;
                     position: absolute;
                     border-radius: $cp-round;
                     display:block;
@@ -1015,8 +1058,8 @@ $cp-border: 1px solid transparent;
             span {
                 &.active {
                     background-color: $cp-color-green;
-                    top: 8px;
-                    left: 8px;
+                    top: ($cp-sizePP - 16px) * 0.5;
+                    left: ($cp-sizePP - 16px) * 0.5;
                     border-radius: 8px;
                     height:16px;
                     width:16px;
@@ -1035,8 +1078,8 @@ $cp-border: 1px solid transparent;
                 }
 
                 &:hover {
-                    top: 4px;
-                    left: 4px;
+                    top: ($cp-sizePP - $cp-size) * 0.5;
+                    left: ($cp-sizePP - $cp-size) * 0.5;
                     border-radius: $cp-round;
                     height:$cp-size;
                     width:$cp-size;

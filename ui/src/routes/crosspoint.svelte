@@ -859,6 +859,25 @@
             response.data.connections.forEach((c:any)=>{
               newList.push({ srcDev: c.src ? c.srcDev : null, src: c.src || null, dstDev: c.dstDev, dst: c.dst })
             })
+            // Already switched? Then this click means OFF. The flow level has
+            // had that toggle all along (see dst.connectedFlow above), the
+            // device level never did: with Autotake the prepared entries are
+            // gone the instant they are taken, so `allPrepared` was false on
+            // the second click and it simply prepared the same connections
+            // again. Nothing ever came apart again from a device cell.
+            // connectedFlow is read from OUR state, not from the response: the
+            // response describes what a connect WOULD do.
+            let allActive = newList.length > 0 && newList.every((n:any)=>{
+              if(!n.src || !n.dst) return false;
+              let live = findReceiverFlowById(n.dst.id);
+              return !!live && live.connectedFlow === n.src.id;
+            });
+            if(allActive){
+              cleanPreparedConnections(newList.map((n:any)=>({ srcDev: null, src: null, dstDev: n.dstDev, dst: n.dst })));
+              if(autoTake) takeConnect();
+              refreshMatrix(); updateGlobalTake();
+              return;
+            }
             let allPrepared = newList.length > 0 && newList.every(n =>
               preparedConnectList.some((c:any) => c.src?.id === n.src?.id && c.dst?.id === n.dst?.id)
             );
@@ -973,6 +992,17 @@
         }
       }
       updateGlobalTake();
+    }
+
+    /** The receiver flow as WE currently know it — the connect response only
+     *  says what a switch would produce, not what is switched right now. */
+    function findReceiverFlowById(id:string):any{
+      for(const d of receivers){
+        for(const t of flowTypes){
+          for(const f of (d.receivers[t] || [])){ if(f.id === id) return f; }
+        }
+      }
+      return null;
     }
 
     function getDevcieNameString(dev:any,flow:any){
@@ -1687,7 +1717,7 @@
                   --></td>
 
                   {#each senders as sourceDev}
-                      <td class="cp-connect-device"><div><span class="{ getConnectClass(sourceDev, null, dev, null)}"
+                      <td class="cp-connect-device" class:cp-connect-expand={!!(sourceDev.isNode || dev.isNode)}><div><span class="{ getConnectClass(sourceDev, null, dev, null)}"
                                   on:click={()=>connect( sourceDev, null, dev, null)}
                                   on:mouseover={()=>getDeviceConnectionPreview(sourceDev, null, dev, null)} 
                                   on:mouseleave={()=>clearDeviceConnectionPreview()} ></span></div></td>
@@ -1695,7 +1725,7 @@
                         {#each flowTypes as type}
                           {#if type !== "audiochannel" }
                             {#each sourceDev.senders[type] as sourceFlow}
-                              <td class="cp-connect-device"><div><span 
+                              <td class="cp-connect-device" class:cp-connect-expand={!!(dev.isNode)}><div><span 
                                     on:click={()=>connect( sourceDev, sourceFlow, dev, null)}
                                     on:mouseover={()=>getDeviceConnectionPreview(sourceDev, sourceFlow, dev, null)}
                                     on:mouseleave={()=>clearDeviceConnectionPreview()}></span></div></td>
@@ -1733,7 +1763,7 @@
 
 
                       {#each senders as sourceDev}
-                      <td class="cp-connect-device"><div><span 
+                      <td class="cp-connect-device" class:cp-connect-expand={!!(sourceDev.isNode)}><div><span 
                               on:click={()=>connect( sourceDev, null, dev, flow) } 
                               on:mouseover={()=>getDeviceConnectionPreview(sourceDev, null, dev, flow) } 
                               on:mouseleave={()=>clearDeviceConnectionPreview()} ></span></div></td>
