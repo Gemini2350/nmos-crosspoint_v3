@@ -350,19 +350,24 @@ $cp-border: 1px solid transparent;
             border-radius: $cp-padding;
             background-color: transparent;
 
-            &.cp-type-video svg{ color: $cp-color-video; }
-            &.cp-type-audio svg{ color: $cp-color-audio; }
-            &.cp-type-data svg{ color: $cp-color-data; }
-            &.cp-type-video, &.cp-type-audio, &.cp-type-data { opacity: 0.6; }
-
+            // COLOUR MEANS LIVE. The glyph shape already says what kind of
+            // essence this is, so the type colour is free to carry something
+            // else — and in an operational view the one thing you want to see
+            // across a wall of names is what is actually running. Inactive was
+            // the same colour at 60% opacity before; on a 17px outline that is
+            // nowhere near enough to tell apart at a glance.
             svg {
                 color:theme('colors.neutral-400');
                 width: 17px;
                 height: 17px;
+                stroke-width: 1.7;
             }
 
             &.active {
-                &.cp-type-video, &.cp-type-audio, &.cp-type-data { opacity: 1; }
+                &.cp-type-video svg{ color: $cp-color-video; }
+                &.cp-type-audio svg{ color: $cp-color-audio; }
+                &.cp-type-data  svg{ color: $cp-color-data;  }
+                svg { stroke-width: 2.1; }
             }
             &.prepareddisconnect {
                 svg {
@@ -491,6 +496,14 @@ $cp-border: 1px solid transparent;
         tbody + tbody tr:first-child td.cp-line-stick { padding-top: 1px; }
         thead th.cp-device.cp-top { padding-left: 3px; }
         thead th.cp-corner + th.cp-device.cp-top { padding-left: 0px; }
+
+        // Second cue, same meaning: a running flow keeps its name at full
+        // strength while the rest of the flow level stays stepped back. Two
+        // quiet signals that agree beat one loud one.
+        tbody td.cp-line-stick:has(.cp-type.active) .cp-label,
+        thead th.cp-flow:has(.cp-type.active) .cp-label {
+            opacity: 1;
+        }
 
         // A click on a cell that belongs to a folded node does NOT switch —
         // it unfolds. Hovering says so with a plus. It hangs on the dot, not
@@ -1148,10 +1161,17 @@ html[data-theme="light"] {
                 // grey in the light theme.
                 svg {
                     color:theme('colors.neutral-500');
+                    stroke-width: 1.7;
                 }
-                &.cp-type-video svg{ color: $cp-color-video; }
-                &.cp-type-audio svg{ color: $cp-color-audio; }
-                &.cp-type-data  svg{ color: $cp-color-data; }
+                // Colour means live here too — see the default theme. Painting
+                // the type colour unconditionally in this block was why the
+                // inactive glyphs stayed violet / green / blue.
+                &.active {
+                    &.cp-type-video svg{ color: $cp-color-video; }
+                    &.cp-type-audio svg{ color: $cp-color-audio; }
+                    &.cp-type-data  svg{ color: $cp-color-data; }
+                    svg { stroke-width: 2.1; }
+                }
 
                 &.prepareddisconnect {
                     svg {
