@@ -896,7 +896,10 @@ $cp-border: 1px solid transparent;
                         // of the name: this is the mirror of the receiver side,
                         // where the buttons sit at the far end of the label.
                         left:0px;
-                        bottom:6px;
+                        // ABOVE the essence glyph, which now sits inside the
+                        // card at its lower end: at 6px the buttons landed
+                        // exactly on top of it.
+                        bottom:48px;
 
                         right: unset;
                         top:unset;
@@ -1314,7 +1317,9 @@ html[data-theme="light"] {
                     &.cp-bcp-warn svg { color: $cp-color-warn; }
                     &.cp-bcp-err  svg { color: $cp-color-red; }
                 }
-                &:not(.active) svg { color: theme('colors.neutral-500'); }
+                // A lighter grey in the light design: what is not running should
+                // step back, and neutral-500 still read as a statement.
+                &:not(.active) svg { color: theme('colors.neutral-400'); }
 
                 &.prepareddisconnect {
                     svg {
