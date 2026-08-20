@@ -240,11 +240,19 @@ $cp-border: 1px solid transparent;
         // triangle = partially healthy, red circle = unhealthy. Green is
         // deliberately unmarked — no news is good news. On device level a
         // counter of affected flows sits next to the icon.
-        // Just the number, in the colour of the worst state — the warning
-        // triangle next to it said the same thing twice and crowded the name.
+        // Same pill as the other counters: black, small, round — only the
+        // digits keep the colour of the worst state, so the level is still
+        // readable without a second symbol next to the name.
         .cp-mon {
             display: inline-flex;
             align-items: center;
+            justify-content: center;
+            min-width: 15px;
+            height: 14px;
+            padding: 0 3px;
+            border-radius: 7px;
+            background-color: theme('colors.neutral-900');
+            box-sizing: content-box;
             // Rode the text baseline and sat 2.5px below the row's middle.
             // `vertical-align: middle` does not fix it — that aligns to the
             // parent's x-height, not to the line box the cell is built on —
@@ -253,7 +261,8 @@ $cp-border: 1px solid transparent;
             vertical-align: middle;
             gap: 1px;
             margin: 0 3px;
-            font-size: 12px;
+            font-size: 10px;
+            line-height: 14px;
             font-weight: 700;
             vertical-align: middle;
             cursor: default;
@@ -919,10 +928,13 @@ $cp-border: 1px solid transparent;
                         height:max-content;
                         min-height:168px;
                         max-height:200px;
-                        width:$cp-size;
-                        min-width:unset;
-                        max-width:unset;
-                        padding:6px 2px;
+                        // Wide enough for two lines: in vertical writing mode
+                        // they stack along the WIDTH, and at a fixed 24px the
+                        // state line was cut off.
+                        width:max-content;
+                        min-width:$cp-size;
+                        max-width:60px;
+                        padding:6px 3px;
 
                         bottom:26px;
                         left:0px;
