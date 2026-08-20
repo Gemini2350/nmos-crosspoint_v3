@@ -856,6 +856,28 @@
       ok = legacyCopy(sdpModalContent);
       if(ok) flashCopied();
     }
+    /** Save the SDP as a file. Same content as Copy, but a receiver that is
+     *  configured by file (or a colleague on the phone) needs it as a .sdp,
+     *  not on the clipboard. Built from a Blob URL — no server round trip,
+     *  and it works on plain HTTP where the clipboard API is unavailable. */
+    function downloadSdp(){
+      try{
+        const safe = (sdpModalTitle || "sender").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "sender";
+        const blob = new Blob([sdpModalContent], { type: "application/sdp" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = safe + ".sdp";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Revoke late: Safari needs the URL alive while the download starts.
+        setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){} }, 4000);
+      }catch(e){
+        ServerConnector.addFeedback({ level:"error", message:"Could not save the SDP: " + ((e as any)?.message || e) });
+      }
+    }
+
     function legacyCopy(text:string):boolean{
       try{
         let ta = document.createElement("textarea");
@@ -1283,6 +1305,7 @@
       <pre class="det-sdp-content">{sdpModalContent}</pre>
       <div class="modal-action">
         <button on:click={copySdp} class="btn {sdpCopied ? "btn-success" : ""}">{sdpCopied ? "Copied!" : "Copy"}</button>
+        <button on:click={downloadSdp} class="btn">Download</button>
         <form method="dialog">
           <button class="btn">Close</button>
         </form>

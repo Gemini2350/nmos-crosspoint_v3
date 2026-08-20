@@ -1412,11 +1412,9 @@
     /** The glyph carries the format AND the state now — the heart used to hold
      *  the state text. The full message and the counters stay in the modal
      *  behind the click. */
-    function typeDetail(base:string, flow:any):string{
-      if(!bcp008On) return base;
-      if(!flow || !flow.monitor) return base;
-      let name = monitorStateName(flow.monitor.status);
-      return base ? (base + " · " + name) : name;
+    function typeDetailState(flow:any):string{
+      if(!bcp008On || !flow || !flow.monitor) return "";
+      return monitorStateName(flow.monitor.status);
     }
 
     // BCP-008 problem level of a flow for the crosspoint cells: 0 = fine
@@ -1700,7 +1698,7 @@
                                 --></span><!--
                               --><span class={"cp-type cp-type-"+flow.type + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                                     on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                                --><span class="cp-detail">{typeDetail(flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable"), flow)}</span><!--
+                                --><span class="cp-detail"><span class="cp-detail-main">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}</span><!--
                               --></span><!--
                               
                             --></th>
@@ -1778,7 +1776,7 @@
                         --></span><!--
                         --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                               on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                          --><span class="cp-detail">{typeDetail(shortCaps(flow.capLimits), flow)}</span><!--
+                          --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}</span><!--
                         --></span><!--
                       --></td>
 
