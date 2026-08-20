@@ -1391,6 +1391,31 @@
     }
     function monitorClass(m:any){ return monitorClassVal(m.status); }
 
+    /** BCP-008 state as a ring around the essence glyph (see the SCSS):
+     *  healthy a whisper of green, partially healthy amber, unhealthy a filled
+     *  red disc. No monitor and "inactive" get no ring — nothing to report
+     *  looks like nothing. Replaces the separate heart, which cost a slot in
+     *  every single flow row and sender column. */
+    function monitorRing(flow:any):string{
+      if(!bcp008On) return "";
+      if(!flow || !flow.monitor) return " cp-ring-none";
+      switch(flow.monitor.status){
+        case 1:  return " cp-ring-ok";
+        case 2:  return " cp-ring-warn";
+        case 3:  return " cp-ring-err";
+        default: return " cp-ring-none";
+      }
+    }
+    /** The glyph carries the format AND the state now — the heart used to hold
+     *  the state text. The full message and the counters stay in the modal
+     *  behind the click. */
+    function typeDetail(base:string, flow:any):string{
+      if(!bcp008On) return base;
+      if(!flow || !flow.monitor) return base;
+      let name = monitorStateName(flow.monitor.status);
+      return base ? (base + " · " + name) : name;
+    }
+
     // BCP-008 problem level of a flow for the crosspoint cells: 0 = fine
     // (healthy, inactive or unmonitored), 2/3 = partially/unhealthy.
     function flowHealth(f:any):number{
@@ -1662,11 +1687,7 @@
                         {#each flowTypes as type}
                           {#each dev.senders[type] as flow}
                             <th class="cp-flow" class:cp-grp={inStrip}><!--
-                              -->{#if !bcp008On}<span class="cp-expand"></span>{:else if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
-                                    on:click|stopPropagation={()=>openMonitorModal(flow)}
-                                    use:OverlayMenuService.tooltip data-tooltip={monitorText(flow.monitor)}><Icon src={Heart}></Icon>{#if (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}</span>{:else}<span class="cp-type cp-status cp-status-none"
-                                    use:OverlayMenuService.tooltip
-                                    data-tooltip={"No BCP-008 status — this device does not appear to support status monitoring\n(no IS-12 sender/receiver monitor advertised)."}><Icon src={Heart}></Icon></span>{/if}<!--
+                              --><span class="cp-expand"></span><!--
                               --><span class="cp-label {(flow.hidden?"hidden":"")}">{flow.alias}<!--
                                 --><span class="cp-edit">
                                   <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
@@ -1674,8 +1695,9 @@
                                   <span on:click={()=>activate(dev,flow, flow.active)} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip data-tooltip="toggle activate"><Icon src={Link}></Icon></span>
                                 </span><!--
                                 --></span><!--
-                              --><span class={"cp-type cp-type-"+flow.type + " " + (flow.active ? "active" : "") }><Icon src={getFlowTypeIcon(flow.type)}></Icon><!--
-                                --><span class="cp-detail">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span><!--
+                              --><span class={"cp-type cp-type-"+flow.type + " " + (flow.active ? "active" : "") + monitorRing(flow)}
+                                    on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
+                                --><span class="cp-detail">{typeDetail(flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable"), flow)}</span><!--
                               --></span><!--
                               
                             --></th>
@@ -1743,11 +1765,7 @@
                   {#each dev.receivers[type] as flow}
                     <tr class="cp-flow" class:cp-grp={inStrip}>
                       <td class="cp-line-stick">
-                        {#if !bcp008On}<span class="cp-expand"></span>{:else if flow.monitor}<span class={"cp-type cp-status " + monitorClass(flow.monitor)}
-                              on:click|stopPropagation={()=>openMonitorModal(flow)}
-                              use:OverlayMenuService.tooltip data-tooltip={monitorText(flow.monitor)}><Icon src={Heart}></Icon>{#if (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}</span>{:else}<span class="cp-type cp-status cp-status-none"
-                                    use:OverlayMenuService.tooltip
-                                    data-tooltip={"No BCP-008 status — this device does not appear to support status monitoring\n(no IS-12 sender/receiver monitor advertised)."}><Icon src={Heart}></Icon></span>{/if}<!--
+                        <span class="cp-expand"></span><!--
                         --><span class="cp-label {(flow.hidden?"hidden":"")}">{flow.alias}<!--
                         --><span class="cp-edit">
                           <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
@@ -1755,8 +1773,9 @@
                           <span on:click={()=>connect(null, null, dev,flow)} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip  data-tooltip="disconnect"><Icon src={Link}></Icon></span>
                         </span><!--
                         --></span><!--
-                        --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "")}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon><!--
-                          --><span class="cp-detail">{shortCaps(flow.capLimits)}</span><!--
+                        --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "") + monitorRing(flow)}
+                              on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
+                          --><span class="cp-detail">{typeDetail(shortCaps(flow.capLimits), flow)}</span><!--
                         --></span><!--
                       --></td>
 

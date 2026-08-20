@@ -257,6 +257,52 @@ $cp-border: 1px solid transparent;
         // opens the detail modal with per-domain counters + reset.
         // Written as .cp-type.cp-status so the plain heart overrides the
         // .cp-type tile background regardless of source order.
+        // ----- BCP-008 state ON the essence glyph -----
+        // A: a ring around the glyph carries the state, so shape still means
+        // type and fill still means live — three channels, no collision.
+        // B: unhealthy does not whisper. The glyph sits in a filled red disc,
+        // which is the one state where somebody has to get up; the type colour
+        // steps aside for it on purpose.
+        // Healthy is barely there and "no monitor" shows nothing at all:
+        // nothing to report should look like nothing.
+        .cp-type {
+            &.cp-ring-ok, &.cp-ring-warn, &.cp-ring-err { border-radius: 50%; }
+            &.cp-ring-ok   { box-shadow: 0 0 0 1.5px rgba(70, 170, 20, 0.30); }
+            &.cp-ring-warn { box-shadow: 0 0 0 1.5px $cp-color-warn; }
+            &.cp-ring-err {
+                box-shadow: 0 0 0 1.5px $cp-color-red;
+                background-color: $cp-color-red;
+                svg { color: #ffffff; }
+            }
+            // Clickable wherever a monitor exists — the heart used to be the
+            // way into the status dialog.
+            &.cp-ring-ok, &.cp-ring-warn, &.cp-ring-err { cursor: pointer; }
+            // The transition counter rides along, same placement rules as
+            // before: left of the glyph in the rows, above it in the header.
+            .cp-status-count {
+                position: absolute;
+                right: auto;
+                bottom: auto;
+                left: -13px;
+                top: 50%;
+                transform: translateY(-50%);
+                min-width: 15px;
+                box-sizing: content-box;
+                overflow: visible;
+                height: 14px;
+                padding: 0 3px;
+                border-radius: 7px;
+                background-color: theme('colors.neutral-900');
+                color: theme('colors.white');
+                font-size: 9px;
+                line-height: 14px;
+                font-weight: 700;
+                text-align: center;
+                writing-mode: horizontal-tb;
+                z-index: 12;
+            }
+        }
+
         .cp-type.cp-status {
             cursor: pointer;
             // The flow label overlaps the expander zone via negative margins
@@ -749,8 +795,10 @@ $cp-border: 1px solid transparent;
                     }
                 }
                 // The sender header reads top-down, so the count sits ABOVE its
-                // heart here — the mirror of "left of it" on the receiver rows.
-                .cp-type.cp-status .cp-status-count {
+                // glyph here — the mirror of "left of it" on the receiver rows.
+                // (Used to select .cp-type.cp-status, the heart; the state now
+                // rides on the essence glyph itself.)
+                .cp-type .cp-status-count {
                     left: 50%;
                     top: -13px;
                     right: auto;
@@ -1162,6 +1210,13 @@ html[data-theme="light"] {
                 svg {
                     color:theme('colors.neutral-500');
                     stroke-width: 1.7;
+                }
+                // Unhealthy fills here as well: this block sets the glyph's
+                // background to transparent and is nested deeper, so it wins
+                // over the ring rules further up.
+                &.cp-ring-err {
+                    background-color: $cp-color-red;
+                    svg { color: #ffffff; }
                 }
                 // Colour means live here too — see the default theme. Painting
                 // the type colour unconditionally in this block was why the
