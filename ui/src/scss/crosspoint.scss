@@ -295,7 +295,7 @@ $cp-border: 1px solid transparent;
         }
         thead th .cp-label .cp-mon {
             position: absolute;
-            bottom: 30px;          /* clear of the essence glyph at the card's end */
+            bottom: 35px;          /* ON the glyph line: measured 5px below it at 30px */
             left: 50%;
             transform: translateX(-50%);
             margin: 0;
