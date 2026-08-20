@@ -1102,9 +1102,12 @@ $cp-border: 1px solid transparent;
         // shifts right by its width.
         
 
+        // Where a switch is actually possible the cell is tinted — at 5% that
+        // was barely a hint. Dark enough now to scan a matrix for the fields
+        // you may click, quiet enough to stay behind the connection markers.
         .cp-connect-flow {
             div {
-                background-color: rgba(150,150,150,0.05);
+                background-color: rgba(150,150,150,0.13);
             }
         }
         .cp-connect-mismatch {
@@ -1434,7 +1437,7 @@ html[data-theme="light"] {
     
             .cp-connect-flow {
                 div {
-                    background-color: rgba(150,150,150,0.05);
+                    background-color: rgba(150,150,150,0.13);
                 }
             }
 
