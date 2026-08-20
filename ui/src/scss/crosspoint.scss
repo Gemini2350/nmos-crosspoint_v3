@@ -997,7 +997,11 @@ $cp-border: 1px solid transparent;
                         max-height: $cp-headerSize - $cp-gutter;
                         min-height: $cp-headerSize - $cp-gutter;
                         margin-top: (-$cp-sizePP);
-                        margin-bottom: 0px;
+                        // Pull the flow back up: with the essence glyph taken
+                        // out of the flow (it is positioned inside the card
+                        // now) the column kept 36px of empty space below the
+                        // card, which showed as a gap above the matrix.
+                        margin-bottom: (-$cp-sizePP);
                     }
                 }
 
