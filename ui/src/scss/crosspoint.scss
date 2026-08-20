@@ -280,6 +280,27 @@ $cp-border: 1px solid transparent;
         // .cp-type tile background regardless of source order.
         tbody td.cp-line-stick .cp-mon { position: relative; top: -2.5px; }
 
+        // The counter is pinned to the END of the label, not carried along by
+        // the text: inside the flow a long device name pushed it past the
+        // label's edge, where `overflow:hidden` swallowed it — the number
+        // simply was not there any more. The label's own 36px right padding
+        // (30px at the bottom in the header) is the room it lives in, so the
+        // text ellipsizes before it.
+        tbody td.cp-line-stick .cp-label .cp-mon {
+            position: absolute;
+            right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            margin: 0;
+        }
+        thead th .cp-label .cp-mon {
+            position: absolute;
+            bottom: 30px;          /* clear of the essence glyph at the card's end */
+            left: 50%;
+            transform: translateX(-50%);
+            margin: 0;
+        }
+
         // The last pixel: measured, not guessed. With the box hung at the top
         // of the line box, the glyph came out 2px high in the rows and 1.5px
         // left in the header — the leftovers of margins against a line box
