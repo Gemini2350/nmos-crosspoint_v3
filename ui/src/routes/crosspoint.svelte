@@ -1391,19 +1391,22 @@
     }
     function monitorClass(m:any){ return monitorClassVal(m.status); }
 
-    /** BCP-008 state as a ring around the essence glyph (see the SCSS):
-     *  healthy a whisper of green, partially healthy amber, unhealthy a filled
-     *  red disc. No monitor and "inactive" get no ring — nothing to report
-     *  looks like nothing. Replaces the separate heart, which cost a slot in
-     *  every single flow row and sender column. */
+    /** BCP-008 state, carried by the COLOUR of the essence glyph (see the
+     *  SCSS): green healthy, amber partially healthy, red unhealthy, plain
+     *  black/white when the device offers no monitor at all — and grey
+     *  whenever the flow is not running, whatever the monitor says.
+     *  The shape keeps saying which essence it is; the separate heart is gone,
+     *  it cost a slot in every flow row and every sender column.
+     *  With BCP-008 switched off no class is set at all and the glyph falls
+     *  back to the type colours. */
     function monitorRing(flow:any):string{
       if(!bcp008On) return "";
-      if(!flow || !flow.monitor) return " cp-ring-none";
+      if(!flow || !flow.monitor) return " cp-bcp-none";
       switch(flow.monitor.status){
-        case 1:  return " cp-ring-ok";
-        case 2:  return " cp-ring-warn";
-        case 3:  return " cp-ring-err";
-        default: return " cp-ring-none";
+        case 1:  return " cp-bcp-ok";
+        case 2:  return " cp-bcp-warn";
+        case 3:  return " cp-bcp-err";
+        default: return " cp-bcp-none";
       }
     }
     /** The glyph carries the format AND the state now — the heart used to hold
@@ -1672,7 +1675,7 @@
                         -->{#if labelNodePart(dev, inStrip)}<span class="cp-node-name">{labelNodePart(dev, inStrip)}</span>{labelRestPart(dev, inStrip)}{:else}{deviceRowLabel(dev, inStrip)}{/if}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
-                              data-tooltip={"BCP-008: " + dev.monitorSummaryTx.count + (dev.monitorSummaryTx.count === 1 ? " sender " : " senders ") + (dev.monitorSummaryTx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryTx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryTx.count}</span>{/if}<!--
+                              data-tooltip={"BCP-008: " + dev.monitorSummaryTx.count + (dev.monitorSummaryTx.count === 1 ? " sender " : " senders ") + (dev.monitorSummaryTx.worst === 3 ? "unhealthy" : "partially healthy")}>{dev.monitorSummaryTx.count}</span>{/if}<!--
                         --><span class="cp-edit">
                           {#if dev.isNode}
                             {#if dev.nodeId}<span on:click={(e)=>{e.stopPropagation(); editNodeLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename node"><Icon src={Pencil}></Icon></span>{/if}
@@ -1725,7 +1728,7 @@
                     -->{#if labelNodePart(dev, inStrip)}<span class="cp-node-name">{labelNodePart(dev, inStrip)}</span>{labelRestPart(dev, inStrip)}{:else}{deviceRowLabel(dev, inStrip)}{/if}<!--
                     -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip
-                          data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}><Icon src={dev.monitorSummaryRx.worst === 3 ? ExclamationCircle : ExclamationTriangle}></Icon>{dev.monitorSummaryRx.count}</span>{/if}<!--
+                          data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}>{dev.monitorSummaryRx.count}</span>{/if}<!--
                         --><span class="cp-edit">
                           {#if dev.isNode}
                             {#if dev.nodeId}<span on:click={(e)=>{e.stopPropagation(); editNodeLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename node"><Icon src={Pencil}></Icon></span>{/if}

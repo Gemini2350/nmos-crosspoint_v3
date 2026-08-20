@@ -236,12 +236,14 @@ $cp-border: 1px solid transparent;
         // triangle = partially healthy, red circle = unhealthy. Green is
         // deliberately unmarked — no news is good news. On device level a
         // counter of affected flows sits next to the icon.
+        // Just the number, in the colour of the worst state — the warning
+        // triangle next to it said the same thing twice and crowded the name.
         .cp-mon {
             display: inline-flex;
             align-items: center;
             gap: 1px;
             margin: 0 3px;
-            font-size: 11px;
+            font-size: 12px;
             font-weight: 700;
             vertical-align: middle;
             cursor: default;
@@ -257,28 +259,29 @@ $cp-border: 1px solid transparent;
         // opens the detail modal with per-domain counters + reset.
         // Written as .cp-type.cp-status so the plain heart overrides the
         // .cp-type tile background regardless of source order.
-        // ----- BCP-008 state ON the essence glyph -----
-        // A: a ring around the glyph carries the state, so shape still means
-        // type and fill still means live — three channels, no collision.
-        // B: unhealthy does not whisper. The glyph sits in a filled red disc,
-        // which is the one state where somebody has to get up; the type colour
-        // steps aside for it on purpose.
-        // Healthy is barely there and "no monitor" shows nothing at all:
-        // nothing to report should look like nothing.
+        // The last pixel: measured, not guessed. With the box hung at the top
+        // of the line box, the glyph came out 2px high in the rows and 1.5px
+        // left in the header — the leftovers of margins against a line box
+        // that is not the cell.
+        tbody td.cp-line-stick .cp-type { position: relative; top: 2px; }
+        thead th .cp-type { position: relative; left: 1.5px; }
+
+        // ----- BCP-008 state IS the colour of the essence glyph -----
+        //   green   healthy
+        //   amber   partially healthy
+        //   red     unhealthy
+        //   black   running, but the device offers no monitor at all
+        //   grey    not running — whatever any monitor says
+        // The shape still says which essence it is, so the colour is free for
+        // the one question you ask across a whole wall of names. No ring, no
+        // disc, no heart: a circle around a 17px icon read as a badge stuck on.
+        // With BCP-008 switched off nothing is set here and the type colours
+        // from further up stay in charge.
         .cp-type {
-            &.cp-ring-ok, &.cp-ring-warn, &.cp-ring-err { border-radius: 50%; }
-            &.cp-ring-ok   { box-shadow: 0 0 0 1.5px rgba(70, 170, 20, 0.30); }
-            &.cp-ring-warn { box-shadow: 0 0 0 1.5px $cp-color-warn; }
-            &.cp-ring-err {
-                box-shadow: 0 0 0 1.5px $cp-color-red;
-                background-color: $cp-color-red;
-                svg { color: #ffffff; }
-            }
-            // Clickable wherever a monitor exists — the heart used to be the
-            // way into the status dialog.
-            &.cp-ring-ok, &.cp-ring-warn, &.cp-ring-err { cursor: pointer; }
-            // The transition counter rides along, same placement rules as
-            // before: left of the glyph in the rows, above it in the header.
+            &.cp-bcp-ok, &.cp-bcp-warn, &.cp-bcp-err { cursor: pointer; }
+
+            // The transition counter rides along, same placement as before:
+            // left of the glyph in the rows, above it in the header.
             .cp-status-count {
                 position: absolute;
                 right: auto;
@@ -387,9 +390,18 @@ $cp-border: 1px solid transparent;
         // these 20px), only its surface is gone. Inactive flows keep the
         // colour but step back in opacity; active is full strength.
         .cp-type {
-            display:inline-block;
+            // Centred by layout, not by luck: as an inline-block with padding
+            // the 17px icon overflowed its 14px content box and the whole thing
+            // rode the text baseline — 2px low in the rows, 1.5px off inside
+            // the box on both axes. A flex box with vertical-align:middle puts
+            // the icon on the cell's centre, and there it stays.
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            vertical-align:top;    /* the line box is taller than the cell — its
+                                       middle is NOT the cell's middle */
             position:relative;
-            padding:3px;
+            padding:0;
             margin:4px;                 /* 20px glyph + 2x4 = one 28px cell */
             height: $cp-typeSize;
             width: $cp-typeSize;
@@ -414,7 +426,17 @@ $cp-border: 1px solid transparent;
                 &.cp-type-audio svg{ color: $cp-color-audio; }
                 &.cp-type-data  svg{ color: $cp-color-data;  }
                 svg { stroke-width: 2.1; }
+
+                // With BCP-008 on, the STATE takes the colour over from the
+                // type — written here, right behind the type colours, because
+                // those carry one class more and would otherwise win.
+                &.cp-bcp-none svg { color: theme('colors.base-content'); }
+                &.cp-bcp-ok   svg { color: $cp-color-green; }
+                &.cp-bcp-warn svg { color: $cp-color-warn; stroke-width: 2.3; }
+                &.cp-bcp-err  svg { color: $cp-color-red;  stroke-width: 2.5; }
             }
+            // Not running is grey, whatever any monitor says.
+            &:not(.active) svg { color: theme('colors.neutral-500'); stroke-width: 1.7; }
             &.prepareddisconnect {
                 svg {
                     color:theme('colors.neutral-400');
@@ -1211,13 +1233,6 @@ html[data-theme="light"] {
                     color:theme('colors.neutral-500');
                     stroke-width: 1.7;
                 }
-                // Unhealthy fills here as well: this block sets the glyph's
-                // background to transparent and is nested deeper, so it wins
-                // over the ring rules further up.
-                &.cp-ring-err {
-                    background-color: $cp-color-red;
-                    svg { color: #ffffff; }
-                }
                 // Colour means live here too — see the default theme. Painting
                 // the type colour unconditionally in this block was why the
                 // inactive glyphs stayed violet / green / blue.
@@ -1226,7 +1241,13 @@ html[data-theme="light"] {
                     &.cp-type-audio svg{ color: $cp-color-audio; }
                     &.cp-type-data  svg{ color: $cp-color-data; }
                     svg { stroke-width: 2.1; }
+
+                    &.cp-bcp-none svg { color: theme('colors.base-content'); }
+                    &.cp-bcp-ok   svg { color: $cp-color-green; }
+                    &.cp-bcp-warn svg { color: $cp-color-warn; }
+                    &.cp-bcp-err  svg { color: $cp-color-red; }
                 }
+                &:not(.active) svg { color: theme('colors.neutral-500'); }
 
                 &.prepareddisconnect {
                     svg {
