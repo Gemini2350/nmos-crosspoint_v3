@@ -288,7 +288,7 @@ $cp-border: 1px solid transparent;
         // text ellipsizes before it.
         tbody td.cp-line-stick .cp-label .cp-mon {
             position: absolute;
-            right: 4px;
+            right: 14px;      /* a little air between the number and the glyph */
             top: 50%;
             transform: translateY(-50%);
             margin: 0;
@@ -1396,6 +1396,18 @@ html[data-theme="light"] {
                 }
             }
     
+            // The counters are a soft grey here, not near-black: on a light
+            // page the black pill hit far harder than the number deserves.
+            // The state colour stays on the digits, so amber and red still
+            // read at a glance.
+            .cp-mon {
+                background-color: theme('colors.base-300');
+            }
+            .cp-status-count {
+                background-color: theme('colors.neutral-400');
+                color: theme('colors.base-100');
+            }
+
             // Page colour behind every label so the -32px overhang covers
             // cleanly; the top level keeps its faint grey.
             tbody tr td.cp-line-stick .cp-label,
