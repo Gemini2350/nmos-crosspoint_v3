@@ -873,20 +873,16 @@ $cp-border: 1px solid transparent;
                     // numerals in this rotated header are the established
                     // pattern (see .cp-status-count).
                     .cp-mon {
+                        // Upright numerals in the rotated header — the rest of
+                        // the pill is EXACTLY the receiver one now. The old
+                        // width / margin override here (from the days of the
+                        // triangle-plus-count badge) made the black pill wider
+                        // than on the receiver side and pushed it off centre.
                         writing-mode: horizontal-tb;
                         text-orientation: initial;
-                        // The label is 32px wide and clips (it has to, for the
-                        // ellipsis on long names) but only 24px of that is
-                        // content — a two-digit badge got its digits shaved
-                        // off at the edge. Reclaim the padding and centre in
-                        // the full column width.
-                        margin: 6px -4px 2px -4px;
-                        width: $cp-sizePP;
-                        box-sizing: border-box;
                         justify-content: center;
-                        gap: 2px;
+                        gap: 1px;
                         font-size: 10px;
-                        svg { width: 12px; height: 12px; }
                     }
                 }
                 // Same on this axis: the card started 4px below the top edge
@@ -920,7 +916,12 @@ $cp-border: 1px solid transparent;
 
                 .cp-label {
                     .cp-edit {
-                        flex-direction: column;
+                        // `row` stacks DOWN the column here: in vertical
+                        // writing mode the inline axis runs top-to-bottom, so
+                        // `column` laid the buttons out sideways in a 32px box
+                        // and all but the first were clipped away — which is
+                        // why only Rename showed up on the sender side.
+                        flex-direction: row;
                         height: auto;
                         // Bottom edge of the column, not floating in the middle
                         // of the name: this is the mirror of the receiver side,
