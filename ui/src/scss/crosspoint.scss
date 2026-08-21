@@ -641,6 +641,14 @@ $cp-border: 1px solid transparent;
         thead th.cp-device.cp-top { padding-left: 3px; }
         thead th.cp-corner + th.cp-device.cp-top { padding-left: 0px; }
 
+        // Switched off steps back further: the name of a flow that is not
+        // running goes from 0.66 to 0.5, so a glance over a column separates
+        // what runs from what does not without reading a single word.
+        tbody tr.cp-flow td.cp-line-stick:not(:has(.cp-type.active)) .cp-label,
+        thead th.cp-flow:not(:has(.cp-type.active)) .cp-label {
+            opacity: 0.5;
+        }
+
         // Second cue, same meaning: a running flow keeps its name at full
         // strength while the rest of the flow level stays stepped back. Two
         // quiet signals that agree beat one loud one.
