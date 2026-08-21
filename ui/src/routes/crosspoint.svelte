@@ -1241,7 +1241,7 @@
       // EVERY active connection between the two devices is staged for
       // disconnect; health = solid fill in the WORST status of any
       // connection between the two devices (red beats orange beats green).
-      const devAgg: Map<string,{anyUnstaged:boolean,sawPrepared:boolean,sawWorking:boolean,healths:number[]}> = new Map();
+      const devAgg: Map<string,{anyUnstaged:boolean,sawPrepared:boolean,sawWorking:boolean,healths:number[],sawUnmon:boolean}> = new Map();
 
       // 1) ACTIVE connections — walk the receivers once.
       for(const [rid, rE] of receiverByFlowId){
@@ -1250,17 +1250,23 @@
         const sE = senderByFlowId.get(cf);
         if(!sE) continue;   // connected sender filtered out of the matrix
         const h = Math.max(flowHealth(sE.flow), flowHealth(rE.flow));
+        // Nobody is watching this one: sender, receiver or both offer no
+        // BCP-008 monitor. Light blue then — it is not a fault, it is a blind
+        // spot, and a real fault still outranks it.
+        const unmon = bcp008On && (!sE.flow.monitor || !rE.flow.monitor);
         let cls = "active";
         if(discPrepared.has(rid)){ cls += " cp-disc-prepared"; }
         else if(discWorking.has(rid)){ cls += " cp-disc-working"; }
         if(h === 3){ cls += " cp-health-err"; }
         else if(h === 2){ cls += " cp-health-warn"; }
+        else if(unmon){ cls += " cp-health-none"; }
         cellClassFlow.set(cf + "|" + rid, cls);
 
         const k = sE.dev.id + "|" + rE.dev.id;
         let a = devAgg.get(k);
-        if(!a){ a = {anyUnstaged:false, sawPrepared:false, sawWorking:false, healths:[]}; devAgg.set(k, a); }
+        if(!a){ a = {anyUnstaged:false, sawPrepared:false, sawWorking:false, healths:[], sawUnmon:false}; devAgg.set(k, a); }
         a.healths.push(h);
+        if(unmon){ a.sawUnmon = true; }
         if(discPrepared.has(rid)){ a.sawPrepared = true; }
         else if(discWorking.has(rid)){ a.sawWorking = true; }
         else { a.anyUnstaged = true; }
@@ -1276,6 +1282,7 @@
         // miss on the small collapsed-device dot.)
         const worst = a.healths.length ? Math.max(...a.healths) : 0;
         if(worst >= 2){ cls += (worst === 3 ? " cp-health-err" : " cp-health-warn"); }
+        else if(a.sawUnmon){ cls += " cp-health-none"; }
         cellClassDevice.set(k, cls);
       }
 

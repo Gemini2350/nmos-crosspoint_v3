@@ -46,6 +46,10 @@ $cp-color-orange:#f97316;
 // and a switch in progress can't be confused at a glance.
 $cp-color-warn:#f59e0b;
 $cp-color-red:#e21e1e;
+// Connection whose sender, receiver or both offer no BCP-008 monitor: not a
+// fault, a blind spot — light blue, clear of the green/amber/red scale and of
+// the data-type blue.
+$cp-color-unmonitored:#38bdf8;
 
 
 
@@ -291,19 +295,17 @@ $cp-border: 1px solid transparent;
         // the label it was pinned 14px further left (measured: glyph 224,
         // number 209.5) and clipped by the label's overflow on long names.
         tbody td.cp-line-stick .cp-mon {
+            // A PILL, not a 20px square — forcing it into the glyph's box made
+            // it a rounded block. It keeps the counter proportions and is
+            // nudged onto the glyph's centre line instead.
             position: relative;
-            top: 2px;                       /* the glyph's own line correction */
+            top: 5px;
             vertical-align: top;
-            width: $cp-typeSize;
-            height: $cp-typeSize;
             margin: 4px;
-            box-sizing: border-box;
-            padding: 0;
-            min-width: $cp-typeSize;
         }
         thead th .cp-label .cp-mon {
             position: absolute;
-            bottom: 35px;          /* ON the glyph line: measured 5px below it at 30px */
+            bottom: 17px;          /* same centre line as the glyph (20px box vs 14px pill) */
             left: 50%;
             transform: translateX(-50%);
             margin: 0;
@@ -915,7 +917,7 @@ $cp-border: 1px solid transparent;
                     position: absolute;
                     left: 0;
                     right: 0;
-                    bottom: 36px;   /* fully inside the card, which ends 8px above the matrix */
+                    bottom: 14px;   /* down at the card's end, not a third of the way up */   /* fully inside the card, which ends 8px above the matrix */
                     margin-left: auto;
                     margin-right: auto;
                 }
@@ -1244,6 +1246,9 @@ $cp-border: 1px solid transparent;
                     &.cp-health-err {
                         background-color: $cp-color-red;
                     }
+                    &.cp-health-none {
+                        background-color: $cp-color-unmonitored;
+                    }
 
                     // Hover = preview of what a click would prepare: same
                     // dashed-orange outline as a prepared point. Background is
@@ -1287,6 +1292,9 @@ $cp-border: 1px solid transparent;
                 }
                 &.active.cp-health-err {
                     background-color: $cp-color-red;
+                }
+                &.active.cp-health-none {
+                    background-color: $cp-color-unmonitored;
                 }
 
                 &:hover {
@@ -1498,6 +1506,9 @@ html[data-theme="light"] {
                     }
                     &.active.cp-health-err {
                         background-color: $cp-color-red;
+                    }
+                    &.active.cp-health-none {
+                        background-color: $cp-color-unmonitored;
                     }
                 }
             }
