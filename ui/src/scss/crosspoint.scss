@@ -866,11 +866,14 @@ $cp-border: 1px solid transparent;
                     min-height: $cp-headerSize;
                     max-width: $cp-sizePP;
                     min-width: $cp-sizePP;
-                    // 30px like the receiver labels: the name starts closer to
-                    // the expand chevron above it. The bottom keeps 56px clear
-                    // — measured, the glyph's top sits 16px INSIDE the old 36px
-                    // padding, so a long name ran straight into the symbol.
-                    padding: 30px 4px 56px 4px;
+                    // EXACTLY the receiver padding, one axis over: 30px before
+                    // the name, 36px after it. Both labels are 224px long, so
+                    // the same name now truncates at the same place on both
+                    // axes — with 56px here the sender cut ~20px earlier than
+                    // the receiver. The 56px came from the days when the glyph
+                    // sat higher; since it moved down to the card's end there
+                    // is room again (text ends at 296, glyph starts at 302).
+                    padding: 30px 4px 36px 4px;
                     // Flush with the top of the header, the gutter to the
                     // matrix taken off the bottom only — centring it left a 4px
                     // gap above the name that the grid lines ran straight past.
