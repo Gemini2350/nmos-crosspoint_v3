@@ -848,8 +848,10 @@ $cp-border: 1px solid transparent;
                     max-width: $cp-sizePP;
                     min-width: $cp-sizePP;
                     // 30px like the receiver labels: the name starts closer to
-                    // the expand chevron above it
-                    padding: 30px 4px 36px 4px;
+                    // the expand chevron above it. The bottom keeps 56px clear
+                    // — measured, the glyph's top sits 16px INSIDE the old 36px
+                    // padding, so a long name ran straight into the symbol.
+                    padding: 30px 4px 56px 4px;
                     // Flush with the top of the header, the gutter to the
                     // matrix taken off the bottom only — centring it left a 4px
                     // gap above the name that the grid lines ran straight past.
