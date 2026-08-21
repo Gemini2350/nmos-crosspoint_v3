@@ -1724,9 +1724,7 @@
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
                     -->{#if labelNodePart(dev, inStrip)}<span class="cp-node-name">{labelNodePart(dev, inStrip)}</span>{labelRestPart(dev, inStrip)}{:else}{deviceRowLabel(dev, inStrip)}{/if}<!--
-                    -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
-                          use:OverlayMenuService.tooltip
-                          data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}>{dev.monitorSummaryRx.count}</span>{/if}<!--
+                    --><!--
                         --><span class="cp-edit">
                           {#if dev.isNode}
                             {#if dev.nodeId}<span on:click={(e)=>{e.stopPropagation(); editNodeLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename node"><Icon src={Pencil}></Icon></span>{/if}
@@ -1737,6 +1735,9 @@
                           {/if}
                         </span><!--
                     --></span><!--
+                    -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
+                          use:OverlayMenuService.tooltip
+                          data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}>{dev.monitorSummaryRx.count}</span>{/if}<!--
                   --></td>
 
                   {#each senders as sourceDev}

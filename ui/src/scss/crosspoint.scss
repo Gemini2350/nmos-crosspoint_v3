@@ -286,12 +286,20 @@ $cp-border: 1px solid transparent;
         // simply was not there any more. The label's own 36px right padding
         // (30px at the bottom in the header) is the room it lives in, so the
         // text ellipsizes before it.
-        tbody td.cp-line-stick .cp-label .cp-mon {
-            position: absolute;
-            right: 14px;      /* a little air between the number and the glyph */
-            top: 50%;
-            transform: translateY(-50%);
-            margin: 0;
+        // The number now lives NEXT TO the label, not inside it — same slot as
+        // the essence glyph, so both sit on one line down the column. Inside
+        // the label it was pinned 14px further left (measured: glyph 224,
+        // number 209.5) and clipped by the label's overflow on long names.
+        tbody td.cp-line-stick .cp-mon {
+            position: relative;
+            top: 2px;                       /* the glyph's own line correction */
+            vertical-align: top;
+            width: $cp-typeSize;
+            height: $cp-typeSize;
+            margin: 4px;
+            box-sizing: border-box;
+            padding: 0;
+            min-width: $cp-typeSize;
         }
         thead th .cp-label .cp-mon {
             position: absolute;
