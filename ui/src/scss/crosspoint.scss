@@ -47,9 +47,10 @@ $cp-color-orange:#f97316;
 $cp-color-warn:#f59e0b;
 $cp-color-red:#e21e1e;
 // Connection whose sender, receiver or both offer no BCP-008 monitor: not a
-// fault, a blind spot — light blue, clear of the green/amber/red scale and of
-// the data-type blue.
-$cp-color-unmonitored:#38bdf8;
+// fault, a blind spot. Dark grey — outside the green/amber/red scale entirely,
+// and it reads as "no statement" rather than as a colour of its own (the light
+// blue looked like a fourth state).
+$cp-color-unmonitored:#6b7280;
 
 
 
