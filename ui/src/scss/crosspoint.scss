@@ -1607,12 +1607,15 @@ html[data-theme="light"] {
     color: theme('colors.slate.400');
     margin: 4px 0;
 }
-// The clock the device is locked to (BCP-008 4p10) — a plain line under the
-// counter, monospace for the grandmaster id.
+// The clock the device is locked to (BCP-008 4p10) — a sub-row under the Sync
+// domain, monospace for the grandmaster id.
+.cp-monitor-subrow td {
+    padding-top: 0;
+    border-top: none;
+}
 .cp-monitor-sync {
     font-size: 12px;
-    opacity: 0.85;
-    margin-top: 2px;
+    opacity: 0.8;
 }
 .cp-monitor-sync-id {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

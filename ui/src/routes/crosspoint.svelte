@@ -1871,9 +1871,6 @@
           <h3 class="font-bold text-lg cp-monitor-title">Status – {monitorModalFlow.alias || monitorModalFlow.name || monitorModalFlow.id}
             <span class={"cp-monitor-state " + monitorClassVal(m.status)}>{monitorStateName(m.status)}</span></h3>
           <div class="cp-monitor-counter">Overall counter: {m.counter || 0}</div>
-          <!-- BCP-008 4p10: the clock the device says it is locked to. Shown
-               only when the device reports one — most do not implement it. -->
-          {#if m.syncSource}<div class="cp-monitor-sync">Sync source: <span class="cp-monitor-sync-id">{m.syncSource}</span></div>{/if}
           {#if m.message}<p class="cp-monitor-message">{monitorMsg(m.status, m.message)}</p>{/if}
           <table class="cp-monitor-table">
             <thead><tr><td>Domain</td><td>State</td><td>Message</td><td>Transitions</td></tr></thead>
@@ -1886,6 +1883,16 @@
                   <td class="cp-monitor-domain-message">{monitorMsg(d.status, d.message)}</td>
                   <td>{d.counter}</td>
                 </tr>
+                <!-- BCP-008 4p10 belongs to the sync domain, so it sits right
+                     under it: the clock the device says it is locked to. Only
+                     shown when the device reports one. -->
+                {#if d.label === "Sync" && m.syncSource}
+                  <tr class="cp-monitor-subrow">
+                    <td></td>
+                    <td></td>
+                    <td colspan="2" class="cp-monitor-sync">Source: <span class="cp-monitor-sync-id">{m.syncSource}</span></td>
+                  </tr>
+                {/if}
               {/each}
             </tbody>
           </table>
