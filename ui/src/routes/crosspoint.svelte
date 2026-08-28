@@ -5,7 +5,7 @@
       import { afterUpdate, onDestroy, onMount } from "svelte";
       import { createEventDispatcher } from 'svelte';
 
-      import { Icon, ChevronRight, ChevronDoubleUp, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart } from "svelte-hero-icons";
+      import { Icon, ChevronRight, ChevronDoubleUp, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
     import { getSearchTokens, tokenSearch } from "../lib/functions";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
@@ -738,6 +738,33 @@
       updatePins();
       if(scrollIdleTimer){ clearTimeout(scrollIdleTimer); }
       scrollIdleTimer = setTimeout(()=>{ isScrolling = false; }, 150);
+    }
+
+    // ----- Crosspoint-wide BCP-008 counter reset -----
+    // The status modal resets ONE flow; this resets every monitored sender,
+    // receiver or both at once — the question after a fault hunt is usually
+    // "clear the whole board", not "clear this one". Behind a confirm dialog:
+    // it wipes the transition history on the devices themselves.
+    let resetAllModal:any;
+    let resetAllBusy = false;
+    let resetAllResult = "";
+    function openResetAll(){
+      resetAllResult = "";
+      resetAllBusy = false;
+      resetAllModal.showModal();
+    }
+    function doResetAll(kind:"sender"|"receiver"|"all"){
+      resetAllBusy = true;
+      resetAllResult = "";
+      ServerConnector.post("bcp008ResetAll", { kind }).then((r:any)=>{
+        let ok = r?.data?.ok ?? 0, failed = r?.data?.failed ?? 0;
+        resetAllResult = ok + (ok === 1 ? " monitor reset" : " monitors reset") + (failed ? ", " + failed + " refused" : "");
+        resetAllBusy = false;
+      }).catch((e:any)=>{
+        resetAllBusy = false;
+        resetAllResult = "";
+        ServerConnector.addFeedback({ level:"error", message:"Reset failed: " + (e?.message || e) });
+      });
     }
 
     // One click folds every expanded sender column and receiver row back
@@ -1647,6 +1674,15 @@
           <span class="label-text">Collapse all</span>
         </button>
       </li>
+      {#if bcp008On}
+      <li>
+        <button class="label gap-2" on:click={openResetAll}
+                use:OverlayMenuService.tooltip data-tooltip="Reset the BCP-008 transition counters and messages of every monitored sender and/or receiver">
+          <Icon src={ArrowPath} size="18"></Icon>
+          <span class="label-text">Reset counters</span>
+        </button>
+      </li>
+      {/if}
     </ul>
 
 
@@ -1861,7 +1897,29 @@
       </div>
     </dialog>
 
-    <dialog bind:this={monitorModal} class="modal">
+    <!-- Crosspoint-wide counter reset. Two buttons, because "all receivers"
+       and "all senders" are the two questions that actually come up. -->
+  <dialog bind:this={resetAllModal} class="modal">
+    <div class="modal-box">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+      </form>
+      <h3 class="font-bold text-lg">Reset BCP-008 counters</h3>
+      <p class="cp-monitor-message">This clears the status transition counters and the stored messages on the
+        devices themselves — the current status is untouched. Devices that do not implement the reset are counted and skipped.</p>
+      {#if resetAllResult}<p class="cp-monitor-counter">{resetAllResult}</p>{/if}
+      <div class="modal-action">
+        <button class="btn" disabled={resetAllBusy} on:click={()=>doResetAll("receiver")}>All receivers</button>
+        <button class="btn" disabled={resetAllBusy} on:click={()=>doResetAll("sender")}>All senders</button>
+        <button class="btn" disabled={resetAllBusy} on:click={()=>doResetAll("all")}>Everything</button>
+        <form method="dialog">
+          <button class="btn">Close</button>
+        </form>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog bind:this={monitorModal} class="modal">
       <div class="modal-box">
         <form method="dialog">
           <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>

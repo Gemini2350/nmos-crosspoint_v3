@@ -1384,6 +1384,22 @@ server.addRoute("POST", "bcp008Reset","global", (client: WebsocketClient, query:
 });
 
 
+// BCP-008: reset the counters of EVERY monitored sender, receiver or both.
+// The per-flow button lives in the status modal; this is the crosspoint-wide
+// one. Write permission, like every other action route.
+server.addRoute("POST", "bcp008ResetAll","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        try{
+            let kind = (postData?.kind === "sender" || postData?.kind === "receiver") ? postData.kind : "all";
+            if(!Bcp008Monitor.instance){ reject({message:"BCP-008 monitoring not running."}); return; }
+            Bcp008Monitor.instance.resetAll(kind).then((r:any) => {
+                resolve({message:200, data:{ ok: r.ok, failed: r.failed }});
+            }).catch((e:any) => reject({message: e?.message || "bcp008ResetAll failed"}));
+        }catch(e:any){ reject({message: e?.message || "bcp008ResetAll failed"}); }
+    });
+});
+
+
 server.addRoute("POST", "togglehidden","global", (client: WebsocketClient, query:string[], postData: any) => {
     return new Promise((resolve, reject) => {
         crosspoint

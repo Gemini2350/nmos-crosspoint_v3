@@ -639,6 +639,24 @@ class DeviceMonitorConnection {
         await this.pollAll();
         return true;
     }
+
+    /** Reset every monitor of one kind on THIS device. One failing monitor
+     *  does not stop the rest — a device that refuses the method is counted
+     *  and skipped, so a fleet-wide reset still gets through everywhere else.
+     *  The re-read happens once at the end, not per monitor. */
+    async resetAllOfKind(kind: "sender" | "receiver" | "all"): Promise<{ ok: number, failed: number }> {
+        let ok = 0, failed = 0;
+        const list = this.monitors.filter(m => kind === "all" || m.kind === kind);
+        for (const mon of list) {
+            try {
+                const resetId = mon.kind === "sender" ? METHOD_RESET_SENDER : METHOD_RESET_RECEIVER;
+                const result = await this.command(mon.oid, resetId, {});
+                if (statusOk(result?.status)) { ok++; } else { failed++; }
+            } catch (e) { failed++; }
+        }
+        if (ok > 0) { try { await this.pollAll(); } catch (e) {} }
+        return { ok, failed };
+    }
 }
 
 export class Bcp008Monitor {
@@ -681,6 +699,23 @@ export class Bcp008Monitor {
             if (await conn.resetFor(flowId)) return true;
         }
         return false;
+    }
+
+    /** Reset the counters of EVERY monitored sender, receiver or both, across
+     *  all connected devices — the crosspoint-wide version of the button in
+     *  the status modal. Devices that refuse are counted, not thrown on: with
+     *  a hundred monitors one stubborn device must not sink the rest. */
+    async resetAll(kind: "sender" | "receiver" | "all"): Promise<{ ok: number, failed: number }> {
+        let ok = 0, failed = 0;
+        for (const conn of Array.from(this.conns.values())) {
+            try {
+                const r = await conn.resetAllOfKind(kind);
+                ok += r.ok; failed += r.failed;
+            } catch (e) { failed++; }
+        }
+        SyncLog.log("info", "BCP-008", "Bulk counter reset (" + kind + "): " + ok + " monitor(s) reset" +
+            (failed ? ", " + failed + " refused" : ""));
+        return { ok, failed };
     }
 
     /** Master switch (Setup page). Disabling tears every connection down
