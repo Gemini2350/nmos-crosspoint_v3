@@ -45,6 +45,10 @@ export interface MonitorStatus {
     //   payload→ streamStatus (rx) / essenceStatus (tx)  (4p11, 4p13)
     // A key is absent when the device doesn't implement that property.
     domains: { link?: DomainVal, path?: DomainVal, sync?: DomainVal, payload?: DomainVal };
+    // The clock the device reports being locked to (synchronizationSourceId,
+    // 4p10 on both monitor classes) — a PTP grandmaster id in practice.
+    // Empty string when the device reports none or doesn't implement it.
+    syncSource?: string;
 }
 
 export interface DomainVal { s: number; c: number; m?: string; }
@@ -72,6 +76,11 @@ const DOMAIN_PROPS: Array<{ key: "link"|"path"|"sync"|"payload", id: { level: nu
     { key: "sync",    id: { level: 4, index: 7 },  msgId: { level: 4, index: 8 },  counterId: { level: 4, index: 9 } },
     { key: "payload", id: { level: 4, index: 11 }, msgId: { level: 4, index: 12 }, counterId: { level: 4, index: 13 } },
 ];
+// The clock the device is actually locked to (NcReceiverMonitor /
+// NcSenderMonitor synchronizationSourceId, 4p10 on both). Nullable: null
+// means the device reports no external sync source at all.
+const PROP_SYNC_SOURCE = { level: 4, index: 10 };
+
 // ResetCountersAndMessages lives at DIFFERENT method ids on the two
 // monitor classes (verified against the AMWA mock): the receiver monitor
 // has two Get methods before it (4m3), the sender monitor only one (4m2).
@@ -318,6 +327,11 @@ class DeviceMonitorConnection {
             this.publish(mon, { message: "" + (n.eventData.value ?? "") });
             return;
         }
+        if (pid.level === PROP_SYNC_SOURCE.level && pid.index === PROP_SYNC_SOURCE.index) {
+            const v = n.eventData.value;
+            this.publish(mon, { syncSource: (v === null || v === undefined) ? "" : ("" + v) });
+            return;
+        }
         for (const dp of DOMAIN_PROPS) {
             if (pid.level === dp.id.level && pid.index === dp.id.index) {
                 this.publish(mon, { domain: { key: dp.key, s: Number(n.eventData.value) | 0 } });
@@ -337,13 +351,14 @@ class DeviceMonitorConnection {
     // Cache the last published values per oid so partial updates (a status
     // change without a new message, a single domain flip) merge instead of
     // clobbering the rest.
-    private lastByOid: Map<number, { status: number, message: string, domains: any }> = new Map();
-    private publish(mon: MonitorRef, patch: { status?: number, message?: string, domain?: { key: string, s?: number, c?: number, m?: string } }, force = false) {
+    private lastByOid: Map<number, { status: number, message: string, domains: any, syncSource: string }> = new Map();
+    private publish(mon: MonitorRef, patch: { status?: number, message?: string, syncSource?: string, domain?: { key: string, s?: number, c?: number, m?: string } }, force = false) {
         const hadPrev = this.lastByOid.has(mon.oid);
-        const prev = this.lastByOid.get(mon.oid) || { status: 1, message: "", domains: {} };
+        const prev = this.lastByOid.get(mon.oid) || { status: 1, message: "", domains: {}, syncSource: "" };
         const next = {
             status: (patch.status === undefined) ? prev.status : patch.status,
             message: (patch.message === undefined) ? prev.message : patch.message,
+            syncSource: (patch.syncSource === undefined) ? prev.syncSource : patch.syncSource,
             domains: { ...prev.domains },
         };
         if (patch.domain) {
@@ -361,6 +376,7 @@ class DeviceMonitorConnection {
         // look unchanged); an unseeded first publish passes too.
         if (!force && hadPrev
             && prev.status === next.status && prev.message === next.message
+            && prev.syncSource === next.syncSource
             && JSON.stringify(prev.domains) === JSON.stringify(next.domains)) {
             return;
         }
@@ -373,6 +389,7 @@ class DeviceMonitorConnection {
             kind: mon.kind,
             deviceId: this.deviceId,
             domains: next.domains,
+            syncSource: next.syncSource,
         });
     }
 
@@ -567,7 +584,14 @@ class DeviceMonitorConnection {
                         domains[dp.key] = { s: Number(v) | 0, c, m: dm };
                     } catch (e) { /* domain not implemented */ }
                 }
-                this.lastByOid.set(m.oid, { status: Number(status) | 0, message, domains });
+                // The clock the device is locked to — optional like the
+                // domains, a device that does not implement it just has none.
+                let syncSource = "";
+                try {
+                    const v = await this.getProperty(m.oid, PROP_SYNC_SOURCE);
+                    syncSource = (v === null || v === undefined) ? "" : ("" + v);
+                } catch (e) { /* not implemented */ }
+                this.lastByOid.set(m.oid, { status: Number(status) | 0, message, domains, syncSource });
                 // force: this is the initial read — lastByOid was just
                 // seeded above, so the unchanged-guard in publish() would
                 // otherwise swallow it and the UI never got a status.

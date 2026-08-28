@@ -340,6 +340,15 @@ $cp-border: 1px solid transparent;
                 font-weight: 700;
                 opacity: 0.95;
             }
+            // The device's own message, third line — one line, ellipsized if
+            // long; the full text lives in the click modal.
+            .cp-detail-msg {
+                font-size: 11.5px;
+                opacity: 0.8;
+                max-width: 300px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
             &.cp-bcp-ok   .cp-detail-state { color: $cp-color-green; }
             &.cp-bcp-warn .cp-detail-state { color: $cp-color-warn; }
             &.cp-bcp-err  .cp-detail-state { color: $cp-color-red; }
@@ -979,7 +988,7 @@ $cp-border: 1px solid transparent;
                         // state line was cut off.
                         width:max-content;
                         min-width:$cp-size;
-                        max-width:60px;
+                        max-width:78px;      /* three lines: format, state, message */
                         padding:6px 3px;
 
                         bottom:26px;
@@ -1598,6 +1607,18 @@ html[data-theme="light"] {
     color: theme('colors.slate.400');
     margin: 4px 0;
 }
+// The clock the device is locked to (BCP-008 4p10) — a plain line under the
+// counter, monospace for the grandmaster id.
+.cp-monitor-sync {
+    font-size: 12px;
+    opacity: 0.85;
+    margin-top: 2px;
+}
+.cp-monitor-sync-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+}
+
 .cp-monitor-table {
     margin-top: 10px;
     width: 100%;

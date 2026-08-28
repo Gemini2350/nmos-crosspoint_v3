@@ -1546,7 +1546,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
      *  `detail` breaks the four status domains down for the tooltip, e.g.
      *  "Link ✓ · Connection ⚠ · Sync ✓ · Stream ✗" (receiver) or
      *  "Link ✓ · Transmission ✓ · Sync ✓ · Essence ✓" (sender). */
-    private buildMonitorStatus(nmosId:string): { status:number, message:string, detail:string, counter:number, domains:Array<{label:string,status:number,counter:number,message:string}> } | undefined {
+    private buildMonitorStatus(nmosId:string): { status:number, message:string, detail:string, counter:number, syncSource:string, domains:Array<{label:string,status:number,counter:number,message:string}> } | undefined {
         if(!nmosId) return undefined;
         try{
             let st = Bcp008Monitor.instance?.getStatus(nmosId);
@@ -1574,7 +1574,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 // (transitions since the last reset), not the state itself.
                 parts.push(l + " " + sym(dv.s) + " (" + c + ")");
             }
-            return { status: st.status, message: st.message || "", detail: parts.join(" · "), counter, domains };
+            // The clock the device says it is locked to (BCP-008 4p10). Empty
+            // when the device does not report one.
+            let syncSource = (typeof (st as any).syncSource === "string") ? (st as any).syncSource : "";
+            return { status: st.status, message: st.message || "", detail: parts.join(" · "), counter, syncSource, domains };
         }catch(e){ return undefined; }
     }
 
@@ -1617,10 +1620,20 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     }
 
     private static mediaTypeShort(mt:any): string {
-        // "audio/L24" → "L24", "video/raw" → "raw", "video/jxsv" → "jxsv"
+        // "audio/L24" → "L24", "video/jxsv" → "jxsv". The subtype alone is
+        // enough everywhere EXCEPT uncompressed video: a receiver that only
+        // says "raw" tells you nothing — "raw video" does. Same for the
+        // uncompressed audio and ancillary equivalents.
         let s = "" + mt;
         let i = s.indexOf("/");
-        return i >= 0 ? s.substring(i+1) : s;
+        let sub = i >= 0 ? s.substring(i+1) : s;
+        if(sub === "raw"){
+            let top = i >= 0 ? s.substring(0, i) : "";
+            if(top === "video") return "raw video";
+            if(top === "audio") return "raw audio";
+            return "raw";
+        }
+        return sub;
     }
 
     private buildReceiverCapsSummary(nmosId:string): string {
@@ -1761,7 +1774,7 @@ export interface CrosspointFlow {
     // `detail` is the four-domain breakdown for the tooltip, `counter` the
     // summed transition counters (history, NOT current state), `domains`
     // the per-domain rows for the status modal.
-    monitor?:{ status:number, message:string, detail?:string, counter?:number, domains?:Array<{label:string,status:number,counter:number,message:string}> }
+    monitor?:{ status:number, message:string, detail?:string, counter?:number, syncSource?:string, domains?:Array<{label:string,status:number,counter:number,message:string}> }
 };
 
 

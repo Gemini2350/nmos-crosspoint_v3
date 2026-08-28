@@ -1423,6 +1423,15 @@
       if(!bcp008On || !flow || !flow.monitor) return "";
       return monitorStateName(flow.monitor.status);
     }
+    /** The device's own words for the current state, on the hover pill. Only
+     *  while something IS wrong: a device keeps its overallStatusMessage until
+     *  the next counter reset, so on a healthy flow it would describe a past
+     *  problem. The full text and the history stay in the click modal. */
+    function typeDetailMessage(flow:any):string{
+      if(!bcp008On || !flow || !flow.monitor) return "";
+      if(flow.monitor.status < 2) return "";
+      return monitorMsg(flow.monitor.status, flow.monitor.message || "");
+    }
 
     // BCP-008 problem level of a flow for the crosspoint cells: 0 = fine
     // (healthy, inactive or unmonitored), 2/3 = partially/unhealthy.
@@ -1705,7 +1714,7 @@
                                 --></span><!--
                               --><span class={"cp-type cp-type-"+flow.type + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                                     on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                                --><span class="cp-detail"><span class="cp-detail-main">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}</span><!--
+                                --><span class="cp-detail"><span class="cp-detail-main">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                               --></span><!--
                               
                             --></th>
@@ -1784,7 +1793,7 @@
                         --></span><!--
                         --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                               on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                          --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}</span><!--
+                          --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                         --></span><!--
                       --></td>
 
@@ -1862,6 +1871,9 @@
           <h3 class="font-bold text-lg cp-monitor-title">Status – {monitorModalFlow.alias || monitorModalFlow.name || monitorModalFlow.id}
             <span class={"cp-monitor-state " + monitorClassVal(m.status)}>{monitorStateName(m.status)}</span></h3>
           <div class="cp-monitor-counter">Overall counter: {m.counter || 0}</div>
+          <!-- BCP-008 4p10: the clock the device says it is locked to. Shown
+               only when the device reports one — most do not implement it. -->
+          {#if m.syncSource}<div class="cp-monitor-sync">Sync source: <span class="cp-monitor-sync-id">{m.syncSource}</span></div>{/if}
           {#if m.message}<p class="cp-monitor-message">{monitorMsg(m.status, m.message)}</p>{/if}
           <table class="cp-monitor-table">
             <thead><tr><td>Domain</td><td>State</td><td>Message</td><td>Transitions</td></tr></thead>
