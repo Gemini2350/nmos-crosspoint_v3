@@ -182,25 +182,40 @@ export class NmosRegistryConnector {
     }
 
     /** Resolve the DNS-SD domains to query: the Setup override if set,
-     *  otherwise the system resolver's search domains (/etc/resolv.conf —
-     *  present in the container; empty list elsewhere is a clean no-op). */
+     *  otherwise the system resolver's search list.
+     *
+     *  /etc/resolv.conf is the normal source, but on a systemd-resolved host
+     *  it is the 127.0.0.53 stub — and Docker, which refuses to hand a
+     *  loopback resolver into a container, replaces the file with public
+     *  nameservers AND DROPS the search list. The host then knows
+     *  "search example.tv" (resolvectl domain) while the container sees
+     *  nothing. So resolved's own files are read as well: they carry the real
+     *  search list and are readable whenever /run/systemd/resolve is mounted
+     *  in (or when running outside a container at all).
+     *  Nothing found is a clean no-op — mDNS and the static registry stay. */
     private dnssdSearchDomains(): string[] {
         let cfg = "";
         try{ cfg = ("" + (this.settings?.registryDiscovery?.domain || "")).trim().replace(/\.+$/, ""); }catch(e){}
         if(cfg){ return [cfg]; }
-        try{
-            const txt = fs.readFileSync("/etc/resolv.conf", "utf8");
-            const domains: string[] = [];
+        const domains: string[] = [];
+        const files = [
+            "/etc/resolv.conf",
+            "/run/systemd/resolve/resolv.conf",        // resolved's uplink view
+            "/run/systemd/resolve/stub-resolv.conf",   // stub, keeps the search list
+        ];
+        for(const file of files){
+            let txt = "";
+            try{ txt = fs.readFileSync(file, "utf8"); }catch(e){ continue; }
             for(const line of ("" + txt).split("\n")){
                 const m = line.match(/^\s*(search|domain)\s+(.+)$/);
                 if(!m) continue;
                 for(const d of m[2].trim().split(/\s+/)){
                     const clean = d.trim().replace(/\.+$/, "");
-                    if(clean && clean !== "local" && !domains.includes(clean)){ domains.push(clean); }
+                    if(clean && clean !== "local" && clean !== "." && !domains.includes(clean)){ domains.push(clean); }
                 }
             }
-            return domains;
-        }catch(e){ return []; }
+        }
+        return domains;
     }
 
     /** Unicast DNS-SD (RFC 6763 over normal DNS): PTR on

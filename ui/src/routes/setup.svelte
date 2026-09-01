@@ -836,7 +836,15 @@
           {:else if Array.isArray(dnssdStatus.domains) && dnssdStatus.domains.length > 0}
             <span>searching domain{dnssdStatus.domains.length === 1 ? "" : "s"}: <code>{dnssdStatus.domains.join(", ")}</code>{dnssdStatus.override ? " (configured above)" : " (from the server DNS search domain)"}</span>
           {:else}
-            <span>no DNS search domain found. Configure one above, otherwise mDNS and the static IP take over.</span>
+            <!-- The usual cause is not a missing domain but Docker: on a host
+                 running systemd-resolved, /etc/resolv.conf points at the
+                 127.0.0.53 stub, and Docker replaces the file inside the
+                 container WITHOUT the search list. `resolvectl domain` on the
+                 host then shows a domain the container never sees. -->
+            <span>no DNS search domain found. The host may still have one — on a systemd-resolved host Docker
+              hands the container its own <code>resolv.conf</code> without the search list. Either set the domain above,
+              start the container with <code>--dns-search &lt;domain&gt;</code> (compose: <code>dns_search:</code>),
+              or mount <code>/run/systemd/resolve</code> into it. Otherwise mDNS and the static IP take over.</span>
           {/if}
         </div>
         {#if registryStatusList.length === 0}
