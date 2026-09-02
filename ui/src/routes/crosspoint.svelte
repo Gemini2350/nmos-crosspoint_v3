@@ -1961,8 +1961,12 @@
               {#each monitorModalCounters as g}
                 <div class="cp-monitor-packets-row">
                   <span class="cp-monitor-packets-label">{g.label}</span>
+                  <!-- One counter per line: a sender that reports four
+                       transmission-error counters ran into the label as a
+                       single "a: 0 · b: 0 · …" string. Two columns keep the
+                       numbers under each other. -->
                   <span class="cp-monitor-packets-values">
-                    {#if g.counters.length === 0}0{:else}{#each g.counters as c, i}{i > 0 ? " · " : ""}{c.name ? c.name + ": " : ""}{c.value}{/each}{/if}
+                    {#if g.counters.length === 0}<span class="cp-monitor-packets-name"></span><span class="cp-monitor-packets-num">0</span>{:else}{#each g.counters as c}<span class="cp-monitor-packets-name">{c.name}</span><span class="cp-monitor-packets-num">{c.value}</span>{/each}{/if}
                   </span>
                 </div>
               {/each}

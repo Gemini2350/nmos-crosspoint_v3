@@ -36,14 +36,16 @@ $cp-color-data:theme('colors.blue.500');
 // Connection-state colours (broadcast convention):
 //   green  = active, confirmed by NMOS — everything is fine
 //   grey dashed OUTLINE = prepared / preview / hover — staged, nothing on the wire yet
+//   grey FILL = working / pending — command sent, nothing known back yet
 //   amber  = BCP-008 partially healthy (a status warning)
-//   orange = working / pending — command sent, waiting for confirmation
 //   red    = errors / unhealthy / TAKE
+// Nothing in the switching process is orange any more: while a command is in
+// flight we have no status at all, and that is what grey says everywhere else
+// in this matrix. Orange next to amber only ever read as "something is wrong".
 $cp-color-green:#46aa14;
-$cp-color-orange:#f97316;
-// BCP-008 "partially healthy" — deliberately a yellower amber than the
-// orange used for the working/pending connection fill, so a status warning
-// and a switch in progress can't be confused at a glance.
+// BCP-008 "partially healthy". The only warm colour in the matrix besides red
+// — a switch in progress is grey now, so amber always means the device said
+// something.
 $cp-color-warn:#f59e0b;
 $cp-color-red:#e21e1e;
 // Connection whose sender, receiver or both offer no BCP-008 monitor: not a
@@ -241,7 +243,7 @@ $cp-border: 1px solid transparent;
         // that read as a link.
         .cp-node-name { }
 
-        // BCP-008 health badge next to sender/receiver labels: orange
+        // BCP-008 health badge next to sender/receiver labels: amber
         // triangle = partially healthy, red circle = unhealthy. Green is
         // deliberately unmarked — no news is good news. On device level a
         // counter of affected flows sits next to the icon.
@@ -277,7 +279,7 @@ $cp-border: 1px solid transparent;
         }
 
         // BCP-008 status symbol — same box style as the AUDIO/VIDEO/ANC
-        // type icons. Colour = CURRENT state (green/orange/red, grey =
+        // type icons. Colour = CURRENT state (green/amber/red, grey =
         // inactive); the little bubble is the summed transition counter
         // (history since the last reset — NOT the current state). Click
         // opens the detail modal with per-domain counters + reset.
@@ -523,9 +525,12 @@ $cp-border: 1px solid transparent;
                     color:theme('colors.neutral-400');
                 }
             }
+            // Executing the teardown: a brighter grey than the staged marker
+            // above. Not orange — the glyph carries the BCP-008 status, and a
+            // warm tint on it means "the device said something".
             &.workingdisconnect {
                 svg {
-                    color:theme('colors.orange.500');
+                    color:theme('colors.neutral-300');
                 }
             }
 
@@ -1231,25 +1236,30 @@ $cp-border: 1px solid transparent;
                         border: 2px dashed $cp-color-grey;
                     }
 
+                    // Command sent, no confirmation yet — we know nothing
+                    // about this point, so it gets the colour of "no
+                    // statement": grey. Lighter than the unmonitored grey, and
+                    // a FILL where prepared/preview are outlines.
                     &.working {
-                        background-color: $cp-color-orange;
+                        background-color: $cp-color-grey;
                     }
 
                     // Active connection staged for disconnect (AutoTake
-                    // off): the wire is still up — faded green fill — but
-                    // the dashed ring announces the teardown on TAKE
-                    // (dashed orange ring — staged and executing look alike here).
+                    // off): the wire is still up — faded green fill — but the
+                    // ring announces the teardown on TAKE. Dashed = staged,
+                    // solid = command on its way; both grey, because neither
+                    // is a status.
                     &.cp-disc-prepared {
                         background-color: rgba(70, 170, 20, 0.35);
                         border: 2px dashed $cp-color-grey;
                     }
                     &.cp-disc-working {
                         background-color: rgba(70, 170, 20, 0.35);
-                        border: 2px dashed $cp-color-orange;
+                        border: 2px solid $cp-color-grey;
                     }
 
                     // BCP-008 endpoint health on ACTIVE connections: the
-                    // whole point turns orange (partially healthy) or red
+                    // whole point turns amber (partially healthy) or red
                     // (unhealthy). On the collapsed device dot the WORST
                     // status of all connections between the two devices
                     // wins, so a single bad stream is visible while folded.
@@ -1264,7 +1274,7 @@ $cp-border: 1px solid transparent;
                     }
 
                     // Hover = preview of what a click would prepare: same
-                    // dashed-orange outline as a prepared point. Background is
+                    // dashed grey outline as a prepared point. Background is
                     // left alone so an ACTIVE (filled green) cell keeps its
                     // fill and just gains the ring.
                     &:hover {
@@ -1408,7 +1418,7 @@ html[data-theme="light"] {
                 }
                 &.workingdisconnect {
                     svg {
-                        color:theme('colors.orange.600');
+                        color:theme('colors.neutral-600');
                     }
                 }
     
@@ -1555,7 +1565,7 @@ html[data-theme="light"] {
     &.cp-status-warn { background-color: #f59e0b; }
     &.cp-status-err  { background-color: #e21e1e; }
 }
-// Domain state as a traffic-light dot (green / orange / red, grey =
+// Domain state as a traffic-light dot (green / amber / red, grey =
 // inactive), with the state name in muted text next to it.
 .cp-monitor-dot {
     display: inline-block;
@@ -1597,6 +1607,24 @@ html[data-theme="light"] {
 .cp-monitor-packets-label {
     flex: 0 0 160px;
     color: theme('colors.slate.500');
+}
+// Counter name left, value right — one counter per row. Devices report up to
+// four transmission-error counters, and on one line they were unreadable.
+.cp-monitor-packets-values {
+    display: grid;
+    grid-template-columns: max-content max-content;
+    column-gap: 10px;
+    row-gap: 1px;
+    align-content: start;
+}
+.cp-monitor-packets-name {
+    color: theme('colors.slate.500');
+    // Keeps the numbers of the lost/late groups under each other even when one
+    // group's counters carry no interface name at all.
+    min-width: 150px;
+}
+.cp-monitor-packets-num {
+    font-variant-numeric: tabular-nums;
 }
 .cp-monitor-packets-loading {
     color: theme('colors.slate.500');
