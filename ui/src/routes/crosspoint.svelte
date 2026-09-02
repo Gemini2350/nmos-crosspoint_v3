@@ -1954,21 +1954,23 @@
               {/each}
             </tbody>
           </table>
-          <div class="cp-monitor-packets">
+          <div class="cp-monitor-packets" class:cp-monitor-packets-grid={monitorModalCounters !== null}>
             {#if monitorModalCounters === null}
               <span class="cp-monitor-packets-loading">Reading packet counters…</span>
             {:else}
-              {#each monitorModalCounters as g}
-                <div class="cp-monitor-packets-row">
-                  <span class="cp-monitor-packets-label">{g.label}</span>
-                  <!-- One counter per line: a sender that reports four
-                       transmission-error counters ran into the label as a
-                       single "a: 0 · b: 0 · …" string. Two columns keep the
-                       numbers under each other. -->
-                  <span class="cp-monitor-packets-values">
-                    {#if g.counters.length === 0}<span class="cp-monitor-packets-name"></span><span class="cp-monitor-packets-num">0</span>{:else}{#each g.counters as c}<span class="cp-monitor-packets-name">{c.name}</span><span class="cp-monitor-packets-num">{c.value}</span>{/each}{/if}
-                  </span>
-                </div>
+              <!-- One counter per line, and ONE grid for all groups: a device
+                   that reports four lost-packet and two late-packet counters
+                   wrote them into one run-on line before, and a grid per group
+                   left the numbers of the two groups a few pixels apart. Group
+                   label only on the group's first line. -->
+              {#each monitorModalCounters as g, gi}
+                {#if g.counters.length === 0}
+                  <span class="cp-monitor-packets-label" class:cp-monitor-packets-gap={gi > 0}>{g.label}</span><span class="cp-monitor-packets-name" class:cp-monitor-packets-gap={gi > 0}></span><span class="cp-monitor-packets-num" class:cp-monitor-packets-gap={gi > 0}>0</span>
+                {:else}
+                  {#each g.counters as c, i}
+                    <span class="cp-monitor-packets-label" class:cp-monitor-packets-gap={gi > 0 && i === 0}>{i === 0 ? g.label : ""}</span><span class="cp-monitor-packets-name" class:cp-monitor-packets-gap={gi > 0 && i === 0}>{c.name}</span><span class="cp-monitor-packets-num" class:cp-monitor-packets-gap={gi > 0 && i === 0}>{c.value}</span>
+                  {/each}
+                {/if}
               {/each}
             {/if}
           </div>

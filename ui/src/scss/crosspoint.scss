@@ -1599,32 +1599,29 @@ html[data-theme="light"] {
     border-top: 1px solid theme('colors.base-300');
     font-size: 13px;
 }
-.cp-monitor-packets-row {
-    display: flex;
-    gap: 14px;
-    padding: 2px 0;
+// Group | counter name | value, one counter per line. A single grid for the
+// WHOLE block, not one per group, so the numbers of the lost and the late
+// counters stand in the same column however long the names are.
+.cp-monitor-packets-grid {
+    display: grid;
+    grid-template-columns: 160px max-content max-content;
+    column-gap: 14px;
+    row-gap: 2px;
+    align-items: baseline;
 }
 .cp-monitor-packets-label {
-    flex: 0 0 160px;
     color: theme('colors.slate.500');
-}
-// Counter name left, value right — one counter per row. Devices report up to
-// four transmission-error counters, and on one line they were unreadable.
-.cp-monitor-packets-values {
-    display: grid;
-    grid-template-columns: max-content max-content;
-    column-gap: 10px;
-    row-gap: 1px;
-    align-content: start;
 }
 .cp-monitor-packets-name {
     color: theme('colors.slate.500');
-    // Keeps the numbers of the lost/late groups under each other even when one
-    // group's counters carry no interface name at all.
-    min-width: 150px;
 }
 .cp-monitor-packets-num {
     font-variant-numeric: tabular-nums;
+}
+// Air above the first line of a following group — on all three cells, or the
+// row would not grow.
+.cp-monitor-packets-gap {
+    padding-top: 7px;
 }
 .cp-monitor-packets-loading {
     color: theme('colors.slate.500');
