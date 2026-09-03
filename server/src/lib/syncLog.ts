@@ -48,8 +48,40 @@ export class SyncLog extends SyncObject {
         }
     }
 
+    // Resolves an NMOS uuid to something a human reads ("Node - Device - TX
+    // Cam 1"). Registered by CrosspointAbstraction, which owns the labels
+    // (including the aliases set in the UI). Every log line in the process
+    // funnels through log(), the worker's included, so this one hook names
+    // the ids everywhere.
+    static idResolver: ((id:string)=>string|null) | null = null;
+
+    private static resolveIds(text: string): string {
+        if(!SyncLog.idResolver || !text){ return text; }
+        try{
+            const re = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
+            let appended: string[] = [];
+            let out = text.replace(re, (m: string, offset: number) => {
+                let name = SyncLog.idResolver(m);
+                if(!name){ return m; }
+                // Inside a URL the name would break the path, so those ids
+                // keep their place and the name is appended to the line.
+                let before = offset > 0 ? text[offset - 1] : "";
+                let after  = text[offset + m.length] || "";
+                if(before === "/" || after === "/"){
+                    if(!appended.includes(name)){ appended.push(name); }
+                    return m;
+                }
+                return m + " (" + name + ")";
+            });
+            return appended.length > 0 ? (out + " · " + appended.join(" · ")) : out;
+        }catch(e){
+            return text;
+        }
+    }
+
     static log(severity: string,  topic: string,text: string, raw: any= null) {
         severity = SyncLog.normaliseSeverity(severity);
+        text = SyncLog.resolveIds(text);
         let time = new Date().getTime();
         let date = new Date(time).toISOString();
 

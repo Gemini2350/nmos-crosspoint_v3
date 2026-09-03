@@ -1916,6 +1916,37 @@ export class NmosRegistryConnector {
     }
 
 
+    /** "Node - Device - TX Label" for an NMOS uuid, straight from the
+     *  registry state — the fallback behind the crosspoint's own map (which
+     *  knows the aliases). Covers flows and sources too, and anything that
+     *  never made it into the crosspoint. Returns null for unknown ids. */
+    public resourceName(id:string): string|null {
+        if(!id) return null;
+        try{
+            let st:any = this.nmosState;
+            if(!st) return null;
+            let devPath = (deviceId:string):string => {
+                let d = st.devices?.[deviceId];
+                if(!d) return "";
+                let n = st.nodes?.[d.node_id];
+                return (n?.label ? n.label + " - " : "") + (d.label || d.id || "");
+            };
+            if(st.senders?.[id]){
+                let x = st.senders[id];
+                return (devPath(x.device_id) + " - TX " + (x.label || "")).trim();
+            }
+            if(st.receivers?.[id]){
+                let x = st.receivers[id];
+                return (devPath(x.device_id) + " - RX " + (x.label || "")).trim();
+            }
+            if(st.devices?.[id]){ return devPath(id) || null; }
+            if(st.nodes?.[id]){ return st.nodes[id].label || null; }
+            if(st.flows?.[id]){ return ("Flow " + (st.flows[id].label || "")).trim(); }
+            if(st.sources?.[id]){ return ("Source " + (st.sources[id].label || "")).trim(); }
+        }catch(e){}
+        return null;
+    }
+
     async setFlowMulticast(senderId:string, data:any){
 
         try{

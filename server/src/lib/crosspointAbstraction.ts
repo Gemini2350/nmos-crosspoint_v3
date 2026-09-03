@@ -73,6 +73,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             CrosspointAbstraction.instance = this;
         }
 
+        // Every log line gets its uuids named from here on.
+        SyncLog.idResolver = (id:string) => {
+            try{ return this.lookupIdName(id); }catch(e){ return null; }
+        };
+
         // BCP-008 status monitoring (IS-12 client). A status change touches
         // ONLY enrichment-time fields (flow.monitor / device summaries) —
         // the NMOS state and the worker-built shadow are unchanged, so we
@@ -976,10 +981,60 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         }catch(e){}
     }
 
+    // ---- uuid → "Node - Device - TX Label" for the log -------------------
+    // A log line saying only 5555…5555 is unreadable on a system with fifty
+    // devices. The map is rebuilt whenever the shadow changes (a few hundred
+    // entries, once per tick) so a lookup during logging stays O(1) and can
+    // never walk a stale or half-updated state.
+    private idNameMap: {[id:string]: string} = {};
+
+    private rebuildIdNameMap(){
+        let map: {[id:string]: string} = {};
+        try{
+            for(let dev of ((this.crosspointState as any)?.devices || [])){
+                let devName  = dev.alias || dev.name || "";
+                let nodeName = (dev as any).nodeLabel || "";
+                let devPath  = nodeName ? (nodeName + " - " + devName) : devName;
+                let devUuid  = ("" + (dev.id || "")).replace(/^nmos_/, "");
+                if(devUuid && devPath){ map[devUuid] = devPath; }
+                let nodeId = "" + ((dev as any).nodeId || "");
+                if(nodeId && nodeName && !map[nodeId]){ map[nodeId] = nodeName; }
+                for(let kind of ["senders", "receivers"]){
+                    let dir = (kind === "senders") ? "TX" : "RX";
+                    let groups = (dev as any)[kind] || {};
+                    for(let type of Object.keys(groups)){
+                        for(let f of (groups[type] || [])){
+                            if(!f) continue;
+                            let uuid = ("" + (f.id || "")).replace(/^nmos_/, "");
+                            if(!uuid) continue;
+                            let fName = f.alias || f.name || "";
+                            map[uuid] = devPath + " - " + dir + (fName ? " " + fName : "");
+                        }
+                    }
+                }
+            }
+        }catch(e){}
+        this.idNameMap = map;
+    }
+
+    /** Name for an NMOS uuid, or null. The crosspoint map first (it carries
+     *  the aliases), then the raw registry labels — those also cover flows
+     *  and sources, and resources that never made it into the crosspoint. */
+    public lookupIdName(id:string): string|null {
+        if(!id) return null;
+        let hit = this.idNameMap[id];
+        if(hit) return hit;
+        try{
+            return NmosRegistryConnector.instance?.resourceName(id) || null;
+        }catch(e){}
+        return null;
+    }
+
     updateReturn(data:any){
         if(data.hasOwnProperty("crosspointState")){
             this.crosspointState = data.crosspointState;
             this.enrichCrosspointState();
+            this.rebuildIdNameMap();
             this.syncCrosspoint.setState(this.crosspointState);
             try{ if(this.onStateUpdated){ this.onStateUpdated(); } }catch(e){}
         }
