@@ -1985,8 +1985,14 @@ export class NmosRegistryConnector {
                     // Drop empty values while copying: an inactive sender can
                     // report destination_ip "" / null, and echoing that back
                     // is exactly the kind of thing a device rejects.
+                    // source_ip is dropped as well: which local address a
+                    // sender transmits from is the device's business — it maps
+                    // each leg to its own interface_binding. We read it (the
+                    // details page shows it), we never write it, not even by
+                    // echoing the device's own value back at it.
                     let copy:any = {};
                     for(let k of Object.keys(cur)){
+                        if(k === "source_ip"){ continue; }
                         let v = (cur as any)[k];
                         if(v === null || v === undefined || v === ""){ continue; }
                         copy[k] = v;
@@ -2054,7 +2060,9 @@ export class NmosRegistryConnector {
                 // The leg's current parameters (copied from the active
                 // snapshot above, empty values already dropped).
                 let cur:any = transportParams[l.index] || {};
-                let leg:any = {source_ip:"auto"};
+                // No source_ip here either — we used to send "auto", which is
+                // still an instruction about the sender's own interface.
+                let leg:any = {};
                 if(l.multicast !== undefined && l.multicast !== null && l.multicast !== ""){
                     leg.destination_ip = l.multicast;
                     meaningfulChange = true;
@@ -2083,10 +2091,9 @@ export class NmosRegistryConnector {
                     " go out without the full destination_ip/destination_port pair — no IS-05 active snapshot to complete them from.");
             }
 
-            // Last-line-of-defence: never send a PATCH that would only set
-            // `source_ip: "auto"` on every leg. Such a no-op PATCH causes the
-            // reconcile loop to fire forever because nothing on the device
-            // changes.
+            // Last-line-of-defence: never send a PATCH that changes nothing.
+            // Such a no-op causes the reconcile loop to fire forever because
+            // nothing on the device changes.
             if(!meaningfulChange){
                 SyncLog.log("warn", "nmos", "Refusing to send empty setFlowMulticast PATCH for " + senderId + " (no destination_ip / destination_port).");
                 return;
