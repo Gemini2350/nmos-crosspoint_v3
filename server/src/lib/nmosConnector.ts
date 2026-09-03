@@ -2033,15 +2033,29 @@ export class NmosRegistryConnector {
                 "transport_params": transportParams
             };
 
+            // A touched leg always carries the COMPLETE destination pair, even
+            // when the caller only changed one half. IS-05 says a missing
+            // field means "leave it as it is", but several devices treat a
+            // transport_params object as the whole truth and reset the field
+            // that is not in it — a new multicast then arrives with the port
+            // back at the device default. Whatever the caller does not set is
+            // filled from the leg's own IS-05 ACTIVE values, so the PATCH
+            // states what the device already has instead of staying silent.
             let meaningfulChange = false;
+            let incompleteLegs:number[] = [];
             data.legs.forEach((l)=>{
                 if(typeof l.index !== "number" || l.index < 0 || l.index >= legCount){
                     return;
                 }
+                // The leg's current parameters (copied from the active
+                // snapshot above, empty values already dropped).
+                let cur:any = transportParams[l.index] || {};
                 let leg:any = {source_ip:"auto"};
                 if(l.multicast !== undefined && l.multicast !== null && l.multicast !== ""){
                     leg.destination_ip = l.multicast;
                     meaningfulChange = true;
+                }else if(typeof cur.destination_ip === "string" && cur.destination_ip !== ""){
+                    leg.destination_ip = cur.destination_ip;
                 }
                 if(l.port !== undefined && l.port !== null && l.port !== ""){
                     let p = parseInt(""+l.port);
@@ -2050,8 +2064,20 @@ export class NmosRegistryConnector {
                         meaningfulChange = true;
                     }
                 }
+                if(leg.destination_port === undefined && typeof cur.destination_port === "number" && cur.destination_port > 0){
+                    leg.destination_port = cur.destination_port;
+                }
+                // Only reachable when the device never gave us an active
+                // snapshot for this leg — we cannot invent the missing half.
+                if(leg.destination_ip === undefined || leg.destination_port === undefined){
+                    incompleteLegs.push(l.index);
+                }
                 patch.transport_params[l.index] = leg;
             });
+            if(incompleteLegs.length > 0){
+                SyncLog.log("warn", "nmos", "setFlowMulticast " + senderId + ": leg(s) " + incompleteLegs.join(", ") +
+                    " go out without the full destination_ip/destination_port pair — no IS-05 active snapshot to complete them from.");
+            }
 
             // Last-line-of-defence: never send a PATCH that would only set
             // `source_ip: "auto"` on every leg. Such a no-op PATCH causes the
