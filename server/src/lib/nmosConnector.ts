@@ -1721,7 +1721,10 @@ export class NmosRegistryConnector {
             let patchHref = href.href + fixSlash + "single/receivers/" + receiverId + "/staged"
             try{
                 let result = await axios.patch(patchHref, patch, {timeout:30000});
-                return SyncLog.log("success", "nmos_connect", "Successfully patched: "+receiverId, {href:patchHref, data:patch})
+                // The device's own answer goes into the log line: what it
+                // staged is the only way to see which of our parameters it
+                // took, silently changed or ignored.
+                return SyncLog.log("success", "nmos_connect", "Successfully patched: "+receiverId, {href:patchHref, data:patch, status:result?.status, response:result?.data})
             }catch(e){
                 if (axios.isAxiosError(e)) {
                     if(e.code == "ETIMEDOUT"){
@@ -1730,10 +1733,10 @@ export class NmosRegistryConnector {
                     }else{
                         // TODO....
                         if(e.code == "ERR_BAD_REQUEST"){
-                            let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, error:e.response.data,});
+                            let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data,});
                             throw new LoggedError("Patch failed: "+e.response.data.error + " / " +e.response.data.debug , id);
                         }
-                        let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, message:e.message});
+                        let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
                         throw new LoggedError("Receiver returned Error: "+e.code, id);
                     }
                 }else{
@@ -1814,8 +1817,8 @@ export class NmosRegistryConnector {
                 }
                 let patchHref = href.href + fixSlash + "single/senders/" + senderId + "/staged";
                 try{
-                    await axios.patch(patchHref, patch, {timeout:30000});
-                    SyncLog.log("success", "nmos", "Successfully enabled: "+senderId, {href:patchHref, data:patch})
+                    let result = await axios.patch(patchHref, patch, {timeout:30000});
+                    SyncLog.log("success", "nmos", "Successfully enabled: "+senderId, {href:patchHref, data:patch, status:result?.status, response:result?.data})
                     return;
                 }catch(e){
                     if (axios.isAxiosError(e)) {
@@ -1825,9 +1828,9 @@ export class NmosRegistryConnector {
                         }else{
                             // TODO....
                             if(e.code == "ERR_BAD_REQUEST"){
-                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, error:e.response.data,});
+                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data,});
                             }else{
-                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, message:e.message});
+                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
                             }
                             return;
                         }
@@ -1886,18 +1889,19 @@ export class NmosRegistryConnector {
                 let fixSlash = (href.href[href.href.length-1] == "/") ? "" : "/";
                 let patchHref = href.href + fixSlash + "single/receivers/" + receiverId + "/staged";
                 try{
-                    await axios.patch(patchHref, patch, {timeout:30000});
-                    SyncLog.log("success", "nmos", "Successfully " + (disable?"disabled":"enabled") + " receiver: " + receiverId, {href:patchHref, data:patch});
+                    let result = await axios.patch(patchHref, patch, {timeout:30000});
+                    SyncLog.log("success", "nmos", "Successfully " + (disable?"disabled":"enabled") + " receiver: " + receiverId, {href:patchHref, data:patch, status:result?.status, response:result?.data});
                     return;
                 }catch(e:any){
                     if(axios.isAxiosError(e)){
                         if(e.code == "ETIMEDOUT"){
                             SyncLog.log("info", "nmos", "Patch on " + receiverId + " timed out, trying next.");
                         }else{
-                            let logBody:any = {controlHrefs, failedControl:patchHref, patch};
-                            if(e.code == "ERR_BAD_REQUEST" && e.response){
+                            let logBody:any = {controlHrefs, failedControl:patchHref, patch, status:e.response?.status};
+                            if(e.response){
                                 logBody.error = e.response.data;
-                            }else{
+                            }
+                            if(e.code != "ERR_BAD_REQUEST"){
                                 logBody.message = e.message;
                             }
                             SyncLog.log("error", "nmos", "Receiver " + receiverId + " returned Error: " + e.code, logBody);
@@ -2100,8 +2104,8 @@ export class NmosRegistryConnector {
                 }
                 let patchHref = href.href + fixSlash + "single/senders/" + senderId + "/staged";
                 try{
-                    await axios.patch(patchHref, patch, {timeout:30000});
-                    SyncLog.log("success", "nmos", "Successfully set multicast: "+senderId, {href:patchHref, data:patch});
+                    let result = await axios.patch(patchHref, patch, {timeout:30000});
+                    SyncLog.log("success", "nmos", "Successfully set multicast: "+senderId, {href:patchHref, data:patch, status:result?.status, response:result?.data});
 
 
                     setTimeout(()=>{
@@ -2142,9 +2146,9 @@ export class NmosRegistryConnector {
                         }else{
                             // TODO....
                             if(e.code == "ERR_BAD_REQUEST"){
-                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, error:e.response.data,});
+                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data,});
                             }else{
-                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, message:e.message});
+                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
                             }
                             return;
                         }

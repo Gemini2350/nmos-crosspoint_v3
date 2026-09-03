@@ -582,63 +582,85 @@
 
 
     // ----- Edit dst-IP / dst-Port (send to sender) -----
-    // Edit is explicit: user clicks the pencil for a specific leg, the row
-    // morphs into IP / Port inputs, then Save or Cancel.
-    let editingLeg:string = "";            // key: "<flowId>:<legIndex>"  ("" = none)
-    let legEditIp:string = "";
-    let legEditPort:string = "";
+    // Edit is explicit: the pencil opens ALL legs of that sender at once and
+    // Save writes them in ONE IS-05 PATCH. On a 2022-7 sender editing leg by
+    // leg meant two PATCHes and two activations — the stream dropped twice,
+    // and a device that reconfigures both legs together saw a moment with one
+    // new and one old address.
+    let editingFlow:string = "";           // flow id ("" = nothing in edit)
+    let legEditIps:string[] = [];          // by leg index
+    let legEditPorts:string[] = [];
+    let legEditOrig:Array<{ip:string, port:string}> = [];
     let legEditError:string = "";
 
     function legKey(flowId:string, legIndex:number){
       return flowId + ":" + legIndex;
     }
-    function startLegEdit(flowId:string, legIndex:number, leg:any){
-      editingLeg = legKey(flowId, legIndex);
-      legEditIp = leg.dstIp || "";
-      legEditPort = (leg.dstPort === undefined || leg.dstPort === null) ? "" : (""+leg.dstPort);
+    function startLegEdit(flow:any, legIndex:number){
+      editingFlow = flow.id;
+      legEditIps = [];
+      legEditPorts = [];
+      legEditOrig = [];
+      (flow.legs || []).forEach((l:any)=>{
+        let ip = l.dstIp || "";
+        let port = (l.dstPort === undefined || l.dstPort === null) ? "" : (""+l.dstPort);
+        legEditIps[l.index] = ip;
+        legEditPorts[l.index] = port;
+        legEditOrig[l.index] = { ip, port };
+      });
       legEditError = "";
-      // Focus the IP input shortly after render
+      // Focus the IP input of the leg whose pencil was clicked
       setTimeout(()=>{
         try{
-          let el = document.querySelector(".det-leg-input-ip-"+editingLeg.replace(/[:]/g,"_")) as HTMLInputElement;
+          let el = document.querySelector(".det-leg-input-ip-"+legKey(flow.id, legIndex).replace(/[:]/g,"_")) as HTMLInputElement;
           if(el){ el.focus(); el.select(); }
         }catch(e){}
       }, 30);
     }
     function cancelLegEdit(){
-      editingLeg = "";
-      legEditIp = "";
-      legEditPort = "";
+      editingFlow = "";
+      legEditIps = [];
+      legEditPorts = [];
+      legEditOrig = [];
       legEditError = "";
     }
-    function commitLegEdit(flowId:string, legIndex:number){
-      // Validate port
-      let p:number|null = null;
-      if(legEditPort !== ""){
-        let parsed = parseInt(legEditPort);
-        if(isNaN(parsed) || parsed <= 0 || parsed > 65535){
-          legEditError = "Invalid Port (1-65535)";
-          return;
+    function commitLegEdit(flow:any){
+      let legs:any[] = [];
+      for(let l of (flow.legs || [])){
+        let i = l.index;
+        let ip = (legEditIps[i] || "").trim();
+        let portStr = (legEditPorts[i] === undefined || legEditPorts[i] === null) ? "" : (""+legEditPorts[i]).trim();
+        let orig = legEditOrig[i] || {ip:"", port:""};
+        // Untouched legs stay out of the payload: sending their address back
+        // would turn a pool-allocated leg into a manual override. The server
+        // fills them from the sender's IS-05 active values anyway.
+        if(ip === orig.ip && portStr === orig.port){ continue; }
+        let p:number|null = null;
+        if(portStr !== ""){
+          let parsed = parseInt(portStr);
+          if(isNaN(parsed) || parsed <= 0 || parsed > 65535){
+            legEditError = "Leg " + (i+1) + ": Invalid Port (1-65535)";
+            return;
+          }
+          p = parsed;
         }
-        p = parsed;
+        // Always include the multicast field so the server can distinguish
+        // "user cleared the IP, please reset to the reserved lease address"
+        // (multicast === "") from "user only changed the port" (multicast field
+        // missing — not used here, kept for future protocol compatibility).
+        let payload:any = { index: i, multicast: ip };
+        if(p !== null){ payload.port = p; }
+        legs.push(payload);
       }
-      // Always include the multicast field so the server can distinguish
-      // "user cleared the IP, please reset to the reserved lease address"
-      // (multicast === "") from "user only changed the port" (multicast field
-      // missing — not used here, kept for future protocol compatibility).
-      let payload:any = {
-        index: legIndex,
-        multicast: legEditIp.trim()
-      };
-      if(p !== null){ payload.port = p; }
+      if(legs.length === 0){ cancelLegEdit(); return; }
       ServerConnector.post("setMulticast", {
-        id: flowId,
-        data: { legs:[ payload ] }
+        id: flow.id,
+        data: { legs }
       }).catch(()=>{});
       cancelLegEdit();
     }
-    function legEditKey(e:KeyboardEvent, flowId:string, legIndex:number){
-      if(e.keyCode === 13){ commitLegEdit(flowId, legIndex); }
+    function legEditKey(e:KeyboardEvent, flow:any){
+      if(e.keyCode === 13){ commitLegEdit(flow); }
       if(e.keyCode === 27){ cancelLegEdit(); }
     }
 
@@ -1124,39 +1146,44 @@
                         <span class="det-media-muted">—</span>
                       {:else}
                         <div class="det-legs">
-                        {#each flow.legs as leg}
+                        {#each flow.legs as leg, li}
                           {@const isDup = flow.active && !!leg.dup}
                           {@const lKey = legKey(flow.id, leg.index)}
-                          {@const isEditing = editingLeg === lKey}
+                          {@const isEditing = editingFlow === flow.id}
                           <div class="det-leg {isDup ? "det-leg-duplicate" : ""}">
                             {#if isEditing}
-                              {@const liveConflict = findActiveLegConflict(flow.id, leg.index, legEditIp)}
+                              {@const liveConflict = findActiveLegConflict(flow.id, leg.index, legEditIps[leg.index] || "")}
                               <span class="det-leg-label">Leg {leg.index+1}</span>
                               <input type="text" class="det-leg-input det-leg-input-ip-{lKey.replace(/[:]/g,"_")} {liveConflict ? "det-leg-input-warn" : ""}"
-                                     bind:value={legEditIp}
-                                     on:keydown={(e)=>legEditKey(e, flow.id, leg.index)}
+                                     bind:value={legEditIps[leg.index]}
+                                     on:keydown={(e)=>legEditKey(e, flow)}
                                      placeholder="239.x.x.x" size="14" />
                               <span class="det-leg-colon">:</span>
                               <input type="number" class="det-leg-input det-leg-input-port"
-                                     bind:value={legEditPort}
-                                     on:keydown={(e)=>legEditKey(e, flow.id, leg.index)}
+                                     bind:value={legEditPorts[leg.index]}
+                                     on:keydown={(e)=>legEditKey(e, flow)}
                                      placeholder="5004" min="1" max="65535" />
-                              <button class="btn btn-xs btn-success det-leg-btn" on:click={()=>commitLegEdit(flow.id, leg.index)}>Save</button>
-                              <button class="btn btn-xs btn-ghost det-leg-btn" on:click={cancelLegEdit}>Cancel</button>
-                              {#if legEditError}
-                                <span class="text-error det-leg-error">{legEditError}</span>
+                              <!-- Save/Cancel only under the LAST leg: one
+                                   click writes every leg of this sender in a
+                                   single PATCH. -->
+                              {#if li === flow.legs.length - 1}
+                                <button class="btn btn-xs btn-success det-leg-btn" on:click={()=>commitLegEdit(flow)}>Save</button>
+                                <button class="btn btn-xs btn-ghost det-leg-btn" on:click={cancelLegEdit}>Cancel</button>
+                                {#if legEditError}
+                                  <span class="text-error det-leg-error">{legEditError}</span>
+                                {/if}
                               {/if}
                               {#if liveConflict && !legEditError}
                                 <span class="text-warning det-leg-warning"
                                       use:OverlayMenuService.tooltip
-                                      data-tooltip="Multicast {legEditIp} is already used on Leg {leg.index+1} by another active sender.">
+                                      data-tooltip="Multicast {legEditIps[leg.index]} is already used on Leg {leg.index+1} by another active sender.">
                                   ⚠ Already used by {liveConflict.alias}
                                 </span>
                               {/if}
                             {:else}
                               {#if !flow.isVirtual}
-                                <button class="det-icon-btn det-hover" on:click={()=>startLegEdit(flow.id, leg.index, leg)}
-                                        use:OverlayMenuService.tooltip data-tooltip="Edit Multicast / Port (Leg {leg.index+1})">
+                                <button class="det-icon-btn det-hover" on:click={()=>startLegEdit(flow, leg.index)}
+                                        use:OverlayMenuService.tooltip data-tooltip={flow.legs.length > 1 ? "Edit Multicast / Port (both legs, one PATCH)" : "Edit Multicast / Port"}>
                                   <Icon src={Pencil}></Icon>
                                 </button>
                               {:else}

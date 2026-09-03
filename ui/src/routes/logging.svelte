@@ -9,6 +9,7 @@
     import { ChevronRight, Icon, MagnifyingGlass, RectangleGroup } from "svelte-hero-icons";
     import PrettyJson from "../lib/PrettyJson.svelte";
     import { getSearchTokens, tokenSearch } from "../lib/functions";
+    import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
 
 
@@ -40,8 +41,13 @@
             debug:false,
         }
     }
+    // Freeze: the table keeps everything up to this log id and holds newer
+    // lines back. Nothing is dropped — logList keeps filling behind the
+    // freeze, so releasing it shows the whole burst. Without this a busy
+    // system pushes the line you are reading off the screen every second.
     let stopScrollId = 0;
     let stopScrollActive = false;
+    let heldBack = 0;
     let expandedIds:string[] = [];
     let newIds:string[] = [];
 
@@ -147,9 +153,17 @@
     }
 
 
+    function toggleStopScroll(){
+        stopScrollActive = !stopScrollActive;
+        stopScrollId = stopScrollActive ? lastLogId : 0;
+        doFilter();
+        uiList = [...uiList];
+    }
+
     function doFilter(){
         uiList = [];
         let count = 0;
+        let held = 0;
         logList.forEach((log)=>{
           if(filterIds && filterIds.length > 0){
                 if(filterIds.includes(log.id+"")){
@@ -160,14 +174,6 @@
             if(count < 1000){
 
               
-
-                if(stopScrollId){
-                    if(log.id <= stopScrollId){
-                        // use
-                    }else{
-                        return;
-                    }
-                }
 
                 // Severities arrive normalised from the server (syncLog
                 // maps "warn" → "warning" etc.), so exact matches suffice.
@@ -207,11 +213,19 @@
                   }
                 }
 
+                // Freeze last, after every filter: the badge then counts the
+                // lines the user would actually see, not the ones a severity
+                // toggle hides anyway.
+                if(stopScrollId && log.id > stopScrollId){
+                    held++;
+                    return;
+                }
+
                 uiList.push(log)
                 count++;
             }
         })
-
+        heldBack = held;
     }
 
     let lastLogId = 0;
@@ -268,6 +282,20 @@
 
 
     <ul class="menu bg-base-200 menu-horizontal rounded-box filter-nav">
+      <li>
+        <button class={"btn btn-sm log-freeze" + (stopScrollActive ? " btn-warning" : " btn-ghost")}
+                on:click={toggleStopScroll}
+                use:OverlayMenuService.tooltip
+                data-tooltip={stopScrollActive
+                    ? "Show the lines that came in while frozen"
+                    : "Freeze the table so new lines stop pushing what you are reading off the screen"}>
+          {#if stopScrollActive}
+            ▶ Frozen{heldBack > 0 ? " · " + heldBack + " new" : ""}
+          {:else}
+            ⏸ Freeze
+          {/if}
+        </button>
+      </li>
       <li>
         <label class="input input-ghost flex gap-2">
           <input bind:value={filter.search} on:input={()=>changeFilter()} type="text" class="grow" placeholder="Search" />
