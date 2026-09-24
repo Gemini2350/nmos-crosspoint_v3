@@ -462,9 +462,20 @@ function getSetupConfigState() {
         enabled: !!(settings.audioMonitor && settings.audioMonitor.enabled)
     };
 
+    // IS-04 downgrade queries: the OLDEST Query API version whose devices
+    // should still arrive on the (newest) subscription. "" = off, i.e. only
+    // devices registered against the subscribed version are visible.
+    let queryDowngrade = "";
+    try{
+        if(settings.nmos && typeof settings.nmos.queryDowngrade === "string"){
+            queryDowngrade = settings.nmos.queryDowngrade;
+        }
+    }catch(e){}
+
     return {
         registry,
         registryDiscovery,
+        queryDowngrade,
         acceptableGmid: (typeof settings.acceptableGmid === "string") ? settings.acceptableGmid : "",
         vendorProfiles,
         virtualSenders,
@@ -656,6 +667,14 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                         next.registryDiscovery.domain = postData.registryDiscovery.domain.trim().replace(/\.+$/, "");
                     }
                 }
+                if(typeof postData.queryDowngrade === "string"){
+                    let dg = postData.queryDowngrade.trim().toLowerCase();
+                    // "" = off. Anything we don't know is ignored rather than
+                    // forwarded to the registry as a bogus query parameter.
+                    if(["", "v1.0", "v1.1", "v1.2"].includes(dg)){
+                        next.queryDowngrade = dg;
+                    }
+                }
                 if(typeof postData.acceptableGmid === "string"){
                     next.acceptableGmid = postData.acceptableGmid.trim().toUpperCase();
                 }
@@ -809,6 +828,19 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                     domain: next.registryDiscovery.domain
                 };
             }
+            // IS-04 downgrade queries. The parameter is baked into the
+            // subscription when it is created, so a change can only take
+            // effect by re-subscribing — handled by the same live-switch
+            // path as a registry or discovery change below.
+            if(!settings.nmos || typeof settings.nmos !== "object"){
+                settings.nmos = {};
+            }
+            let downgradeChanged = (settings.nmos.queryDowngrade || "") !== next.queryDowngrade;
+            if(downgradeChanged){
+                settings.nmos.queryDowngrade = next.queryDowngrade;
+                try{ NmosRegistryConnector.instance?.setQueryDowngrade(next.queryDowngrade); }catch(e){}
+            }
+
             let prevAcceptableGmid = settings.acceptableGmid || "";
             settings.acceptableGmid = next.acceptableGmid;
             settings.vendorProfiles = next.vendorProfiles;
@@ -995,7 +1027,7 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             // API WebSocket and re-subscribe to the new IP/port. The NMOS
             // SyncObject is reset along the way so the UI doesn't keep cards
             // for devices that belong to the old registry.
-            if(firstChanged || discoveryChanged){
+            if(firstChanged || discoveryChanged || downgradeChanged){
                 try{
                     if(NmosRegistryConnector.instance){
                         NmosRegistryConnector.instance.reconnectStaticRegistries();

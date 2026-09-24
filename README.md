@@ -12,6 +12,7 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 ## What it does 
 - **Autodiscover.** Finds Senders and Receivers according to NMOS IS-04
 - **Registry discovery.** Finds the NMOS registry on its own: unicast DNS-SD against the DNS search domain first, mDNS as fallback, and a static IP always wins when one is configured. The Setup page shows the detected domain, the discovered registry with its source and priority, and the live state of the query subscriptions.
+- **Mixed IS-04 versions.** A query subscription only ever delivers devices that registered against exactly that API version — on a v1.3 subscription a v1.2 device is invisible and cannot be routed. Crosspoint asks the registry for a downgrade query (`query.downgrade`, default `v1.2`), so v1.2 and v1.3 devices show up side by side in the matrix and are routed the same way. Registries that don't implement downgrade queries are detected on connect and the subscription comes up without it.
 - **Crosspoint matrix.** Click a sender and a receiver to connect them according to NMOS IS-05. Autotake or "stage and then TAKE" workflow.
 - **Activate / Deactivate Senders.** Toggle a Sender to be master enabled=true/false. (option) 
 - **Multicast DHCP.** Hands out and tracks multicast addresses automatically from a pool you define. (option) 
@@ -48,7 +49,7 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 The Setup page is where everything is configured. Each section in short:
 
 **NMOS Registry, Acceptable PTP GMID, Receiver Auto-Reconnect**
-The top of the Setup page. The registry is found automatically (unicast DNS-SD → mDNS → static IP, where a static IP always wins); the live status below the form shows the detected DNS-SD domain and the connected registry with source, priority and subscription health. Changes apply live, no restart needed. Plus: which Grand-Master ID counts as "right" (devices locked to it get a green dot on the Details page, others a yellow one), and whether receivers should re-execute when a sender's SDP changes (off by default — many devices renegotiate on their own).
+The top of the Setup page. The registry is found automatically (unicast DNS-SD → mDNS → static IP, where a static IP always wins); the live status below the form shows the detected DNS-SD domain, the connected registry with source, priority and subscription health, and which downgrade the subscriptions actually run with. *Include older API versions* picks the oldest IS-04 version whose devices should still arrive on the subscription — `v1.2` by default, which is what a mixed v1.2 / v1.3 network needs; `off` restricts the crosspoint to devices registered against the subscribed version. Changes apply live, no restart needed. Plus: which Grand-Master ID counts as "right" (devices locked to it get a green dot on the Details page, others a yellow one), and whether receivers should re-execute when a sender's SDP changes (off by default — many devices renegotiate on their own).
 
 ![Setup: registry discovery with DNS-SD domain and live status](Screenshots/setup-registry.png)
 

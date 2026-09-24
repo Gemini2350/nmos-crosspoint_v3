@@ -88,6 +88,9 @@
     let formBcp008Enabled:boolean = true;
     let formDnssdEnabled:boolean = true;
     let formDnssdDomain:string = "";
+    // IS-04 query.downgrade — "" = off, otherwise the oldest API version
+    // whose devices should still show up ("v1.2" → v1.2 and v1.3 devices).
+    let formQueryDowngrade:string = "";
     let formMulticastRange:string = "";
 
     // Credentials form (independent of the main Save flow. Saved via its own
@@ -134,6 +137,9 @@
     // discovery would query.
     let registryStatusList:any[] = [];
     let dnssdStatus:any = { enabled: true, override: "", domains: [] };
+    // What the running server is configured to ask for — the per-registry
+    // rows below report what each subscription actually got.
+    let activeQueryDowngrade:string = "";
     let syncProbeState:Subject<any>;
     // {token, probes:[{name,address,streams}]} from the probeState sync.
     let probeState:any = { token:"", probes:[] };
@@ -142,6 +148,28 @@
     }
     function regUp(r:any):number{
       return Array.isArray(r?.connected) ? r.connected.filter((c:any)=>c && c.connected).length : 0;
+    }
+    function versionRank(v:string):number{
+      let m = /^v(\d+)\.(\d+)$/.exec(""+v);
+      return m ? (parseInt(m[1],10)*1000 + parseInt(m[2],10)) : -1;
+    }
+    // What a registry's live subscriptions are actually doing about the
+    // downgrade — the answer the operator needs when devices are missing.
+    // "" when there is nothing to say: downgrade off, or the subscription
+    // already runs on the version we would have downgraded to.
+    function regDowngradeLabel(r:any):string{
+      if(!Array.isArray(r?.connected)) return "";
+      let up = r.connected.filter((c:any)=>c && c.connected);
+      if(up.length === 0) return "";
+      let active = up.map((c:any)=>c.downgrade || "").filter((v:string)=>!!v);
+      if(active.length > 0){ return "downgrade to " + active[0]; }
+      if(!activeQueryDowngrade) return "";
+      // Nothing was requested on the wire: either the subscribed version is
+      // already at (or below) the downgrade target — nothing older to add —
+      // or the registry turned the parameter down.
+      let target = versionRank(activeQueryDowngrade);
+      if(up.every((c:any)=>versionRank(c.version) <= target)) return "";
+      return "no downgrade: registry refused " + activeQueryDowngrade;
     }
     // Live inventory of DNS entries currently published to pfSense
     let dnsPushedSnapshot:any = { entries: [], updatedAt: "" };
@@ -179,6 +207,7 @@
             formBcp008Enabled        = !(obj.bcp008 && obj.bcp008.enabled === false);
             formDnssdEnabled         = !(obj.registryDiscovery && obj.registryDiscovery.unicastDnssd === false);
             formDnssdDomain          = (obj.registryDiscovery && typeof obj.registryDiscovery.domain === "string") ? obj.registryDiscovery.domain : "";
+            formQueryDowngrade       = (typeof obj.queryDowngrade === "string") ? obj.queryDowngrade : "";
             formMulticastRange       = (typeof obj.multicastRange === "string") ? obj.multicastRange : "";
             // Pre-fill the credentials form with the first configured user
             // so the operator doesn't have to type their own username.
@@ -227,6 +256,7 @@
       syncConnState.subscribe((obj:any)=>{
         registryStatusList = (obj && Array.isArray(obj.registries)) ? obj.registries : [];
         dnssdStatus = (obj && obj.dnssd) ? obj.dnssd : { enabled: true, override: "", domains: [] };
+        activeQueryDowngrade = (obj && typeof obj.queryDowngrade === "string") ? obj.queryDowngrade : "";
       });
       // Connected multicast probes + the shared token for starting one.
       syncProbeState = ServerConnector.sync("probeState");
@@ -273,6 +303,7 @@
       formBcp008Enabled        = !(serverState.bcp008 && serverState.bcp008.enabled === false);
       formDnssdEnabled         = !((serverState as any).registryDiscovery && (serverState as any).registryDiscovery.unicastDnssd === false);
       formDnssdDomain          = ((serverState as any).registryDiscovery && typeof (serverState as any).registryDiscovery.domain === "string") ? (serverState as any).registryDiscovery.domain : "";
+      formQueryDowngrade       = (typeof (serverState as any).queryDowngrade === "string") ? (serverState as any).queryDowngrade : "";
       formMulticastRange       = serverState.multicastRange || "";
       if(serverState.ddns){
         formDdnsEnabled      = !!serverState.ddns.enabled;
@@ -350,6 +381,7 @@
         audioMonitor: { enabled: formAudioMonitorEnabled },
         bcp008: { enabled: formBcp008Enabled },
         registryDiscovery: { unicastDnssd: formDnssdEnabled, domain: formDnssdDomain.trim() },
+        queryDowngrade: formQueryDowngrade,
         ddns: {
           enabled:      formDdnsEnabled,
           server:       formDdnsServer.trim(),
@@ -828,6 +860,30 @@
         </label>
       </div>
 
+      <p class="setup-section-hint">
+        <strong>Mixed API versions.</strong> A query subscription only ever delivers devices that
+        registered against exactly the version it was opened with &mdash; on a v1.3 subscription a
+        device that registered at v1.2 is invisible and cannot be routed. The downgrade below adds
+        those older devices to the same subscription (IS-04 <code>query.downgrade</code>), so v1.2
+        and v1.3 devices appear side by side in the matrix. Pick the oldest version you still want
+        to see. Not every registry implements downgrade queries; one that refuses it is detected on
+        connect and the subscription comes up without it &mdash; the status below says which.
+        Devices older than v1.2 do not report their interfaces, so they are treated as single-leg
+        (no ST 2022-7) &mdash; keep this at v1.2 unless you actually have such devices.
+      </p>
+
+      <div class="setup-form">
+        <label class="setup-field">
+          <span class="setup-label">Include older API versions (downgrade)</span>
+          <select class="select select-bordered" bind:value={formQueryDowngrade} on:change={markDirty}>
+            <option value="">off (only the subscribed version)</option>
+            <option value="v1.2">v1.2 and newer (recommended)</option>
+            <option value="v1.1">v1.1 and newer</option>
+            <option value="v1.0">v1.0 and newer</option>
+          </select>
+        </label>
+      </div>
+
       <div class="setup-registry-status">
         <div class="setup-registry-row">
           <span class="setup-registry-source">DNS-SD</span>
@@ -861,6 +917,9 @@
               <code>{r.ip}:{r.port}</code>
               <span class="setup-registry-source">{r.source === "dnssd" ? "unicast DNS-SD" : r.source === "mdns" ? "mDNS" : "static"}{typeof r.priority === "number" ? " · priority " + r.priority : ""}</span>
               <span>{up}/{total || 6} query subscriptions connected</span>
+              {#if regDowngradeLabel(r)}
+                <span class="setup-registry-source">{regDowngradeLabel(r)}</span>
+              {/if}
             </div>
           {/each}
         {/if}

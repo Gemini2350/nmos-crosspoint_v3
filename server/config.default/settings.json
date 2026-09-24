@@ -10,6 +10,7 @@
     },
     "nmos":{
         "registryVersions":["v1.3","v1.2"],
-        "connectVersions":["v1.1","v1.0"]
+        "connectVersions":["v1.1","v1.0"],
+        "queryDowngrade":"v1.2"
     }
 }

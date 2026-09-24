@@ -19,6 +19,57 @@ export function parseSettings(settings:any){
     }
 
 
+    // ----- NMOS API versions -----
+    // registryVersions: IS-04 Query API versions we try when subscribing to
+    //   a registry, newest first. The cascade stops at the first version the
+    //   registry accepts.
+    // connectVersions:  IS-05 Connection API versions we PATCH against.
+    // queryDowngrade:   IS-04 downgrade queries, see below.
+    const REGISTRY_VERSIONS = ["v1.3", "v1.2", "v1.1", "v1.0"];
+    const CONNECT_VERSIONS  = ["v1.1", "v1.0"];
+    if(!settings.nmos || typeof settings.nmos !== "object"){
+        settings.nmos = {};
+    }
+    let cleanVersionList = (list:any, allowed:string[], fallback:string[]) => {
+        if(!Array.isArray(list)){ return [...fallback]; }
+        // The operator's ORDER is the preference order, so we only drop
+        // unknown entries and duplicates — never re-sort.
+        let out = list.filter((v:any) => typeof v === "string" && allowed.includes(v));
+        out = out.filter((v:string, i:number) => out.indexOf(v) === i);
+        return out.length > 0 ? out : [...fallback];
+    };
+    settings.nmos.registryVersions = cleanVersionList(settings.nmos.registryVersions, REGISTRY_VERSIONS, ["v1.3", "v1.2"]);
+    settings.nmos.connectVersions  = cleanVersionList(settings.nmos.connectVersions,  CONNECT_VERSIONS,  ["v1.1", "v1.0"]);
+
+    // ----- Downgrade queries (IS-04 `query.downgrade`) -----
+    // A subscription to the v1.3 Query API only ever delivers resources that
+    // were registered against v1.3 — a device that registered at v1.2 is
+    // invisible, so it can neither be shown nor routed. `query.downgrade`
+    // tells the registry to include those older resources as well (in their
+    // own, older representation). The value is the OLDEST API version we
+    // still want to see: "v1.2" → v1.2 and v1.3 devices arrive on the same
+    // subscription. "" switches the parameter off.
+    //
+    // Default is "v1.2" — mixed v1.2 / v1.3 networks are the normal case and
+    // registries that don't implement downgrade queries (the feature is
+    // optional in IS-04) are detected at subscribe time and fall back to a
+    // plain subscription on their own.
+    const DOWNGRADE_VERSIONS = ["v1.0", "v1.1", "v1.2"];
+    if(!settings.nmos.hasOwnProperty("queryDowngrade")){
+        settings.nmos.queryDowngrade = "v1.2";
+    }
+    if(typeof settings.nmos.queryDowngrade === "boolean"){
+        settings.nmos.queryDowngrade = settings.nmos.queryDowngrade ? "v1.2" : "";
+    }
+    let downgradeValue = ("" + settings.nmos.queryDowngrade).trim().toLowerCase();
+    if(downgradeValue === "off" || downgradeValue === "none" || downgradeValue === "false"){
+        downgradeValue = "";
+    }
+    // Anything we don't recognise turns the parameter OFF rather than
+    // guessing — a typo must not silently change what the registry returns.
+    settings.nmos.queryDowngrade = DOWNGRADE_VERSIONS.includes(downgradeValue) ? downgradeValue : "";
+
+
     // Multicast Auto-Allocation (the "DHCP for multicasts" feature).
     // autoMulticast is an object now: { enabled: bool }. We migrate the
     // historic boolean form transparently.
