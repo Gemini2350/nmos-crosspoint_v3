@@ -180,6 +180,42 @@ $cp-border: 1px solid transparent;
             }
         }
 
+        // Names are shortened in the MIDDLE, not at the end: twelve senders
+        // called "Kamera Studio A Reihe 3 Platz 01…12" are told apart by their
+        // last two characters, and an end-ellipsis cuts away exactly those.
+        // Two flex items do it without measuring anything: the head shrinks
+        // and ellipsizes, the tail never shrinks.
+        // Logical sizes on purpose — the sender header is written vertically,
+        // where the inline axis runs top to bottom.
+        .cp-mid {
+            display: inline-flex;
+            max-inline-size: 100%;
+            min-inline-size: 0;
+        }
+        .cp-mid-head {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            // `pre`, not `nowrap`: the space in front of the number sits at
+            // the split and would be collapsed away as leading whitespace of
+            // the tail.
+            white-space: pre;
+            min-inline-size: 0;
+        }
+        .cp-mid-tail {
+            white-space: pre;
+            flex: 0 0 auto;
+        }
+        // The "<Node> - " prefix of a device row gives way first: it is the
+        // context, the device name is the subject. Shrinking it six times as
+        // fast leaves the name readable long after the node has collapsed.
+        .cp-mid-node {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: pre;
+            min-inline-size: 0;
+            flex-shrink: 6;
+        }
+
         .cp-label {
             .cp-edit {
                 // A flex row exactly one cell high: as a block of inline-blocks

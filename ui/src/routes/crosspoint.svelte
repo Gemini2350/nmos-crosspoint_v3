@@ -6,7 +6,8 @@
       import { createEventDispatcher } from 'svelte';
 
       import { Icon, ChevronRight, ChevronDoubleUp, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
-    import { getSearchTokens, tokenSearch } from "../lib/functions";
+    import { getSearchTokens, tokenSearch, midSplit } from "../lib/functions";
+    import MidLabel from "../lib/MidLabel.svelte";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
       interface CrosspointConnect {
@@ -613,6 +614,31 @@
     let pinCol2El:any = null;
     let pinFrame:any = null;
 
+    /** Writes a chip's name as head + tail so it is shortened in the MIDDLE,
+
+     *  exactly like the label it stands in for. The two spans are created
+
+     *  once and then only get new text. */
+
+    function setPinLabel(el:any, text:string){
+
+        if(!el) return;
+
+        let head = el.firstChild && el.firstChild.firstChild;
+
+        let tail = head && head.nextSibling;
+
+        if(!head || !tail){ el.textContent = text; return; }
+
+        let parts = midSplit(text);
+
+        if(head.textContent !== parts.head){ head.textContent = parts.head; }
+
+        if(tail.textContent !== parts.tail){ tail.textContent = parts.tail; }
+
+    }
+
+
     function updatePins(){
       if(!pinRowEl || !pinColEl || !pinRow2El || !pinCol2El) return;
       if(pinFrame) return;
@@ -642,6 +668,9 @@
           const rowH = stickCell ? stickCell.getBoundingClientRect().height : 28;
 
           // --- receiver rows ---
+          // The chips carry the same names as the labels they stand in for,
+          // so they are shortened the same way: head into one span, tail into
+          // the other (see setPinLabel).
           // Walked over the group boxes with FRESH rectangles. A hit test at
           // the edge lands on the header's own layout layer instead of a row,
           // and remembered bounds go stale as soon as a node is folded out.
@@ -655,7 +684,7 @@
           let rowLevel1 = false;
           if(groupTb && head && groupTb.rows.length > 1 &&
              headRow.getBoundingClientRect().top < co.bottom - 1){
-            pinRowEl.textContent = (head.textContent || "").replace(/\s+/g, " ").trim();
+            setPinLabel(pinRowEl, (head.textContent || "").replace(/\s+/g, " ").trim());
             pinRowEl.style.transform = "translate(" + sl + "px," + (st + co.height) + "px)";
             pinRowEl.style.opacity = "1";
             rowLevel1 = true;
@@ -675,7 +704,7 @@
           }
           let devLab:any = devRow ? devRow.querySelector(".cp-label") : null;
           if(devLab){
-            pinRow2El.textContent = (devLab.textContent || "").replace(/\s+/g, " ").trim();
+            setPinLabel(pinRow2El, (devLab.textContent || "").replace(/\s+/g, " ").trim());
             pinRow2El.style.transform = "translate(" + sl + "px," + (st + co.height + rowH) + "px)";
             pinRow2El.style.opacity = "1";
           }else{
@@ -696,7 +725,7 @@
           let colLevel1 = false;
           if(groupTh && labC && groupHasMore &&
              groupTh.getBoundingClientRect().left < edgeX - 1){
-            pinColEl.textContent = (labC.textContent || "").replace(/\s+/g, " ").trim();
+            setPinLabel(pinColEl, (labC.textContent || "").replace(/\s+/g, " ").trim());
             pinColEl.style.transform = "translate(" + (sl + labelW) + "px," + st + "px)";
             pinColEl.style.opacity = "1";
             colLevel1 = true;
@@ -720,7 +749,7 @@
           }
           let devLabC:any = devTh ? devTh.querySelector(".cp-label") : null;
           if(devLabC){
-            pinCol2El.textContent = (devLabC.textContent || "").replace(/\s+/g, " ").trim();
+            setPinLabel(pinCol2El, (devLabC.textContent || "").replace(/\s+/g, " ").trim());
             pinCol2El.style.transform = "translate(" + (sl + labelW + rowH) + "px," + st + "px)";
             pinCol2El.style.opacity = "1";
           }else{
@@ -1697,10 +1726,10 @@
       <div class="cp-cross-col" bind:this={crossColEl}></div>
       <!-- Name of the group currently at the top / left edge. Same reasoning
            as the crosshair: moved by style, never by state. -->
-      <div class="cp-pin-row" bind:this={pinRowEl}></div>
-      <div class="cp-pin-col" bind:this={pinColEl}></div>
-      <div class="cp-pin-row2" bind:this={pinRow2El}></div>
-      <div class="cp-pin-col2" bind:this={pinCol2El}></div>
+      <div class="cp-pin-row" bind:this={pinRowEl}><span class="cp-mid"><span class="cp-mid-head"></span><span class="cp-mid-tail"></span></span></div>
+      <div class="cp-pin-col" bind:this={pinColEl}><span class="cp-mid"><span class="cp-mid-head"></span><span class="cp-mid-tail"></span></span></div>
+      <div class="cp-pin-row2" bind:this={pinRow2El}><span class="cp-mid"><span class="cp-mid-head"></span><span class="cp-mid-tail"></span></span></div>
+      <div class="cp-pin-col2" bind:this={pinCol2El}><span class="cp-mid"><span class="cp-mid-head"></span><span class="cp-mid-tail"></span></span></div>
       <div class="cp-limit-container">
 
       <!-- Axis legend in the (otherwise empty) sticky corner: senders run
@@ -1722,7 +1751,7 @@
                           on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                         --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                        -->{#if labelNodePart(dev, inStrip)}<span class="cp-node-name">{labelNodePart(dev, inStrip)}</span>{labelRestPart(dev, inStrip)}{:else}{deviceRowLabel(dev, inStrip)}{/if}<!--
+                        -->{#if labelNodePart(dev, inStrip)}<MidLabel nodePart={labelNodePart(dev, inStrip)} text={labelRestPart(dev, inStrip)} />{:else}<MidLabel text={deviceRowLabel(dev, inStrip)} />{/if}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
                               data-tooltip={"BCP-008: " + dev.monitorSummaryTx.count + (dev.monitorSummaryTx.count === 1 ? " sender " : " senders ") + (dev.monitorSummaryTx.worst === 3 ? "unhealthy" : "partially healthy")}>{dev.monitorSummaryTx.count}</span>{/if}<!--
@@ -1741,7 +1770,7 @@
                           {#each dev.senders[type] as flow}
                             <th class="cp-flow" class:cp-grp={inStrip}><!--
                               --><span class="cp-expand"></span><!--
-                              --><span class="cp-label {(flow.hidden?"hidden":"")}">{flow.alias}<!--
+                              --><span class="cp-label {(flow.hidden?"hidden":"")}"><MidLabel text={flow.alias} /><!--
                                 --><span class="cp-edit">
                                   <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                                   <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
@@ -1775,7 +1804,7 @@
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
-                    -->{#if labelNodePart(dev, inStrip)}<span class="cp-node-name">{labelNodePart(dev, inStrip)}</span>{labelRestPart(dev, inStrip)}{:else}{deviceRowLabel(dev, inStrip)}{/if}<!--
+                    -->{#if labelNodePart(dev, inStrip)}<MidLabel nodePart={labelNodePart(dev, inStrip)} text={labelRestPart(dev, inStrip)} />{:else}<MidLabel text={deviceRowLabel(dev, inStrip)} />{/if}<!--
                     --><!--
                         --><span class="cp-edit">
                           {#if dev.isNode}
@@ -1820,7 +1849,7 @@
                     <tr class="cp-flow" class:cp-grp={inStrip}>
                       <td class="cp-line-stick">
                         <span class="cp-expand"></span><!--
-                        --><span class="cp-label {(flow.hidden?"hidden":"")}">{flow.alias}<!--
+                        --><span class="cp-label {(flow.hidden?"hidden":"")}"><MidLabel text={flow.alias} /><!--
                         --><span class="cp-edit">
                           <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                           <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip  data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
