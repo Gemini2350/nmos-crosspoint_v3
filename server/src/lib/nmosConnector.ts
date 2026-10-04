@@ -127,10 +127,26 @@ export class NmosRegistryConnector {
         // round against the search domain is cheap and instant. mDNS follows
         // as the fallback; the source ranking inside addRegistry() makes
         // sure a DNS-SD result outranks mDNS and a static entry beats both.
-        this.dnssdQuery().catch(()=>{});
+        //
+        // Ranking alone was not enough: mDNS answers fly around the LAN all
+        // the time (every controller's query triggers a multicast answer we
+        // see too), so an mDNS registry could be connected BEFORE the first
+        // DNS-SD pass had even returned — and stayed until the next pass, up
+        // to 60 s later. mDNS answers now wait at a gate until that first
+        // pass is done (capped, so a dead DNS server cannot hold the fallback
+        // back for long).
+        this.runDiscoveryPass();
+        // While we are on mDNS — or on nothing — DNS-SD is asked again every
+        // 10 s, so a unicast registry that shows up late takes over within
+        // seconds instead of a minute. On unicast/static the 60 s rhythm is
+        // plenty.
         this.dnssdQueryInterval = setInterval(() => {
-            this.dnssdQuery().catch(()=>{});
-        }, 60000);
+            const onFallback = this.nmosRegistryList.length === 0 ||
+                this.nmosRegistryList.every((r) => r.source === "mdns");
+            if(onFallback || Date.now() - this.lastDnssdRun >= 60000){
+                this.dnssdQuery().catch(()=>{});
+            }
+        }, 10000);
 
         setTimeout(()=>{
             this.mdnsQuery();
@@ -154,7 +170,7 @@ export class NmosRegistryConnector {
                         }
                     });
                     if (registry.port != 0 && registry.ip != "0.0.0.0") {
-                        this.addRegistry(registry);
+                        this.offerMdnsRegistry(registry);
                     }
                 }
             });
@@ -171,6 +187,64 @@ export class NmosRegistryConnector {
                 },
             ],
         });
+    }
+
+    // ---- mDNS waits for unicast -------------------------------------------
+    // Closed while a discovery pass is waiting for its first DNS-SD answer;
+    // mDNS registries seen meanwhile are parked and handed to addRegistry()
+    // once it opens — where the ranking drops them if unicast found one.
+    private discoveryGateOpen = false;
+    private discoveryGateTimer: any = null;
+    private pendingMdns: { [endpoint: string]: NmosRegistry } = {};
+    // No answer at all within this → DNS is dead or empty-handed, let mDNS in.
+    private static readonly DISCOVERY_GATE_MAX_MS = 10000;
+    // A PTR answer proves a unicast registry exists; mDNS then waits for its
+    // SRV/A up to this hard limit (a DNS that answers slowly, with c-ares
+    // retries on every step, took 18 s for one registry in the test).
+    private static readonly DISCOVERY_GATE_HARD_MS = 30000;
+    // Set by the DNS-SD pass as soon as a PTR lookup returns an instance.
+    private dnssdPtrSeen = false;
+
+    /** Start a discovery round: DNS-SD now, mDNS answers held back until it
+     *  has finished (or the cap ran out). Used at startup and after a live
+     *  registry switch from the Setup page. */
+    private runDiscoveryPass(){
+        this.discoveryGateOpen = false;
+        this.dnssdPtrSeen = false;
+        if(this.discoveryGateTimer){ clearTimeout(this.discoveryGateTimer); }
+        const started = Date.now();
+        const check = () => {
+            if(this.discoveryGateOpen) return;
+            if(this.dnssdPtrSeen && Date.now() - started < NmosRegistryConnector.DISCOVERY_GATE_HARD_MS){
+                this.discoveryGateTimer = setTimeout(check, 1000);
+                return;
+            }
+            this.openDiscoveryGate(this.dnssdPtrSeen
+                ? "unicast registry announced but not resolved within " + (NmosRegistryConnector.DISCOVERY_GATE_HARD_MS / 1000) + " s"
+                : "no DNS-SD answer within " + (NmosRegistryConnector.DISCOVERY_GATE_MAX_MS / 1000) + " s");
+        };
+        this.discoveryGateTimer = setTimeout(check, NmosRegistryConnector.DISCOVERY_GATE_MAX_MS);
+        this.dnssdQuery().catch(()=>{}).finally(() => this.openDiscoveryGate("DNS-SD pass done"));
+    }
+
+    private openDiscoveryGate(why: string){
+        if(this.discoveryGateOpen) return;
+        this.discoveryGateOpen = true;
+        if(this.discoveryGateTimer){ clearTimeout(this.discoveryGateTimer); this.discoveryGateTimer = null; }
+        const parked = Object.values(this.pendingMdns);
+        this.pendingMdns = {};
+        if(parked.length > 0){
+            SyncLog.log("verbose", "NMOS Settings", "mDNS gate open (" + why + ") — offering " + parked.length + " parked mDNS registr" + (parked.length === 1 ? "y" : "ies") + ".");
+        }
+        parked.forEach((r) => this.addRegistry(r));
+    }
+
+    private offerMdnsRegistry(registry: NmosRegistry){
+        if(!this.discoveryGateOpen){
+            this.pendingMdns[registry.ip + ":" + registry.port] = registry;
+            return;
+        }
+        this.addRegistry(registry);
     }
 
     // Discovery cascade: an operator-entered static IP always wins, unicast
@@ -221,7 +295,20 @@ export class NmosRegistryConnector {
     /** Unicast DNS-SD (RFC 6763 over normal DNS): PTR on
      *  _nmos-register._tcp.<domain> (v1.3; plus the deprecated
      *  _nmos-registration._tcp name) → SRV per instance → A record. */
-    private async dnssdQuery() {
+    private dnssdQuery(): Promise<void> {
+        // One pass at a time: with the 10 s re-check on mDNS a slow DNS
+        // server would otherwise stack overlapping passes. A caller arriving
+        // while one runs gets THAT pass — the discovery gate must not open
+        // just because a pass was already under way.
+        if(this.dnssdInFlight) return this.dnssdInFlight;
+        this.lastDnssdRun = Date.now();
+        this.dnssdInFlight = this.dnssdQueryOnce().finally(() => { this.dnssdInFlight = null; });
+        return this.dnssdInFlight;
+    }
+    private dnssdInFlight: Promise<void> | null = null;
+    private lastDnssdRun = 0;
+
+    private async dnssdQueryOnce() {
         // Resolve + remember the domains BEFORE the enabled check — the
         // Setup page shows them either way ("what would be searched").
         const domains = this.dnssdSearchDomains();
@@ -246,6 +333,7 @@ export class NmosRegistryConnector {
                 let instances: string[] = [];
                 try{ instances = await dns.promises.resolvePtr(svc + domain); }
                 catch(e){ continue; }   // NXDOMAIN etc. — try the next name
+                if(instances.length > 0){ this.dnssdPtrSeen = true; }
                 for(const inst of instances){
                     try{
                         const srvs = await dns.promises.resolveSrv(inst);
@@ -292,7 +380,13 @@ export class NmosRegistryConnector {
             bestRank = Math.max(bestRank, NmosRegistryConnector.sourceRank(el.source));
         }
         if (bestRank > 0 && rank < bestRank) {
-            SyncLog.log("verbose", "NMOS Settings", "Ignoring " + registry.source + " registry " + registry.ip + ":" + registry.port + " — a higher-priority source is connected.");
+            // Logged once per registry: mDNS answers every few seconds and
+            // the same line used to fill the log with it.
+            const key = registry.source + " " + registry.ip + ":" + registry.port;
+            if(!this.ignoredRegistries.has(key)){
+                this.ignoredRegistries.add(key);
+                SyncLog.log("verbose", "NMOS Settings", "Ignoring " + key + " — a higher-priority source is connected.");
+            }
             return;
         }
         if (bestRank > 0 && rank > bestRank) {
@@ -318,6 +412,7 @@ export class NmosRegistryConnector {
         this.getSubscription(url, "/flows");
     }
 
+    private ignoredRegistries: Set<string> = new Set();
     private mdnsQueryInterval = null;
     private dnssdQueryInterval: any = null;
     private loggedDnssdNoDomain = false;
@@ -573,6 +668,7 @@ export class NmosRegistryConnector {
         }
         this.connections = {};
         this.nmosRegistryList = [];
+        this.ignoredRegistries.clear();
         // Reset the in-memory NMOS state so the UI doesn't see stale devices
         // from the previous registry. setState emits a JSON-patch reset to
         // every subscribed client.
@@ -626,7 +722,7 @@ export class NmosRegistryConnector {
         // the list — re-query right away instead of waiting for the next tick
         // (up to 60s for DNS-SD, 20s for mDNS).
         setTimeout(() => {
-            this.dnssdQuery().catch(()=>{});
+            this.runDiscoveryPass();
             this.mdnsQuery();
         }, 250);
     }
