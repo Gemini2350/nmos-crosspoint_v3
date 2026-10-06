@@ -143,6 +143,14 @@
     function regUp(r:any):number{
       return Array.isArray(r?.connected) ? r.connected.filter((c:any)=>c && c.connected).length : 0;
     }
+    // "IS-04 v1.3 + v1.2": which Query API version the subscriptions run on
+    // and down to which version older registrations are included. Without the
+    // second part, devices registering at an older version are not visible.
+    function regVersions(r:any):string{
+      const c = Array.isArray(r?.connected) ? r.connected.find((x:any)=>x && x.version) : null;
+      if(!c) return "";
+      return "IS-04 " + c.version + (c.downgrade ? " + " + c.downgrade : " only");
+    }
     // Live inventory of DNS entries currently published to pfSense
     let dnsPushedSnapshot:any = { entries: [], updatedAt: "" };
 
@@ -861,6 +869,7 @@
               <code>{r.ip}:{r.port}</code>
               <span class="setup-registry-source">{r.source === "dnssd" ? "unicast DNS-SD" : r.source === "mdns" ? "mDNS" : "static"}{typeof r.priority === "number" ? " · priority " + r.priority : ""}</span>
               <span>{up}/{total || 6} query subscriptions connected</span>
+              {#if regVersions(r)}<span class="setup-registry-source">{regVersions(r)}</span>{/if}
             </div>
           {/each}
         {/if}

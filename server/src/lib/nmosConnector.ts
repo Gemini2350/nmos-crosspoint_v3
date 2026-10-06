@@ -497,23 +497,50 @@ export class NmosRegistryConnector {
 
 
     private getSubscription(nmosRegistryUrl: string, resource: string) {
-        // Version cascade: subscribe with the newest Query API version and
-        // fall back to the next one only when the subscription POST fails.
+        // Version cascade: subscribe with the newest Query API version (with
+        // query.downgrade, so older registrations are included) and fall back
+        // to the next one only when the subscription POST fails.
         // Subscribing to ALL versions in parallel (the old behaviour) doubled
         // the websockets and made the registry deliver every event twice.
         this.getVersionSubscription(nmosRegistryUrl, resource, 0);
     }
 
-    private getVersionSubscription(nmosRegistryUrl: string, resource: string, versionIndex:number){
+    /** The oldest IS-04 version we accept (last entry of nmos.registryVersions)
+     *  as a query.downgrade target for `version` — or "" when there is none:
+     *  same version, or a different major (downgrades never cross a major). */
+    private downgradeTarget(version: string): string {
+        const minor = (v: string) => { const m = ("" + v).match(/^v(\d+)\.(\d+)$/); return m ? { maj:+m[1], min:+m[2] } : null; };
+        const cur = minor(version);
+        if(!cur) return "";
+        let best = "";
+        for(const v of this.registryVersionList){
+            const o = minor(v);
+            if(o && o.maj === cur.maj && o.min < cur.min && (!best || o.min < (minor(best) as any).min)){ best = v; }
+        }
+        return best;
+    }
+    // Registries that refused a downgrade query — subscribed without it.
+    private downgradeUnsupported: Set<string> = new Set();
+
+    private getVersionSubscription(nmosRegistryUrl: string, resource: string, versionIndex:number, withDowngrade:boolean = true){
         const version = this.registryVersionList[versionIndex];
         if(!version) return;
         // Capture the generation at subscribe time. If reconnectStaticRegistries
         // is called mid-flight (live switch), this.registryGen advances and the
         // late-arriving response / reconnect timer skips itself.
         const myGen = this.registryGen;
+        // A Query API returns ONLY resources registered at its own version
+        // (IS-04 "Query Parameters": "By default the Query API MUST only
+        // return data matching the API version specified in the request
+        // URL"). A device that registers at v1.2 was therefore invisible on
+        // our v1.3 subscription. query.downgrade adds the older registrations
+        // as they are, while v1.3 resources keep their full v1.3 form — one
+        // subscription, everything in it. IS-04 "Upgrade Path" strongly
+        // recommends exactly this for Query API clients.
+        const downgrade = withDowngrade && !this.downgradeUnsupported.has(nmosRegistryUrl) ? this.downgradeTarget(version) : "";
         axios.post(nmosRegistryUrl + "/x-nmos/query/" + version + "/subscriptions", {
             resource_path: resource,
-            params: {},
+            params: downgrade ? { "query.downgrade": downgrade } : {},
             persist: false,
             max_update_rate_ms: 50,
         }).then((response: any) => {
@@ -542,6 +569,7 @@ export class NmosRegistryConnector {
             let newWs:any = new WebSocket(subscription.ws_href);
             this.connections[fullResource] = {
                 version,
+                downgrade,
                 subscription,
                 ws: newWs,
                 pingInterval: null,
@@ -624,9 +652,22 @@ export class NmosRegistryConnector {
                 this.updateState(parsed,version,nmosRegistryUrl);
             };
 
-            SyncLog.log("info",  "NMOS","Subscribed to Registry: " + nmosRegistryUrl + ", " + resource + ", " + version );
+            SyncLog.log("info",  "NMOS","Subscribed to Registry: " + nmosRegistryUrl + ", " + resource + ", " + version + (downgrade ? " (+ down to " + downgrade + ")" : ""));
         }).catch((error) => {
             if(myGen !== this.registryGen) return;  // Switched registries while the POST was failing.
+            // A Query API without downgrade support answers 501 (IS-04 says
+            // so), some answer 400. Only THAT means "no downgrade" — a
+            // registry that is simply unreachable goes the normal way below.
+            const status = error?.response?.status;
+            if(downgrade && (status === 501 || status === 400)){
+                if(!this.downgradeUnsupported.has(nmosRegistryUrl)){
+                    this.downgradeUnsupported.add(nmosRegistryUrl);
+                    SyncLog.log("warning", "NMOS", "Registry " + nmosRegistryUrl + " refused query.downgrade=" + downgrade + " (HTTP " + status +
+                        ") — subscribing without it. Devices that register at an IS-04 version older than " + version + " stay invisible with this registry.");
+                }
+                this.getVersionSubscription(nmosRegistryUrl, resource, versionIndex, false);
+                return;
+            }
             if(versionIndex + 1 < this.registryVersionList.length){
                 // The registry may simply not offer this Query API version —
                 // fall through to the next one right away.
@@ -669,6 +710,7 @@ export class NmosRegistryConnector {
         this.connections = {};
         this.nmosRegistryList = [];
         this.ignoredRegistries.clear();
+        this.downgradeUnsupported.clear();
         // Reset the in-memory NMOS state so the UI doesn't see stale devices
         // from the previous registry. setState emits a JSON-patch reset to
         // every subscribed client.
@@ -1262,9 +1304,9 @@ export class NmosRegistryConnector {
                     Object.keys(this.connections).forEach((c)=>{
                         if(c.startsWith(url + "_/" + e )){
                             if (this.connections[c].ws.readyState == WebSocket.OPEN) {
-                                entry.connected.push({endpoint:e, version:this.connections[c].version, connected:true});
+                                entry.connected.push({endpoint:e, version:this.connections[c].version, downgrade:this.connections[c].downgrade || "", connected:true});
                             }else{
-                                entry.connected.push({endpoint:e, version:this.connections[c].version, connected:false});
+                                entry.connected.push({endpoint:e, version:this.connections[c].version, downgrade:this.connections[c].downgrade || "", connected:false});
                             }
                         }
                     })
