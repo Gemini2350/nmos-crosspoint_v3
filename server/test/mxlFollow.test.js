@@ -170,9 +170,10 @@ test("a receiver already on the flow, not yet read, or off is not patched", () =
         rtp: rxActive(FLOW_1080, SENDER),
     };
     assert.deepEqual(f.mxlReceiversOffFlow(SENDER, ep(FLOW_720), receivers, active, none), []);
-    // Same flow id in another domain is another flow.
-    const moved = { on: { ...rxActive(FLOW_720, SENDER), transport_params: [{ mxl_flow_id: FLOW_720, mxl_domain_id: "other-domain" }] } };
-    assert.deepEqual(f.mxlReceiversOffFlow(SENDER, ep(FLOW_720), { on: receivers.on }, moved, none), ["on"]);
+    // Same flow id in another domain is the same flow, replicated
+    // (BCP-007-03) — a receiver staged with "auto" reads it there.
+    const replica = { on: { ...rxActive(FLOW_720, SENDER), transport_params: [{ mxl_flow_id: FLOW_720, mxl_domain_id: "other-domain" }] } };
+    assert.deepEqual(f.mxlReceiversOffFlow(SENDER, ep(FLOW_720), { on: receivers.on }, replica, none), []);
 });
 
 test("a receiver is re-patched at most once per value of the sender's flow", () => {
@@ -241,8 +242,9 @@ test("receivers naming no sender follow when they read the flow the sender left"
         byIs05: rxActive(FLOW_1080, "another-sender"),
     };
     assert.deepEqual(f.mxlUnnamedReceiversOnFlow(ep(FLOW_1080), receivers, active), ["byFlow"]);
+    // A replica of the flow in another domain is still that flow.
     const otherDomain = { byFlow: { ...rxActive(FLOW_1080), transport_params: [{ mxl_flow_id: FLOW_1080, mxl_domain_id: "other-domain" }] } };
-    assert.deepEqual(f.mxlUnnamedReceiversOnFlow(ep(FLOW_1080), { byFlow: receivers.byFlow }, otherDomain), []);
+    assert.deepEqual(f.mxlUnnamedReceiversOnFlow(ep(FLOW_1080), { byFlow: receivers.byFlow }, otherDomain), ["byFlow"]);
 });
 
 test("every running MXL receiver has its /active read, named or not", () => {

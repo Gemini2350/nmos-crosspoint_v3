@@ -1402,6 +1402,11 @@ class CrosspointUpdateThread{
 
             // -------- NMOS
             for(let senderId in this.nmosState.senderActiveData){
+                // Multicast addresses exist for RTP only. An MXL sender's
+                // transport_params carry no destination_ip at all, and every
+                // one of them landed under the key "undefined" — a phantom
+                // "duplicate" between all MXL senders.
+                if(transportFamily(this.nmosState.senders?.[senderId]?.transport) === "mxl"){ continue; }
                 let nmosId = "nmos_"+senderId
                 let activeData = this.nmosState.senderActiveData[senderId];
                 let multicast = [];

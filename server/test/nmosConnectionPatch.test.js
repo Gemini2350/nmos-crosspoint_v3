@@ -43,12 +43,15 @@ test("an MXL receiver is patched with flow and domain and no transport file", ()
     assert.equal("transport_file" in patch, false);
 });
 
-test("a receiver that cannot reach the sender's domain is refused", () => {
-    assert.throws(() => p.buildMxlReceiverPatch("snd", { flowId: flow, domainId: domain },
-        [{ mxl_domain_id: { enum: ["0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d"] } }]), /domain mismatch/);
-    // No enum is no restriction.
-    assert.doesNotThrow(() => p.buildMxlReceiverPatch("snd", { flowId: flow, domainId: domain }, [{ mxl_domain_id: {} }]));
-    assert.doesNotThrow(() => p.buildMxlReceiverPatch("snd", { flowId: flow, domainId: domain }, null));
+test("a receiver that cannot reach the sender's domain is staged with domain auto", () => {
+    // BCP-007-03: flows may be replicated across domains; the receiver then
+    // looks for the flow id in the domains it has.
+    const patch = p.buildMxlReceiverPatch("snd", { flowId: flow, domainId: domain },
+        [{ mxl_domain_id: { enum: ["0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d"] } }]);
+    assert.deepEqual(patch.transport_params, [{ mxl_flow_id: flow, mxl_domain_id: "auto" }]);
+    // No enum is no restriction: the sender's domain is used.
+    assert.equal(p.buildMxlReceiverPatch("snd", { flowId: flow, domainId: domain }, [{ mxl_domain_id: {} }]).transport_params[0].mxl_domain_id, domain);
+    assert.equal(p.buildMxlReceiverPatch("snd", { flowId: flow, domainId: domain }, null).transport_params[0].mxl_domain_id, domain);
 });
 
 test("disconnecting an MXL receiver switches it off", () => {

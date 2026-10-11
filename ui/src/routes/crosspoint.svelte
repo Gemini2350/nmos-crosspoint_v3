@@ -1088,11 +1088,16 @@
     // Same rule as the server's matcher (connectionMatch.ts): the same
     // essence, and a transport of the same family -- a 2110 sender has
     // nothing to give an MXL receiver and the other way round.
+    // Same rule as flowsConnectable() in server/src/lib/transport.ts: same
+    // essence, same transport family, and — where the server evaluated the
+    // receiver's BCP-004-01 caps (capOk) — a sender flow those caps accept.
     function receiverCapable(dest:any, src:any){
       if(dest.type != src.type){
         return false;
       }
-      return transportsCompatible(dest.capabilities?.transport, src.capabilities?.transport);
+      if(!transportsCompatible(dest.capabilities?.transport, src.capabilities?.transport)) return false;
+      if(Array.isArray(dest.capOk)) return !!src.capSig && dest.capOk.includes(src.capSig);
+      return true;
     }
 
 

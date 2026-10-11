@@ -39,7 +39,16 @@ export function transportsCompatible(a: string | null | undefined, b: string | n
 export function flowsConnectable(dst: any, src: any): boolean {
     if (!dst || !src) return false;
     if (dst.type !== src.type) return false;
-    return transportsCompatible(dst.capabilities?.transport, src.capabilities?.transport);
+    if (!transportsCompatible(dst.capabilities?.transport, src.capabilities?.transport)) return false;
+    return capsAccept(dst, src);
+}
+
+/** BCP-004-01, as evaluated during enrichment: where a receiver's caps were
+ *  evaluated (capOk, the flow signatures they accept), the sender's flow
+ *  signature has to be among them. Receivers without capOk are not limited. */
+export function capsAccept(dst: any, src: any): boolean {
+    if (!Array.isArray(dst?.capOk)) return true;
+    return !!src?.capSig && dst.capOk.includes(src.capSig);
 }
 
 /** Legs a sender sends on. A sender switched off disables every leg it has,
@@ -143,10 +152,14 @@ export function matchSenderByAddress(receiverActive: any, senderActiveData: { [i
 /** Whether an MXL receiver's /active points at this flow. A side naming no
  *  domain does not rule the other out. */
 export function mxlReceiverReads(receiverActive: any, endpoint: MxlEndpoint): boolean {
+    // The flow id alone decides. BCP-007-03: "MXL Flows may be replicated
+    // across MXL Domains, it is possible for a Sender and Receiver connected
+    // by the same mxl_flow_id to have different mxl_domain_id values" — a
+    // receiver staged with domain "auto" reads the replica in a domain it
+    // can reach. Comparing domains too took that for "the wrong flow" and
+    // re-patched it over and over.
     const leg = receiverActive?.transport_params?.[0];
-    if (!leg || leg.mxl_flow_id !== endpoint.flowId) return false;
-    const domain = leg.mxl_domain_id;
-    return typeof domain !== "string" || domain === "" || domain === "auto" || domain === endpoint.domainId;
+    return !!leg && leg.mxl_flow_id === endpoint.flowId;
 }
 
 /**

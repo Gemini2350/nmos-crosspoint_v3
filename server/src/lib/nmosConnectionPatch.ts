@@ -84,21 +84,23 @@ export function resolvedMxlEndpoint(active: any): MxlEndpoint | null {
  * The staged PATCH connecting an MXL receiver to a sender's flow.
  *
  * No transport_file: MXL has none, and the sender's manifest_href is null.
- * The receiver's constraints are checked first, because a receiver that can
- * only reach one domain cannot read a flow written in another, and saying so
- * here is clearer than the 400 the device would answer.
+ *
+ * The domain is the sender's when the receiver's constraints allow it (or
+ * list no domains at all). When they do not, the receiver is staged with
+ * "auto": BCP-007-03 has MXL flows replicated across domains, so a sender and
+ * a receiver of the same mxl_flow_id may sit in different ones, and a
+ * receiver that cannot use the given domain searches its own for the flow.
+ * A receiver that does not support "auto" answers the PATCH itself, and its
+ * answer is in the log.
  */
 export function buildMxlReceiverPatch(senderId: string | null, endpoint: MxlEndpoint, receiverConstraints: any): any {
     const allowed = receiverConstraints?.[0]?.mxl_domain_id?.enum;
-    if (Array.isArray(allowed) && allowed.length > 0 && !allowed.includes(endpoint.domainId)) {
-        throw new Error("MXL domain mismatch: the sender writes in domain " + endpoint.domainId +
-            " but the receiver only accepts " + allowed.join(", "));
-    }
+    const reachable = !(Array.isArray(allowed) && allowed.length > 0 && !allowed.includes(endpoint.domainId));
     return {
         sender_id: senderId,
         master_enable: true,
         activation: { mode: "activate_immediate" },
-        transport_params: [{ mxl_flow_id: endpoint.flowId, mxl_domain_id: endpoint.domainId }],
+        transport_params: [{ mxl_flow_id: endpoint.flowId, mxl_domain_id: reachable ? endpoint.domainId : "auto" }],
     };
 }
 
