@@ -1,10 +1,13 @@
 import { SyncObject } from "./SyncServer/syncObject";
 import { LoggedError, SyncLog } from "./syncLog";
 import { error } from "console";
+import { matchConnections } from "./connectionMatch";
+import { sortDevices } from "./deviceOrder";
 import { NmosRegistryConnector } from "./nmosConnector";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { DdnsService } from "./ddnsService";
 import { Bcp008Monitor } from "./bcp008Monitor";
+import { flowCapAttrs, capSignature, acceptedSignatures } from "./receiverCaps";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -326,6 +329,24 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         });
     }
 
+    /**
+     * IS-13: set (label) or reset (null) the label of a node, device, sender
+     * or receiver on the device itself. On success the local alias goes: the
+     * device's own label is the one to show, and it arrives through IS-04.
+     * `id` is a crosspoint id — "node_<node id>" or "nmos_<resource id>".
+     */
+    async annotate(id:string, label:string|null): Promise<any> {
+        const conn = NmosRegistryConnector.instance;
+        if(!conn) throw new Error("NMOS connection not running.");
+        let kind:any = null, nmosId = "";
+        if(id.startsWith("node_")){ kind = "node"; nmosId = id.substring(5); }
+        else if(id.startsWith("nmos_")){ nmosId = id.substring(5); kind = conn.annotationKindOf(nmosId); }
+        if(!kind || !nmosId) throw new Error("Not an NMOS resource: " + id);
+        await conn.annotateLabel(kind, nmosId, label);
+        try{ await this.changeAlias(id, ""); }catch(e){}
+        return { message: 200 };
+    }
+
     changeAlias(id:string, alias:string){
         // "node_<nodeId>" ids rename the NMOS node's display name (band /
         // group header) instead of a single crosspoint device.
@@ -500,6 +521,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
 
             let connections = [];
+            // Receivers asked for by name that no sender of the request can
+            // feed (transport family). Never switched; a take reports them.
+            let refused = [];
 
 
             list.forEach((c)=>{
@@ -541,8 +565,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     sourceDeviceOnly = true;
                 }
 
+                // -1 is "no number", shared by every unnumbered device, so
+                // it never selects one.
                 for(let dev of this.crosspointState.devices){
-                    if(dev.num == sourceDevice){
+                    if(dev.num > 0 && dev.num == sourceDevice){
                         srcDev = dev;
                         for(let type in dev.senders){
                             if(type == sourceFlowType || sourceDeviceOnly){
@@ -585,7 +611,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 }
 
                 for(let dev of this.crosspointState.devices){
-                    if(dev.num == destinationDevice){
+                    if(dev.num > 0 && dev.num == destinationDevice){
 
                         dstDev = dev;
                         for(let type in dev.receivers){
@@ -604,64 +630,19 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 //console.log("Sources:", srcFlows)
                 //console.log("Destiantions:", dstFlows)
                 if((srcFlows.length > 0 || disconnect) && dstFlows.length > 0){
-                    
-                        // Connection Matcher
-
-                        // For Each dstFlow
-                        //      find suitable SrcFlow
-                        //      Type
-                        //      Capabilities
-                        //      Lowest NUM
-
-                        let usedSources = [];
-
-                        for(let dstFlow of dstFlows){
-                            let connection = {src:null,srcDev:srcDev, dst:dstFlow,dstDev:dstDev}
-
-                            if(disconnect){
-                                // src : null
-                            }else{
-                                for(let srcFlow of srcFlows){
-                                    // TODO websocket/mqtt flwos interop
-                                    let connect = false;
-                                    if(dstFlow.type == "audio" && srcFlow.type == "audio"){
-                                        // TODO check for capabilities
-                                        connect = true;
-                                    }else if(dstFlow.type == "video" && srcFlow.type == "video"){
-                                        // TODO check for capabilities
-                                        connect = true;
-                                    }else if(dstFlow.type == "data"){
-                                        if(srcFlow.type == "data"){
-                                            // TODO check for capabilities
-                                            connect = true;
-                                        }
-                                    }else{
-                                        if(dstFlow.type == srcFlow.type){
-                                            connect = true;
-                                        }
-                                    }
-
-                                    if(connect && !usedSources.includes(srcFlow.id)){
-                                        if(connection.src == null){
-                                            connection.src = srcFlow;
-                                            usedSources.push(srcFlow.id);
-                                        }else if(connection.src.num > srcFlow.num){
-                                            usedSources = usedSources.filter((s)=>{
-                                                if(s.id == connection.src.id){
-                                                    return false;
-                                                }else{
-                                                    return true;
-                                                }
-                                            })
-                                            connection.src = srcFlow;
-                                        }
-                                    }
-                                
-                            }
-                            }
- 
-                            connections.push(connection);
-                        }
+                    // Type, transport family, lowest num -- see matchConnections.
+                    let matched = matchConnections(srcFlows, dstFlows, disconnect);
+                    matched.connections.forEach((m)=>{
+                        connections.push({src:m.src, srcDev:srcDev, dst:m.dst, dstDev:dstDev});
+                    });
+                    // Reported only for a receiver asked for by name. On a
+                    // device-level request the rest of the device is simply
+                    // not part of it, as with a missing essence.
+                    if(!destinationDeviceOnly){
+                        matched.refused.forEach((dst)=>{
+                            refused.push({src:null, dst:dst, dstDev:dstDev});
+                        });
+                    }
                 }
 
             });
@@ -716,6 +697,13 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                         connectionResponses.push(r.reason);
                     }
                 })
+
+                refused.forEach((r)=>{
+                    let message = "Transport mismatch: no sender in this request can feed " +
+                        (r.dst.capabilities?.transport || "this") + " receiver " + (r.dst.alias || r.dst.name || r.dst.id) + ".";
+                    let log = SyncLog.log("warning", "connect_crosspoint", message, {receiver:r.dst.id});
+                    connectionResponses.push({src:null, dst:r.dst, status:"failed", detail:{message, log}});
+                });
 
                 resolve({connections:connectionResponses});
             }
@@ -814,15 +802,15 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                             try{
                                 freshInfo = await NmosRegistryConnector.instance.connectionGetSenderInfo(nmosId);
                             }catch(e){ freshInfo = null; }
-                            if(freshInfo && freshInfo.manifestFile && /\r?\nm=/.test(freshInfo.manifestFile)){
+                            if(senderReady(freshInfo)){
                                 break;
                             }
                         }
-                        if(freshInfo && freshInfo.manifestFile && /\r?\nm=/.test(freshInfo.manifestFile)){
+                        if(senderReady(freshInfo)){
                             senderInfo = freshInfo;
                         }else{
                             SyncLog.log("warning", "connect_crosspoint",
-                                "Auto-activated sender " + src.id + " but its SDP still has no media section after 4s — patching with what we have.");
+                                "Auto-activated sender " + src.id + (freshInfo && freshInfo.transport == "mxl" ? " but its MXL flow is still unresolved" : " but its SDP still has no media section") + " after 4s -- patching with what we have.");
                             if(freshInfo){ senderInfo = freshInfo; }
                         }
                         // mark the locally-cached senderInfo as active so downstream
@@ -962,6 +950,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 receivers: s.receivers,
                 flows: s.flows,
                 senderActiveData: s.senderActiveData,
+                receiverActiveData: s.receiverActiveData,
                 sendersManifestDetail: s.sendersManifestDetail,
             } : s;
             this.workerNeedsNmosState = false;
@@ -1116,6 +1105,28 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     // IS-05 /active is authoritative for what a sender is currently
     // transmitting. The SDP may lag (or 404 for inactive senders) so we
     // only fall back to it when no transport_params exist.
+    /** mxl_domain_id / mxl_flow_id from an MXL sender's IS-05 /active. */
+    private buildMxlFromNmos(nmosSenderId:string): { domainId:string, flowId:string } | null {
+        try{
+            const tp:any = this.nmosState?.senderActiveData?.[nmosSenderId]?.transport_params?.[0];
+            if(!tp) return null;
+            const str = (v:any) => (typeof v === "string" && v !== "auto") ? v : "";
+            return { domainId: str(tp.mxl_domain_id), flowId: str(tp.mxl_flow_id) };
+        }catch(e){ return null; }
+    }
+
+    // ---- BCP-004-01 (the evaluation itself is in receiverCaps.ts) --------
+    private flowCapAttrs(nmosSenderId:string): { [cap:string]: any } {
+        try{
+            const snd:any = this.nmosState?.senders?.[nmosSenderId];
+            const flow:any = snd ? this.nmosState?.flows?.[snd.flow_id] : null;
+            return flowCapAttrs(flow, flow ? this.nmosState?.sources?.[flow.source_id] : null);
+        }catch(e){ return {}; }
+    }
+    private receiverAcceptedSigs(nmosReceiverId:string, sigs:{ [sig:string]: any }): string[] {
+        return acceptedSignatures(this.nmosState?.receivers?.[nmosReceiverId]?.caps, sigs);
+    }
+
     private buildLegsFromNmos(nmosSenderId:string): CrosspointFlowLeg[] {
         let legs:CrosspointFlowLeg[] = [];
         if(!nmosSenderId || !this.nmosState) return legs;
@@ -1388,6 +1399,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
         let nodeLabelByDev:    { [devId:string]: string }  = {};
         let isVirtualByDev:    { [devId:string]: boolean } = {};
+        // IS-13: the Nodes that offer the Annotation API.
+        const annotatableNodes: Set<string> = NmosRegistryConnector.instance?.annotatableNodeIds() || new Set<string>();
+        (this.crosspointState as any).annotatableNodes = Array.from(annotatableNodes);
         for(let dev of this.crosspointState.devices){
             let info = this.resolveDeviceNodeInfo(dev);
 
@@ -1426,6 +1440,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             d.nodeLabelRaw = nodeLabelRaw;
             d.nodeAlias  = nodeAlias;
             d.nodeId     = nodeId;
+            d.annotatable = !!nodeId && annotatableNodes.has(nodeId);
             d.gmid       = gm.gmid;
             d.gmidLocked = gm.locked;
             d.deviceUrl  = this.buildDeviceUrl(info.nodeId);
@@ -1439,6 +1454,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             d.displayLabelShort = composed.short;
         }
 
+        // The matrix and the Details page list devices in this order. Sorted
+        // here because the label it falls back to is only composed above.
+        sortDevices(this.crosspointState.devices);
+
         // Pass 2: sender legs + codec, build {flowId → enriched-sender-info}
         // Also collects every ACTIVE sender per (leg index → multicast IP)
         // for duplicate detection. Primary and secondary legs are independent
@@ -1446,7 +1465,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // only two active senders on the SAME leg index clash.
         let activeLegIps: { [legIndex:number]: { [ip:string]: Array<{id:string,label:string}> } } = {};
         let activeLegRefs: Array<{ leg:CrosspointFlowLeg, flowId:string }> = [];
-        let senderInfoById: { [id:string]: { legs:CrosspointFlowLeg[], codec:string, format:string, bitrate:CrosspointFlowBitrate, label:string } } = {};
+        let senderInfoById: { [id:string]: { legs:CrosspointFlowLeg[], mxl:any, codec:string, format:string, bitrate:CrosspointFlowBitrate, label:string } } = {};
+        // Distinct flow signatures of all MXL senders → their attributes.
+        // Receivers' caps are evaluated once per signature, not per sender.
+        let mxlSenderSigs: { [sig:string]: { [cap:string]: any } } = {};
         for(let dev of this.crosspointState.devices){
             let nodeLabel = nodeLabelByDev[dev.id] || "";
             let devIsVirtual = isVirtualByDev[dev.id] === true;
@@ -1454,14 +1476,23 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 for(let s of (dev.senders as any)[type] || []){
                     if(!s) continue;
                     let nmosId = (typeof s.id === "string" && s.id.startsWith("nmos_")) ? s.id.substring(5) : "";
-                    let legs = nmosId ? this.buildLegsFromNmos(nmosId) : [];
+                    const isMxl = s.capabilities?.transport === "mxl";
+                    // MXL has no legs: no addresses, no ports, no interface bindings.
+                    let legs = (nmosId && !isMxl) ? this.buildLegsFromNmos(nmosId) : [];
                     let codec = nmosId ? this.buildCodecFromManifest(nmosId) : "";
                     if(!codec && s.capabilities?.mediaTypes){
                         codec = this.mediaTypesToCodec(s.capabilities.mediaTypes);
                     }
                     let sf = s as CrosspointFlow;
+                    sf.annotatable = !!(dev as CrosspointDevice).annotatable;
                     sf.legs = legs;
                     sf.codec = codec;
+                    sf.mxl = isMxl ? this.buildMxlFromNmos(nmosId) : null;
+                    if(isMxl && nmosId){
+                        const attrs = this.flowCapAttrs(nmosId);
+                        sf.capSig = capSignature(attrs);
+                        mxlSenderSigs[sf.capSig] = attrs;
+                    }
                     // BCP-008-02 sender health (device-computed worst-of-all).
                     sf.monitor = this.buildMonitorStatus(nmosId);
                     // Mark virtual-sender flows so the Details page can skip
@@ -1484,6 +1515,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
                     senderInfoById[s.id] = {
                         legs,
+                        mxl:     sf.mxl,
                         codec,
                         format:  s.format || "",
                         bitrate: s.bitrate,
@@ -1541,6 +1573,14 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     let connected = r.connectedFlow ? senderInfoById[r.connectedFlow] : null;
                     let f = r as CrosspointFlow;
                     let nmosId = (typeof r.id === "string" && r.id.startsWith("nmos_")) ? r.id.substring(5) : "";
+                    f.mxl = connected ? (connected.mxl || null) : null;
+                    f.annotatable = !!(dev as CrosspointDevice).annotatable;
+                    // BCP-004-01 for MXL receivers — BCP-007-03 requires a
+                    // Controller to evaluate them. RTP receivers keep the
+                    // type + transport check for now.
+                    if(f.capabilities?.transport === "mxl" && nmosId){
+                        f.capOk = this.receiverAcceptedSigs(nmosId, mxlSenderSigs);
+                    }
                     if(connected){
                         f.legs    = connected.legs;
                         f.codec   = connected.codec;
@@ -1814,6 +1854,17 @@ export interface CrosspointFlow {
     // raw NMOS state.
     legs?:CrosspointFlowLeg[],
     codec?:string,
+    // BCP-007-03: an MXL flow has no addresses, it has a domain and a flow
+    // id (sender: its /active; receiver: those of the connected sender).
+    mxl?:{ domainId:string, flowId:string } | null,
+    // BCP-004-01 compatibility, computed here so the UI only compares:
+    // sender — signature of the flow attributes receivers' caps test against;
+    // receiver — the signatures its caps accept (only set where evaluated).
+    capSig?:string,
+    capOk?:string[],
+    // IS-13: the Node behind this flow offers the Annotation API, so the
+    // label can be changed on the device itself.
+    annotatable?:boolean,
     // Receiver-only: identity + display label of the currently-connected
     // sender (mirrored from the sender side so the Details page can show
     // "← <Device> / <Sender>" without a second lookup).
@@ -1894,6 +1945,8 @@ export interface CrosspointDevice {
     // currently affected — the matrix badge shows "⚠ <count>". Tracked
     // per direction so the sender column only reports sender health.
     monitorSummaryTx?:{ worst:number, count:number },
+    // IS-13: the Node behind this device offers the Annotation API.
+    annotatable?:boolean,
     monitorSummaryRx?:{ worst:number, count:number }
   }
 export interface CrosspointTotals {
@@ -1923,13 +1976,26 @@ export interface CrosspointShadowFlow {
     channelNumber: number,
 };
 
+// Whether an auto-activated sender can be connected to: an MXL sender once its
+// /active names the flow and domain (it has no SDP), any other once its SDP has
+// a media section.
+function senderReady(info: CrosspointConnectionSenderInfo | null): boolean {
+    if(!info){ return false; }
+    if(info.transport == "mxl"){ return !!info.mxl; }
+    return !!info.manifestFile && /\r?\nm=/.test(info.manifestFile);
+}
+
 export interface CrosspointConnectionSenderInfo {
     senderId:string,
     manifestFile:string,
     interfaces:any[],
     active:boolean,
     error:string,
-    transport:string
+    transport:string,
+    // The MXL flow and domain an MXL sender writes, from its IS-05 /active.
+    mxl?:{flowId:string, domainId:string}
+    // Whether that /active has the MXL sender switched on.
+    mxlEnabled?:boolean
 }
 
 export interface CrosspointShadowDevice {

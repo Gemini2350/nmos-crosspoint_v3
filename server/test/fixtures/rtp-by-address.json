@@ -1,0 +1,497 @@
+{
+  "senders": {
+    "a09b5c91-61e3-52d9-a2b9-e250b0a9ecf3": {
+      "id": "a09b5c91-61e3-52d9-a2b9-e250b0a9ecf3",
+      "label": "BMD UDC-1 in video",
+      "device_id": "012d874c-9243-5973-af80-4d41e28fa81e",
+      "flow_id": "c6fa19b4-7f36-58a7-a499-b4a3eb00fc41",
+      "transport": "urn:x-nmos:transport:mxl",
+      "interface_bindings": [],
+      "subscription": {
+        "active": true,
+        "receiver_id": null
+      }
+    },
+    "0c8dda41-fb99-5577-b032-7cc8606e134a": {
+      "id": "0c8dda41-fb99-5577-b032-7cc8606e134a",
+      "label": "SPG source 1 in video",
+      "device_id": "c0d01a69-afe7-5221-b760-ab85bcfb3898",
+      "flow_id": "e38aa40e-44bb-507f-a02d-391de256362e",
+      "transport": "urn:x-nmos:transport:mxl",
+      "interface_bindings": [],
+      "subscription": {
+        "active": true,
+        "receiver_id": null
+      }
+    },
+    "7fa259dc-7bf8-5dbf-969b-0f0d14136a76": {
+      "id": "7fa259dc-7bf8-5dbf-969b-0f0d14136a76",
+      "label": "SPG9000 Video 4 sender",
+      "device_id": "a5b30167-46b2-5f80-99d9-ab10d914fdcb",
+      "flow_id": "98a4688d-c32b-5522-bdf1-01f40ad9c6ff",
+      "transport": "urn:x-nmos:transport:rtp",
+      "interface_bindings": [
+        "ip1",
+        "ip2"
+      ],
+      "subscription": {
+        "active": false,
+        "receiver_id": null
+      }
+    },
+    "80b7c819-0238-502c-9d90-8e3836c04e3b": {
+      "id": "80b7c819-0238-502c-9d90-8e3836c04e3b",
+      "label": "SPG9000 Audio 2 sender",
+      "device_id": "a5b30167-46b2-5f80-99d9-ab10d914fdcb",
+      "flow_id": "b68ab505-b96e-557f-960a-b769432def27",
+      "transport": "urn:x-nmos:transport:rtp",
+      "interface_bindings": [
+        "ip1",
+        "ip2"
+      ],
+      "subscription": {
+        "active": true,
+        "receiver_id": null
+      }
+    },
+    "d25458d4-c76b-5195-b8a6-75f811dc1557": {
+      "id": "d25458d4-c76b-5195-b8a6-75f811dc1557",
+      "label": "SPG9000 Video 2 sender",
+      "device_id": "a5b30167-46b2-5f80-99d9-ab10d914fdcb",
+      "flow_id": "942ffd8b-4b72-546b-8e57-e5df528b5d57",
+      "transport": "urn:x-nmos:transport:rtp",
+      "interface_bindings": [
+        "ip1",
+        "ip2"
+      ],
+      "subscription": {
+        "active": true,
+        "receiver_id": null
+      }
+    },
+    "40dd965a-8d07-51f2-bcea-04f374e2fe74": {
+      "id": "40dd965a-8d07-51f2-bcea-04f374e2fe74",
+      "label": "SPG9000 Audio 1 sender",
+      "device_id": "a5b30167-46b2-5f80-99d9-ab10d914fdcb",
+      "flow_id": "5d54e1fe-0565-5cf9-9fb5-9dfb007fafc2",
+      "transport": "urn:x-nmos:transport:rtp",
+      "interface_bindings": [
+        "ip1",
+        "ip2"
+      ],
+      "subscription": {
+        "active": true,
+        "receiver_id": null
+      }
+    },
+    "1a87695b-4013-5f80-b572-78b8a592f083": {
+      "id": "1a87695b-4013-5f80-b572-78b8a592f083",
+      "label": "SPG9000 Video 1 sender",
+      "device_id": "a5b30167-46b2-5f80-99d9-ab10d914fdcb",
+      "flow_id": "94a6f531-8922-544f-81f4-345bbb5d33d8",
+      "transport": "urn:x-nmos:transport:rtp",
+      "interface_bindings": [
+        "ip1",
+        "ip2"
+      ],
+      "subscription": {
+        "active": true,
+        "receiver_id": null
+      }
+    }
+  },
+  "receivers": {
+    "366dcdbe-4020-51fa-9930-7082fd1a11b6": {
+      "id": "366dcdbe-4020-51fa-9930-7082fd1a11b6",
+      "label": "BMD UDC-1 in audio",
+      "device_id": "012d874c-9243-5973-af80-4d41e28fa81e",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "interface_bindings": [
+        "eth-p"
+      ],
+      "subscription": {
+        "active": false,
+        "sender_id": null
+      },
+      "format": "urn:x-nmos:format:audio"
+    },
+    "cfc8bc54-5ff2-5c3a-801c-10074c88ce35": {
+      "id": "cfc8bc54-5ff2-5c3a-801c-10074c88ce35",
+      "label": "BMD UDC-1 in video",
+      "device_id": "012d874c-9243-5973-af80-4d41e28fa81e",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "interface_bindings": [
+        "eth-p"
+      ],
+      "subscription": {
+        "active": true,
+        "sender_id": null
+      },
+      "format": "urn:x-nmos:format:video"
+    },
+    "7bbe6862-fcb0-51ed-bfc4-2190ac21a271": {
+      "id": "7bbe6862-fcb0-51ed-bfc4-2190ac21a271",
+      "label": "SPG source 2 in audio",
+      "device_id": "1ec6ff8c-6de9-528f-af16-224a80ba0188",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "interface_bindings": [
+        "eth-p",
+        "eth-r"
+      ],
+      "subscription": {
+        "active": true,
+        "sender_id": null
+      },
+      "format": "urn:x-nmos:format:audio"
+    },
+    "b262f59a-a67e-5ba0-b28b-afaabb64011f": {
+      "id": "b262f59a-a67e-5ba0-b28b-afaabb64011f",
+      "label": "SPG source 2 in video",
+      "device_id": "1ec6ff8c-6de9-528f-af16-224a80ba0188",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "interface_bindings": [
+        "eth-p",
+        "eth-r"
+      ],
+      "subscription": {
+        "active": true,
+        "sender_id": null
+      },
+      "format": "urn:x-nmos:format:video"
+    },
+    "2bc28379-2f4f-5192-859f-a5694b00de71": {
+      "id": "2bc28379-2f4f-5192-859f-a5694b00de71",
+      "label": "SPG source 1 in audio",
+      "device_id": "c0d01a69-afe7-5221-b760-ab85bcfb3898",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "interface_bindings": [
+        "eth-p",
+        "eth-r"
+      ],
+      "subscription": {
+        "active": true,
+        "sender_id": null
+      },
+      "format": "urn:x-nmos:format:audio"
+    },
+    "b43953eb-4d5a-5c07-b1ce-ccd1d84247e6": {
+      "id": "b43953eb-4d5a-5c07-b1ce-ccd1d84247e6",
+      "label": "SPG source 1 in video",
+      "device_id": "c0d01a69-afe7-5221-b760-ab85bcfb3898",
+      "transport": "urn:x-nmos:transport:rtp.mcast",
+      "interface_bindings": [
+        "eth-p",
+        "eth-r"
+      ],
+      "subscription": {
+        "active": true,
+        "sender_id": null
+      },
+      "format": "urn:x-nmos:format:video"
+    },
+    "b5c9984a-727b-5cf6-83b9-fa352947018b": {
+      "id": "b5c9984a-727b-5cf6-83b9-fa352947018b",
+      "label": "tile-0",
+      "device_id": "2c92c8fc-864b-514f-8df2-078199f5b7c8",
+      "transport": "urn:x-nmos:transport:mxl",
+      "interface_bindings": [],
+      "subscription": {
+        "active": true,
+        "sender_id": "0c8dda41-fb99-5577-b032-7cc8606e134a"
+      },
+      "format": "urn:x-nmos:format:video"
+    }
+  },
+  "senderActive": {
+    "1a87695b-4013-5f80-b572-78b8a592f083": {
+      "activation": {
+        "activation_time": "1789563187:440200065",
+        "mode": "activate_scheduled_relative",
+        "requested_time": "0:0"
+      },
+      "master_enable": true,
+      "receiver_id": null,
+      "transport_params": [
+        {
+          "destination_ip": "239.0.20.11",
+          "destination_port": 50210,
+          "rtp_enabled": true,
+          "source_ip": "192.0.2.30",
+          "source_port": 50210
+        },
+        {
+          "destination_ip": "239.0.20.12",
+          "destination_port": 50210,
+          "rtp_enabled": true,
+          "source_ip": "198.51.100.30",
+          "source_port": 50210
+        }
+      ]
+    },
+    "d25458d4-c76b-5195-b8a6-75f811dc1557": {
+      "activation": {
+        "activation_time": "1789563189:821926183",
+        "mode": "activate_scheduled_relative",
+        "requested_time": "0:0"
+      },
+      "master_enable": true,
+      "receiver_id": null,
+      "transport_params": [
+        {
+          "destination_ip": "239.0.20.21",
+          "destination_port": 50210,
+          "rtp_enabled": true,
+          "source_ip": "192.0.2.30",
+          "source_port": 50210
+        },
+        {
+          "destination_ip": "239.0.20.22",
+          "destination_port": 50210,
+          "rtp_enabled": true,
+          "source_ip": "198.51.100.30",
+          "source_port": 50210
+        }
+      ]
+    },
+    "40dd965a-8d07-51f2-bcea-04f374e2fe74": {
+      "activation": {
+        "activation_time": "1789563188:54702411",
+        "mode": "activate_scheduled_relative",
+        "requested_time": "0:0"
+      },
+      "master_enable": true,
+      "receiver_id": null,
+      "transport_params": [
+        {
+          "destination_ip": "239.0.30.11",
+          "destination_port": 50210,
+          "rtp_enabled": true,
+          "source_ip": "192.0.2.30",
+          "source_port": 50210
+        },
+        {
+          "destination_ip": "239.0.30.12",
+          "destination_port": 50210,
+          "rtp_enabled": true,
+          "source_ip": "198.51.100.30",
+          "source_port": 50210
+        }
+      ]
+    },
+    "80b7c819-0238-502c-9d90-8e3836c04e3b": {
+      "activation": {
+        "activation_time": "1789563190:23717237",
+        "mode": "activate_scheduled_relative",
+        "requested_time": "0:0"
+      },
+      "master_enable": true,
+      "receiver_id": null,
+      "transport_params": [
+        {
+          "destination_ip": "239.0.30.21",
+          "destination_port": 50210,
+          "rtp_enabled": true,
+          "source_ip": "192.0.2.30",
+          "source_port": 50210
+        },
+        {
+          "destination_ip": "239.0.30.22",
+          "destination_port": 50210,
+          "rtp_enabled": true,
+          "source_ip": "198.51.100.30",
+          "source_port": 50210
+        }
+      ]
+    },
+    "7fa259dc-7bf8-5dbf-969b-0f0d14136a76": {
+      "activation": {
+        "activation_time": "1789563193:895264031",
+        "mode": "activate_scheduled_relative",
+        "requested_time": "0:0"
+      },
+      "master_enable": false,
+      "receiver_id": null,
+      "transport_params": [
+        {
+          "destination_ip": "239.0.20.41",
+          "destination_port": 50210,
+          "rtp_enabled": false,
+          "source_ip": "192.0.2.30",
+          "source_port": 50210
+        },
+        {
+          "destination_ip": "239.0.20.42",
+          "destination_port": 50210,
+          "rtp_enabled": false,
+          "source_ip": "198.51.100.30",
+          "source_port": 50210
+        }
+      ]
+    }
+  },
+  "receiverActive": {
+    "b43953eb-4d5a-5c07-b1ce-ccd1d84247e6": {
+      "activation": {
+        "mode": null,
+        "requested_time": null,
+        "activation_time": null
+      },
+      "master_enable": true,
+      "sender_id": null,
+      "transport_file": {
+        "data": null,
+        "type": null
+      },
+      "transport_params": [
+        {
+          "destination_port": 50210,
+          "interface_ip": "192.0.2.128",
+          "multicast_ip": "239.0.20.11",
+          "rtp_enabled": true,
+          "source_ip": null
+        },
+        {
+          "destination_port": 50210,
+          "interface_ip": "198.51.100.128",
+          "multicast_ip": "239.0.20.12",
+          "rtp_enabled": true,
+          "source_ip": null
+        }
+      ]
+    },
+    "2bc28379-2f4f-5192-859f-a5694b00de71": {
+      "activation": {
+        "mode": null,
+        "requested_time": null,
+        "activation_time": null
+      },
+      "master_enable": true,
+      "sender_id": null,
+      "transport_file": {
+        "data": null,
+        "type": null
+      },
+      "transport_params": [
+        {
+          "destination_port": 50210,
+          "interface_ip": "192.0.2.128",
+          "multicast_ip": "239.0.30.11",
+          "rtp_enabled": true,
+          "source_ip": null
+        },
+        {
+          "destination_port": 50210,
+          "interface_ip": "198.51.100.128",
+          "multicast_ip": "239.0.30.12",
+          "rtp_enabled": true,
+          "source_ip": null
+        }
+      ]
+    },
+    "b262f59a-a67e-5ba0-b28b-afaabb64011f": {
+      "activation": {
+        "mode": null,
+        "requested_time": null,
+        "activation_time": null
+      },
+      "master_enable": true,
+      "sender_id": null,
+      "transport_file": {
+        "data": null,
+        "type": null
+      },
+      "transport_params": [
+        {
+          "destination_port": 50210,
+          "interface_ip": "192.0.2.128",
+          "multicast_ip": "239.0.20.21",
+          "rtp_enabled": true,
+          "source_ip": "192.0.2.30"
+        },
+        {
+          "destination_port": 50210,
+          "interface_ip": "198.51.100.128",
+          "multicast_ip": "239.0.20.22",
+          "rtp_enabled": true,
+          "source_ip": "198.51.100.30"
+        }
+      ]
+    },
+    "7bbe6862-fcb0-51ed-bfc4-2190ac21a271": {
+      "activation": {
+        "mode": null,
+        "requested_time": null,
+        "activation_time": null
+      },
+      "master_enable": true,
+      "sender_id": null,
+      "transport_file": {
+        "data": null,
+        "type": null
+      },
+      "transport_params": [
+        {
+          "destination_port": 50210,
+          "interface_ip": "192.0.2.128",
+          "multicast_ip": "239.0.30.21",
+          "rtp_enabled": true,
+          "source_ip": "192.0.2.30"
+        },
+        {
+          "destination_port": 50210,
+          "interface_ip": "198.51.100.128",
+          "multicast_ip": "239.0.30.22",
+          "rtp_enabled": true,
+          "source_ip": "198.51.100.30"
+        }
+      ]
+    },
+    "cfc8bc54-5ff2-5c3a-801c-10074c88ce35": {
+      "activation": {
+        "mode": null,
+        "requested_time": null,
+        "activation_time": null
+      },
+      "master_enable": true,
+      "sender_id": null,
+      "transport_file": {
+        "data": null,
+        "type": null
+      },
+      "transport_params": [
+        {
+          "destination_port": 16388,
+          "interface_ip": "192.0.2.129",
+          "multicast_ip": "239.255.130.86",
+          "rtp_enabled": true,
+          "source_ip": null
+        }
+      ]
+    },
+    "366dcdbe-4020-51fa-9930-7082fd1a11b6": {
+      "activation": {
+        "mode": null,
+        "requested_time": null,
+        "activation_time": null
+      },
+      "master_enable": false,
+      "sender_id": null,
+      "transport_file": {
+        "data": null,
+        "type": null
+      },
+      "transport_params": [
+        {
+          "destination_port": null,
+          "interface_ip": null,
+          "multicast_ip": null,
+          "rtp_enabled": true,
+          "source_ip": null
+        }
+      ]
+    }
+  },
+  "senderSdp": {
+    "1a87695b-4013-5f80-b572-78b8a592f083": "v=0\r\no=- 1789563112 2 IN IP4 203.0.113.49\r\ns=SPG9000 Video 1\r\ni=EBU 3305 Color Bars with Motion test pattern\r\nt=0 0\r\na=recvonly\r\na=group:DUP primary secondary\r\nm=video 50210 RTP/AVP 96\r\nc=IN IP4 239.0.20.11/32\r\na=source-filter: incl IN IP4 239.0.20.11 192.0.2.30\r\na=rtpmap:96 raw/90000\r\na=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60; depth=10; TCS=SDR; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TSMODE=SAMP; TSDELAY=0; TP=2110TPN; RANGE=NARROW; TROFF=637;\r\na=ts-refclk:ptp=IEEE1588-2008:00-90-56-FF-FE-17-41-43:127\r\na=mediaclk:direct=0\r\na=mid:primary\r\nm=video 50210 RTP/AVP 96\r\nc=IN IP4 239.0.20.12/32\r\na=source-filter: incl IN IP4 239.0.20.12 198.51.100.30\r\na=rtpmap:96 raw/90000\r\na=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60; depth=10; TCS=SDR; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TSMODE=SAMP; TSDELAY=0; TP=2110TPN; RANGE=NARROW; TROFF=637;\r\na=ts-refclk:ptp=IEEE1588-2008:00-90-56-FF-FE-17-41-43:127\r\na=mediaclk:direct=0\r\na=mid:secondary\r\n"
+  }
+}

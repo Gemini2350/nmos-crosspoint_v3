@@ -4,6 +4,7 @@
 */
 
 import * as WebSocket from "ws";
+import { annotationHref, annotationPath, buildLabelPatch, annotationErrorText, AnnotationKind } from "./annotation";
 import * as dns from "dns";
 import axios from "axios";
 import { SyncObject } from "./SyncServer/syncObject";
@@ -20,8 +21,11 @@ import * as jsonpatch from 'fast-json-patch';
 
 import * as sdpTransform from 'sdp-transform';
 import { CrosspointAbstraction, CrosspointConnectionSenderInfo } from "./crosspointAbstraction";
+import { MxlEndpoint, SR_CTRL_TYPES, TRANSPORT_MXL, selectControlHrefs, transportKind, joinHref, mxlEndpointFromActive, resolvedMxlEndpoint, buildMxlReceiverPatch, buildMxlDisconnectPatch, buildRtpTransportParams, buildSenderEnablePatch, usesMulticastLease, hasRtpDestination, tryNextControl } from "./nmosConnectionPatch";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { DdnsService } from "./ddnsService";
+import { receiverActiveRead, transportFamily, mxlReceiverReads } from "./transport";
+import { MxlSenderSeen, MxlRetry, mxlSenderStep, mxlPendingFollow, mxlRepatchTargets, mxlRepatchKey, mxlRepatchEligible, mxlSettleClaim, mxlNamedSender, receiverActiveChanged, ReadOrder } from "./mxlFollow";
 
 const fs = require("fs");
 
@@ -490,6 +494,9 @@ export class NmosRegistryConnector {
         flows: {},
         nodes: {},
         senderActiveData:{},
+        // IS-05 /active of the RTP receivers that run without naming their
+        // sender in IS-04 (see transport.connectedSenderId); nobody else.
+        receiverActiveData:{},
         channelmapping:{},
         sendersManifestDetail :{}
     };
@@ -716,9 +723,16 @@ export class NmosRegistryConnector {
         // every subscribed client.
         this.nmosState = {
             devices: {}, sources: {}, senders: {}, receivers: {},
-            flows: {}, nodes: {}, senderActiveData: {}, channelmapping: {},
+            flows: {}, nodes: {}, senderActiveData: {}, receiverActiveData: {}, channelmapping: {},
             sendersManifestDetail: {}
         };
+        // What was seen or patched under the previous registry, and reads
+        // still in flight to it, no longer count.
+        this.mxlSenders.clear();
+        this.mxlRepatched.clear();
+        this.mxlRetry.clear();
+        this.mxlPendingFrom.clear();
+        this.senderActiveOrder.clear();
         // Cancel any pending coalesced sync and push the empty state right
         // away so the UI clears immediately on a registry switch.
         if(this.syncNmosTimer != null){ clearTimeout(this.syncNmosTimer); this.syncNmosTimer = null; }
@@ -835,6 +849,12 @@ export class NmosRegistryConnector {
                 " the registry no longer has.", { ids: removed.slice(0, 20) });
             if(type === "nodes"){
                 removed.forEach((id)=>{ try{ DdnsService.instance?.removeNode(id).catch(()=>{}); }catch(e){} });
+            }
+            if(type === "receivers"){
+                removed.forEach((id)=>{ delete this.nmosState.receiverActiveData[id]; this.mxlRepatched.delete(id); this.mxlRetry.delete(id); });
+            }
+            if(type === "senders"){
+                removed.forEach((id)=>{ this.mxlSenders.delete(id); this.mxlPendingFrom.delete(id); this.senderActiveOrder.forget(id); });
             }
             this.scheduleSyncNmos();
             // Same follow-up as a removal grain: without this the crosspoint
@@ -994,6 +1014,18 @@ export class NmosRegistryConnector {
                         setTimeout(()=>{
                             this.getSenderActive(type, g);
                         },100);
+                    }
+                    if(type == "receivers"){
+                        this.scheduleReceiverActive(g);
+                    }
+                    if(type == "devices" && g.hasOwnProperty("post")){
+                        // A receiver grain can arrive before its device's:
+                        // its /active could not be read then, so try now.
+                        for(const [rid, r] of Object.entries(this.nmosState.receivers) as any){
+                            if(r && r.device_id === g.path && receiverActiveRead(r)){
+                                this.scheduleReceiverActive({path:rid, post:r});
+                            }
+                        }
                     }
                 });
 
@@ -1222,7 +1254,7 @@ export class NmosRegistryConnector {
                         // Order matters: v1.1 first, so newer devices that
                         // advertise both don't get stuck on the older URL
                         // (which may exist for compatibility but lack fields).
-                        let preferred = ["urn:x-nmos:control:sr-ctrl/v1.1", "urn:x-nmos:control:sr-ctrl/v1.0"];
+                        let preferred = SR_CTRL_TYPES.map(t => t.type);
                         for(let ctrlType of preferred){
                             device.controls.forEach((c:any)=>{
                                 if(c.type === ctrlType){
@@ -1245,11 +1277,21 @@ export class NmosRegistryConnector {
                     }
 
                     let gotData = false;
+                    let seq = this.senderActiveOrder.begin(senderId);
                     for(let href of active_href){
                         try{
                             let response = await axios.get(href);
+                            // An older read answering after a newer one would
+                            // put back a flow the sender has left, and
+                            // followMxlSender would point its receivers back
+                            // at it. Answering before, it counts: the newer
+                            // read may still fail.
+                            if(!this.senderActiveOrder.take(senderId, seq)){ return; }
                             this.nmosState.senderActiveData[senderId] = response.data;
                             gotData = true;
+                            if(sender && sender.transport == TRANSPORT_MXL){
+                                this.followMxlSender(senderId, response.data, sender.flow_id ?? null);
+                            }
                             break;
                         }catch(e){
                             SyncLog.log("warn", "NMOS", "Can not get active configuration of sender:",{error: e.message, href : href});
@@ -1282,12 +1324,245 @@ export class NmosRegistryConnector {
                     // remove element
                     try {
                         delete this.nmosState.senderActiveData[g.path];
+                        this.mxlSenders.delete(g.path);
+                        this.mxlPendingFrom.delete(g.path);
+                        this.senderActiveOrder.forget(g.path);
                         this.scheduleSyncNmos();
                         this.updateCrosspoint();
                     } catch (e) {}
                     
                 }
             }
+        }
+    }
+
+    // Order of the /active reads per sender, see mxlFollow.ReadOrder.
+    private senderActiveOrder = new ReadOrder();
+    // What was last seen of each MXL sender, see mxlFollow.mxlSenderStep.
+    private mxlSenders: Map<string, MxlSenderSeen> = new Map();
+    // mxlRepatchKey of the last re-patch per MXL receiver id.
+    private mxlRepatched: Map<string, string> = new Map();
+    // Backoff per MXL receiver whose re-patch was released, see mxlSettleClaim.
+    private mxlRetry: MxlRetry = new Map();
+    // Per MXL sender, the flow it left whose unnamed followers are still to
+    // be moved, see mxlFollow.mxlPendingFollow.
+    private mxlPendingFrom: Map<string, MxlEndpoint> = new Map();
+
+    /**
+     * Keep the MXL receivers taking a sender on the flow it writes. The sender
+     * can move to another flow while it runs, and a receiver left on the old
+     * one reads a flow nobody writes any more. Not gated by
+     * reconnectReceiversOnSenderChange: see mxlFollow.ts.
+     */
+    private followMxlSender(senderId:string, active:any, nmosFlowId:string|null){
+        let step = mxlSenderStep(this.mxlSenders.get(senderId) || null, resolvedMxlEndpoint(active), nmosFlowId);
+        this.mxlSenders.set(senderId, step.seen);
+        if(step.action === "reread"){
+            setTimeout(()=>{
+                let sender = this.nmosState.senders[senderId];
+                if(sender){ this.getSenderActive("senders", {path:senderId, post:sender}); }
+            }, 2000);
+        }
+        let from = step.action === "follow" ? step.from : null;
+        if(from){
+            SyncLog.log("info", "NMOS", "MXL sender " + senderId + " moved from flow " + from.flowId + " to " + step.seen.endpoint.flowId + ".",
+                {senderId, from, to:step.seen.endpoint});
+        }
+        this.followPendingMxl(senderId, from);
+    }
+
+    /**
+     * repointMxlReceivers for `senderId`, with the unnamed followers of the
+     * flow it just left (`stepFrom`) or of the one kept from an earlier move
+     * whose followers have not all moved yet (mxlPendingFollow).
+     */
+    private followPendingMxl(senderId:string, stepFrom:MxlEndpoint|null = null){
+        let pending = mxlPendingFollow(senderId, this.mxlPendingFrom.get(senderId) || null, stepFrom,
+            this.nmosState.receivers, this.nmosState.receiverActiveData, this.nmosState.senders, this.nmosState.senderActiveData);
+        if(pending.from){ this.mxlPendingFrom.set(senderId, pending.from); }
+        else{ this.mxlPendingFrom.delete(senderId); }
+        this.repointMxlReceivers(senderId, pending.unnamed, pending.from);
+    }
+
+    /**
+     * Point at the flow `senderId` writes now every MXL receiver taking it by
+     * name but reading another (mxlReceiversOffFlow), plus `unnamed`, which
+     * read `from`, the flow the sender has just left. Runs on every /active
+     * read of the sender or of such a receiver.
+     */
+    private repointMxlReceivers(senderId:string, unnamed:string[] = [], from:MxlEndpoint|null = null){
+        let endpoint = resolvedMxlEndpoint(this.nmosState.senderActiveData[senderId]);
+        if(!endpoint){ return; }
+        let ids = mxlRepatchTargets(senderId, endpoint, this.nmosState.receivers, this.nmosState.receiverActiveData, this.mxlRepatched, unnamed,
+            this.mxlRetry, Date.now());
+        if(ids.length == 0){ return; }
+        this.sendMxlRepatch(senderId, ids, mxlRepatchKey(senderId, endpoint), from).catch(()=>{});
+    }
+
+    /**
+     * Re-patch `receiverIds`, claimed under `key` by mxlRepatchTargets, and
+     * settle each claim (mxlSettleClaim).
+     */
+    private async sendMxlRepatch(senderId:string, receiverIds:string[], key:string, from:MxlEndpoint|null){
+        // Read /active again rather than use the stored one, so a move in
+        // the meantime is not undone.
+        let info = await this.connectionGetSenderInfo(senderId);
+        if(info.error == "" && !info.mxlEnabled){ info.error = "sender is switched off"; }
+        if(info.error != ""){
+            SyncLog.log("warn", "NMOS", "MXL receivers of sender " + senderId + " left as they are: " + info.error, {receivers:receiverIds});
+            for(let receiverId of receiverIds){ mxlSettleClaim(this.mxlRepatched, receiverId, key, "skipped", key, this.mxlRetry, Date.now()); }
+            return;
+        }
+        let sentKey = mxlRepatchKey(senderId, info.mxl);
+        for(let receiverId of receiverIds){
+            // The stored /active can be stale: an operator may have switched
+            // the receiver off or routed it elsewhere since it was chosen.
+            let active = await this.readReceiverActiveNow(receiverId);
+            if(!mxlRepatchEligible(senderId, info.mxl, this.nmosState.receivers[receiverId], active, from,
+                this.nmosState.senders, this.nmosState.senderActiveData)){
+                mxlSettleClaim(this.mxlRepatched, receiverId, key, "skipped", key, this.mxlRetry, Date.now());
+                continue;
+            }
+            try{
+                await this.makeConnection(receiverId, info);
+                mxlSettleClaim(this.mxlRepatched, receiverId, key, "patched", sentKey, this.mxlRetry, Date.now());
+                SyncLog.log("success", "NMOS", "Pointed MXL receiver " + receiverId + " at flow " + info.mxl.flowId + " of sender " + senderId);
+            }catch(e:any){
+                mxlSettleClaim(this.mxlRepatched, receiverId, key, {error:e}, sentKey, this.mxlRetry, Date.now());
+                SyncLog.log("warn", "NMOS", "Could not point MXL receiver " + receiverId + " at the flow of sender " + senderId + ": " + (e?.message || e));
+            }
+        }
+    }
+
+    /**
+     * Read a receiver's /active now and keep it, as getReceiverActive does.
+     * null when it cannot be read.
+     */
+    private async readReceiverActiveNow(receiverId:string):Promise<any>{
+        let seq = (this.receiverActiveSeq.get(receiverId) || 0) + 1;
+        this.receiverActiveSeq.set(receiverId, seq);
+        let hrefs:{href:string, version:string}[] = [];
+        try{
+            let receiver:any = this.nmosState.receivers[receiverId];
+            hrefs = selectControlHrefs(this.nmosState.devices[receiver.device_id].controls);
+        }catch(e){}
+        for(let href of hrefs){
+            try{
+                let response = await axios.get(joinHref(href.href, "single/receivers/" + receiverId + "/active"), {timeout:10000});
+                if(this.receiverActiveSeq.get(receiverId) === seq && receiverActiveRead(this.nmosState.receivers[receiverId])){
+                    if(receiverActiveChanged(this.nmosState.receiverActiveData[receiverId], response.data)){
+                        this.nmosState.receiverActiveData[receiverId] = response.data;
+                        this.updateCrosspoint();
+                    }
+                }
+                return response.data;
+            }catch(e:any){
+                if(!tryNextControl(e)){ return null; }
+            }
+        }
+        return null;
+    }
+
+    // Pending receiver /active reads keyed by receiver id, coalesced like the
+    // manifest fetches.
+    private receiverActiveTimers: Map<string, any> = new Map();
+    // Latest request per receiver: an older answer arriving late is dropped.
+    private receiverActiveSeq: Map<string, number> = new Map();
+    private receiverActiveRefresh:any = null;
+
+    /**
+     * Keep receiverActiveData in step with one receiver grain. Only
+     * receiverActiveRead ones are read: a running RTP receiver whose IS-04
+     * subscription names no sender, and a running MXL receiver, whose flow
+     * only /active tells. For every other
+     * receiver the registry already says what it takes, and reading /active
+     * for all of them would cost one request per receiver per grain.
+     */
+    scheduleReceiverActive(g:any, delay = 100){
+        if(!g || typeof g.path !== "string") return;
+        let receiverId = g.path;
+        let post = (g.hasOwnProperty("post") && typeof g.post == "object") ? g.post : null;
+        if(!post || !receiverActiveRead(post)){
+            this.mxlRepatched.delete(receiverId);
+            this.mxlRetry.delete(receiverId);
+            if(this.nmosState.receiverActiveData[receiverId]){
+                delete this.nmosState.receiverActiveData[receiverId];
+                this.updateCrosspoint();
+            }
+            return;
+        }
+        // Another controller can re-point such a receiver without IS-04
+        // changing at all, so these few are re-read now and then as well.
+        if(!this.receiverActiveRefresh){
+            this.receiverActiveRefresh = setInterval(()=>{
+                // Spread over 10 s rather than sent in one burst.
+                let due = Object.entries(this.nmosState.receivers).filter(([rid, r]:any)=>receiverActiveRead(r));
+                due.forEach(([rid, r]:any, i)=>{
+                    this.scheduleReceiverActive({path:rid, post:r}, Math.floor(i * 10000 / due.length));
+                });
+            }, 30000);
+        }
+        let existing = this.receiverActiveTimers.get(receiverId);
+        if(existing){ clearTimeout(existing); }
+        this.receiverActiveTimers.set(receiverId, setTimeout(()=>{
+            this.receiverActiveTimers.delete(receiverId);
+            this.getReceiverActive(receiverId);
+        }, delay));
+    }
+
+    async getReceiverActive(receiverId:string){
+        let seq = (this.receiverActiveSeq.get(receiverId) || 0) + 1;
+        this.receiverActiveSeq.set(receiverId, seq);
+        let hrefs:{href:string, version:string}[] = [];
+        try{
+            let receiver:any = this.nmosState.receivers[receiverId];
+            let device:any = this.nmosState.devices[receiver.device_id];
+            hrefs = selectControlHrefs(device.controls);
+        }catch(e){}
+        if(hrefs.length == 0){ return; }
+        for(let href of hrefs){
+            try{
+                let response = await axios.get(joinHref(href.href, "single/receivers/" + receiverId + "/active"), {timeout:10000});
+                if(this.receiverActiveSeq.get(receiverId) !== seq){ return; }
+                // Gone or connected by name in the meantime: drop, do not keep.
+                let changed = receiverActiveChanged(this.nmosState.receiverActiveData[receiverId], response.data);
+                if(!receiverActiveRead(this.nmosState.receivers[receiverId])){
+                    changed = !!this.nmosState.receiverActiveData[receiverId];
+                    delete this.nmosState.receiverActiveData[receiverId];
+                }else{
+                    this.nmosState.receiverActiveData[receiverId] = response.data;
+                    // An MXL receiver taking a sender by name is kept on the
+                    // flow that sender writes, see repointMxlReceivers. Also
+                    // on an unchanged read: a claim released after a failed
+                    // attempt is tried again here.
+                    let rx:any = this.nmosState.receivers[receiverId];
+                    let named = mxlNamedSender(rx?.subscription, response.data);
+                    if(named && transportFamily(rx?.transport) === "mxl"){
+                        this.repointMxlReceivers(named);
+                    }
+                    // Naming none, it may still be due to follow a sender off
+                    // a flow it left.
+                    if(!named){
+                        for(const [senderId, from] of Array.from(this.mxlPendingFrom)){
+                            if(mxlReceiverReads(response.data, from)){ this.followPendingMxl(senderId); }
+                        }
+                    }
+                }
+                // The periodic reads mostly find nothing new; a rebuild each
+                // would cost a full crosspoint update per receiver.
+                if(changed){ this.updateCrosspoint(); }
+                return;
+            }catch(e:any){
+                if(!tryNextControl(e)){
+                    SyncLog.log("warn", "NMOS", "Can not get active configuration of receiver: " + receiverId, {error: e?.message, href: href.href});
+                    break;
+                }
+            }
+        }
+        // Nothing read: what was read before no longer counts.
+        if(this.receiverActiveSeq.get(receiverId) === seq && this.nmosState.receiverActiveData[receiverId]){
+            delete this.nmosState.receiverActiveData[receiverId];
+            this.updateCrosspoint();
         }
     }
 
@@ -1422,6 +1697,12 @@ export class NmosRegistryConnector {
             for(let senderId in this.nmosState.senders){
                 let sender = this.nmosState.senders[senderId];
                 if(!sender) continue;
+                if(!usesMulticastLease(sender)){
+                    // A lease taken before non-RTP senders were passed over
+                    // blocks its pair for good; return it.
+                    if(manager.getLease(senderId)){ manager.releaseLeases([senderId]); }
+                    continue;
+                }
                 if(sender.subscription && sender.subscription.active){
                     activeIds.push(senderId);
                 }
@@ -1465,6 +1746,10 @@ export class NmosRegistryConnector {
                 try{
                     let sender = this.nmosState.senders[senderId];
                     if(!sender) continue;
+                    if(!usesMulticastLease(sender)){
+                        if(manager.getLease(senderId)){ manager.releaseLeases([senderId]); }
+                        continue;
+                    }
                     let isActive = !!(sender.subscription && sender.subscription.active);
                     if(!isActive) continue;
                     if(manager.getLease(senderId)) continue;  // already has a lease
@@ -1643,12 +1928,31 @@ export class NmosRegistryConnector {
         //    info.manifestFile = manifest._RAWSDP;
         //}else{
             // Load manifest
+            // An MXL sender has no transport file (BCP-007-03: manifest_href
+            // is null). What a receiver needs is the flow and domain the
+            // sender resolved, which its IS-05 /active carries.
+            if(sender.transport == TRANSPORT_MXL){
+                try{
+                    let hrefs = selectControlHrefs(device.controls);
+                    if(hrefs.length == 0){
+                        info.error = "MXL sender advertises no IS-05 control";
+                        return info;
+                    }
+                    let active = await axios.get(joinHref(hrefs[0].href, "single/senders/" + senderId + "/active"), {timeout:10000});
+                    info.mxl = mxlEndpointFromActive(active.data);
+                    info.mxlEnabled = active.data?.master_enable !== false;
+                }catch(e:any){
+                    info.error = "Can not read MXL flow from sender: " + (e?.message || e?.code);
+                    return info;
+                }
+            }else{
             try{
                 let sdp = await axios.get(sender.manifest_href)
                 info.manifestFile = sdp.data;
             }catch(e){
                 info.error = "Can not load Manifest from sender: " + e.code;
                 return info;
+            }
             }
         //}
 
@@ -1660,12 +1964,7 @@ export class NmosRegistryConnector {
             })
         });
 
-        if(sender.transport == "urn:x-nmos:transport:rtp.mcast"){
-            info.transport = "rtp.mcast"
-        }
-        if(sender.transport == "urn:x-nmos:transport:rtp"){
-            info.transport = "rtp"
-        } 
+        info.transport = transportKind(sender.transport);
 
         info.active = sender.subscription.active;
 
@@ -1760,36 +2059,49 @@ export class NmosRegistryConnector {
             }
         }
 
-        let receiverLegCount = receiver.interface_bindings.length;
-        for(let i = 0; i < receiverLegCount; i++){
+        if(receiver.transport == TRANSPORT_MXL){
+            // BCP-007-03: an MXL receiver is pointed at a flow in a domain,
+            // with no transport file and exactly one set of parameters.
             if(senderInfo.senderId == "disconnect"){
-                patch.transport_params.push({ rtp_enabled: false });
-                continue;
-            }
-            if(senderInfo.transport == "rtp.mcast" || senderInfo.transport == "rtp"){
-                // The SDP has exactly one transport entry per `m=` block.
-                // Receiver legs without a matching media block must be
-                // explicitly disabled — leaving them as `{rtp_enabled:true,
-                // interface_ip:"auto"}` makes strict receivers reject the
-                // whole PATCH because there's no media to bind to.
-                if(i < sdpLegs.length && sdpLegs[i].multicast_ip){
-                    let leg:any = {
-                        multicast_ip:     sdpLegs[i].multicast_ip,
-                        destination_port: sdpLegs[i].destination_port,
-                        rtp_enabled:      true
-                    };
-                    if(sdpLegs[i].source_ip){ leg.source_ip = sdpLegs[i].source_ip; }
-                    patch.transport_params.push(leg);
-                }else{
-                    patch.transport_params.push({ rtp_enabled: false });
-                }
-            }else if(senderInfo.transport == "websocket" || senderInfo.transport == "mqtt"){
-                // TODO Websocket / MQTT
-                patch.transport_params.push({});
+                patch = buildMxlDisconnectPatch();
             }else{
-                SyncLog.log("warning", "NMOS Connect", "Sender has no transport Information.");
-                throw new Error("Transport Type missing.");
+                if(senderInfo.transport != "mxl" || !senderInfo.mxl){
+                    SyncLog.log("warning", "NMOS Connect", "An MXL receiver can only take an MXL sender, got transport: " + (senderInfo.transport || "unknown"));
+                    throw new Error("An MXL receiver can only take an MXL sender.");
+                }
+                let constraints:any = null;
+                try{
+                    let hrefs = selectControlHrefs(device.controls);
+                    if(hrefs.length > 0){
+                        constraints = (await axios.get(joinHref(hrefs[0].href, "single/receivers/" + receiverId + "/constraints"), {timeout:10000})).data;
+                    }
+                }catch(e){
+                    // No constraints to read: the device answers for the domain itself.
+                }
+                try{
+                    patch = buildMxlReceiverPatch(patch.sender_id ?? null, senderInfo.mxl, constraints);
+                }catch(e:any){
+                    let id = SyncLog.log("warning", "NMOS Connect", e.message, {receiverId, sender:senderInfo.senderId});
+                    // The receiver's constraints exclude the flow: a refusal,
+                    // see mxlFollow.mxlRefused.
+                    throw Object.assign(new LoggedError(e.message, id), {refused:true});
+                }
             }
+        }else{
+        let receiverLegCount = receiver.interface_bindings.length;
+        if(senderInfo.senderId == "disconnect" || senderInfo.transport == "rtp.mcast" || senderInfo.transport == "rtp"){
+            patch.transport_params = buildRtpTransportParams(receiverLegCount, sdpLegs, senderInfo.senderId == "disconnect");
+        }else if(senderInfo.transport == "websocket" || senderInfo.transport == "mqtt"){
+            // TODO Websocket / MQTT
+            for(let i = 0; i < receiverLegCount; i++){ patch.transport_params.push({}); }
+        }else if(senderInfo.transport == "mxl"){
+            // An MXL flow lives in shared memory on a host; a network
+            // receiver has nothing to join.
+            SyncLog.log("warning", "NMOS Connect", "An MXL sender cannot feed a " + transportKind(receiver.transport) + " receiver.");
+            throw new Error("An MXL sender can only feed an MXL receiver.");
+        }else{
+            SyncLog.log("warning", "NMOS Connect", "Sender has no transport Information.");
+            throw new Error("Transport Type missing.");
         }
 
         if(senderInfo.transport == "rtp.mcast" || senderInfo.transport == "rtp"){
@@ -1811,6 +2123,7 @@ export class NmosRegistryConnector {
         }else{
             patch.master_enable = true;
         }
+        }
         // Warum ????
 
         //if (receiver.subscription.active) {
@@ -1828,21 +2141,7 @@ export class NmosRegistryConnector {
             //}
         //}
 
-        let versionFound = false;
-        let controlHrefs = [];
-        let controlTypes = [{type:"urn:x-nmos:control:sr-ctrl/v1.1",version:"v1.1"}, {type:"urn:x-nmos:control:sr-ctrl/v1.0",version:"v1.0"}]
-
-        for(let type of controlTypes){
-            device.controls.forEach((control)=>{
-                if(control.type == type.type){
-                    controlHrefs.push({href:control.href, version:type.version});
-                    versionFound = true;
-                }
-            })
-            if(versionFound){
-                break;
-            }
-        }
+        let controlHrefs = selectControlHrefs(device.controls);
 
         let done = false;
 
@@ -1865,17 +2164,17 @@ export class NmosRegistryConnector {
                 return SyncLog.log("success", "nmos_connect", "Successfully patched: "+receiverId, {href:patchHref, data:patch, status:result?.status, response:result?.data})
             }catch(e){
                 if (axios.isAxiosError(e)) {
-                    if(e.code == "ETIMEDOUT"){
+                    if(tryNextControl(e)){
                         // NEXT
-                        let id = SyncLog.log("info", "nmos_connect", "Patch on "+patchHref+" timed out, trying next.");
+                        let id = SyncLog.log("info", "nmos_connect", "Patch on "+patchHref+" unreachable ("+e.code+"), trying next.");
                     }else{
                         // TODO....
                         if(e.code == "ERR_BAD_REQUEST"){
                             let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data,});
-                            throw new LoggedError("Patch failed: "+e.response.data.error + " / " +e.response.data.debug , id);
+                            throw Object.assign(new LoggedError("Patch failed: "+e.response?.data?.error + " / " +e.response?.data?.debug , id), {status:e.response?.status});
                         }
                         let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
-                        throw new LoggedError("Receiver returned Error: "+e.code, id);
+                        throw Object.assign(new LoggedError("Receiver returned Error: "+e.code, id), {status:e.response?.status});
                     }
                 }else{
                     throw new LoggedError("Patch Failed: "+e.message);
@@ -1898,7 +2197,7 @@ export class NmosRegistryConnector {
             let sender = this.nmosState.senders[senderId];
             let device = this.nmosState.devices[sender.device_id];
 
-            let controlTypes = [{type:"urn:x-nmos:control:sr-ctrl/v1.1",version:"v1.1"}, {type:"urn:x-nmos:control:sr-ctrl/v1.0",version:"v1.0"}]
+            let controlTypes = SR_CTRL_TYPES
 
             for(let type of controlTypes){
                 device.controls.forEach((control)=>{
@@ -1926,23 +2225,7 @@ export class NmosRegistryConnector {
                     }
                 }
             }catch(e){}
-            if(legCount < 1){ legCount = 1; }
-
-            let rtpEnabled = !disable;
-            let transportParams:any[] = [];
-            for(let i=0;i<legCount;i++){
-                transportParams.push({ rtp_enabled: rtpEnabled });
-            }
-
-            let patch:any = {
-                "receiver_id": null,
-                "master_enable": !disable,
-                "activation": {
-                    "mode": "activate_immediate",
-                    "requested_time": null,
-                },
-                "transport_params": transportParams
-            };
+            let patch:any = buildSenderEnablePatch(sender.transport, legCount, disable);
 
 
             for(let href of controlHrefs){
@@ -1960,9 +2243,9 @@ export class NmosRegistryConnector {
                     return;
                 }catch(e){
                     if (axios.isAxiosError(e)) {
-                        if(e.code == "ETIMEDOUT"){
+                        if(tryNextControl(e)){
                             // NEXT
-                            SyncLog.log("info", "nmos", "Patch on "+senderId+" timed out, trying next.");
+                            SyncLog.log("info", "nmos", "Patch on "+senderId+" unreachable ("+e.code+"), trying next.");
                         }else{
                             // TODO....
                             if(e.code == "ERR_BAD_REQUEST"){
@@ -2001,10 +2284,7 @@ export class NmosRegistryConnector {
             }
             let device = this.nmosState.devices[receiver.device_id];
 
-            let controlTypes = [
-                {type:"urn:x-nmos:control:sr-ctrl/v1.1", version:"v1.1"},
-                {type:"urn:x-nmos:control:sr-ctrl/v1.0", version:"v1.0"}
-            ];
+            let controlTypes = SR_CTRL_TYPES;
             for(let type of controlTypes){
                 device.controls.forEach((control:any)=>{
                     if(control.type == type.type){
@@ -2032,8 +2312,8 @@ export class NmosRegistryConnector {
                     return;
                 }catch(e:any){
                     if(axios.isAxiosError(e)){
-                        if(e.code == "ETIMEDOUT"){
-                            SyncLog.log("info", "nmos", "Patch on " + receiverId + " timed out, trying next.");
+                        if(tryNextControl(e)){
+                            SyncLog.log("info", "nmos", "Patch on " + receiverId + " unreachable ("+e.code+"), trying next.");
                         }else{
                             let logBody:any = {controlHrefs, failedControl:patchHref, patch, status:e.response?.status};
                             if(e.response){
@@ -2085,6 +2365,58 @@ export class NmosRegistryConnector {
         return null;
     }
 
+    // ---- IS-13 NMOS Annotation ----------------------------------------
+    /** Node ids that list the Annotation API in their IS-04 services. */
+    public annotatableNodeIds(): Set<string> {
+        const out = new Set<string>();
+        try{
+            for(const id of Object.keys(this.nmosState.nodes || {})){
+                if(annotationHref(this.nmosState.nodes[id])){ out.add(id); }
+            }
+        }catch(e){}
+        return out;
+    }
+
+    /** What an NMOS id is, for the Annotation API path. */
+    public annotationKindOf(id:string): AnnotationKind | null {
+        const st:any = this.nmosState;
+        if(st.senders?.[id]) return "sender";
+        if(st.receivers?.[id]) return "receiver";
+        if(st.devices?.[id]) return "device";
+        if(st.nodes?.[id]) return "node";
+        return null;
+    }
+
+    /**
+     * IS-13: set (string) or reset (null) a resource's label ON THE DEVICE.
+     * The device then raises the resource's IS-04 version and the registry
+     * pushes the new label to every Controller, this one included — the
+     * crosspoint does not write the label into its own state.
+     */
+    public async annotateLabel(kind:AnnotationKind, id:string, label:string|null): Promise<void> {
+        const st:any = this.nmosState;
+        let nodeId = "";
+        if(kind === "node"){ nodeId = id; }
+        else if(kind === "device"){ nodeId = st.devices?.[id]?.node_id || ""; }
+        else {
+            const r = kind === "sender" ? st.senders?.[id] : st.receivers?.[id];
+            nodeId = st.devices?.[r?.device_id]?.node_id || "";
+        }
+        const base = annotationHref(st.nodes?.[nodeId]);
+        if(!base){ throw new Error("This device does not offer IS-13 annotation."); }
+        const href = base + annotationPath(kind, id);
+        const body = buildLabelPatch(label);
+        try{
+            const r = await axios.patch(href, body, { timeout: 10000 });
+            SyncLog.log("success", "annotation", "IS-13 " + (label === null ? "reset the label of " : "set the label of ") + kind + " " + id,
+                { href, data: body, status: r?.status, response: r?.data });
+        }catch(e:any){
+            const msg = annotationErrorText(e?.response?.status, e?.response?.data, "IS-13 PATCH failed: " + (e?.message || e));
+            SyncLog.log("error", "annotation", msg + " — " + kind + " " + id, { href, data: body, status: e?.response?.status, error: e?.response?.data });
+            throw new Error(msg);
+        }
+    }
+
     async setFlowMulticast(senderId:string, data:any){
 
         try{
@@ -2092,9 +2424,13 @@ export class NmosRegistryConnector {
             let controlHrefs = [];
 
             let sender = this.nmosState.senders[senderId];
+            if(!hasRtpDestination(sender)){
+                SyncLog.log("warning", "nmos", "Sender "+senderId+" is not an RTP sender; it has no destination to set.");
+                return;
+            }
             let device = this.nmosState.devices[sender.device_id];
 
-            let controlTypes = [{type:"urn:x-nmos:control:sr-ctrl/v1.1",version:"v1.1"}, {type:"urn:x-nmos:control:sr-ctrl/v1.0",version:"v1.0"}]
+            let controlTypes = SR_CTRL_TYPES
 
             for(let type of controlTypes){
                 device.controls.forEach((control)=>{
@@ -2316,9 +2652,9 @@ export class NmosRegistryConnector {
                     return;
                 }catch(e){
                     if (axios.isAxiosError(e)) {
-                        if(e.code == "ETIMEDOUT"){
+                        if(tryNextControl(e)){
                             // NEXT
-                            SyncLog.log("info", "nmos", "Patch on "+senderId+" timed out, trying next.");
+                            SyncLog.log("info", "nmos", "Patch on "+senderId+" unreachable ("+e.code+"), trying next.");
                         }else{
                             // TODO....
                             if(e.code == "ERR_BAD_REQUEST"){
@@ -2367,7 +2703,7 @@ export class NmosRegistryConnector {
             // Accept both supported IS-05 control versions — QSC and other
             // newer devices advertise v1.1 only. v1.1 wins when both are
             // present (newer schema, better field coverage).
-            let preferred = ["urn:x-nmos:control:sr-ctrl/v1.1", "urn:x-nmos:control:sr-ctrl/v1.0"];
+            let preferred = SR_CTRL_TYPES.map(t => t.type);
             for(let ctrlType of preferred){
                 for(let c of device.controls){
                     if(c && c.type === ctrlType){
@@ -2402,6 +2738,12 @@ export class NmosRegistryConnector {
 
         let sender = this.nmosState.senders[senderId];
         if(!sender){ return; }
+        if(!usesMulticastLease(sender)){
+            // A lease taken before non-RTP senders were passed over blocks
+            // its pair for good; return it.
+            if(manager.getLease(senderId)){ manager.releaseLeases([senderId]); }
+            return;
+        }
         let flow:any = this.nmosState.flows[sender.flow_id];
         if(!flow){ return; }
         let source:any = this.nmosState.sources[flow.source_id];

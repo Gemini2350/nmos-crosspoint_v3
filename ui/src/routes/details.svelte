@@ -84,6 +84,11 @@
       // returns 405 for virtual senders (their address comes from the
       // pasted SDP, not from IS-05).
       isVirtual:boolean;
+      // Transport family ("rtp", "mxl", ...), "" when unknown. Only an RTP
+      // sender has a destination address, so only it gets the edit pencil.
+      transport:string;
+      // BCP-007-03 MXL sender: domain + flow id instead of legs.
+      mxl:{ domainId:string, flowId:string } | null;
     }
     interface ReceiverRow {
       id:string;
@@ -100,6 +105,10 @@
       format:string;
       bitrate:any;
       legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string, dup?:boolean, dupText?:string }>;
+      // MXL receiver: what it reads (copied from the connected sender), or
+      // isMxl with null when nothing is connected yet.
+      isMxl:boolean;
+      mxl:{ domainId:string, flowId:string } | null;
     }
     interface DeviceRow {
       id:string;
@@ -114,11 +123,15 @@
       // Raw registry node label + operator node alias (for the rename modal).
       nodeLabelRaw:string;
       nodeAlias:string;
+      // IS-13: the node behind this device offers the Annotation API.
+      annotatable:boolean;
       // Tooltip with original NMOS labels
       tooltip:string;
       // The crosspoint device's alias (used for the change-alias modal)
       alias:string;
       name:string;
+      // Crosspoint number; the matrix lists devices by it. -1 when none.
+      num:number;
       available:boolean;
       // PTP Grand-Master ID the node clock is locked to (or "" if none / not PTP).
       gmid:string;
@@ -259,7 +272,9 @@
             bitrate: s.bitrate,
             legs,
             sdp: (typeof s.sdp === "string") ? s.sdp : "",
-            isVirtual: !!s.isVirtual
+            isVirtual: !!s.isVirtual,
+            transport: s.capabilities?.transport || "",
+            mxl: s.capabilities?.transport === "mxl" ? (s.mxl || { domainId:"", flowId:"" }) : null
           };
 
           if(searchTokens.length > 0){
@@ -275,7 +290,7 @@
             }
           }
           if(ipTokens.length > 0){
-            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ");
+            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ") + (row.mxl ? " " + row.mxl.flowId + " " + row.mxl.domainId : "");
             if(!tokenSearch(ipStr, ipTokens)){
               return;
             }
@@ -307,7 +322,9 @@
             connectedSenderLabel: r.connectedSenderLabel || "",
             format: r.format || "",
             bitrate: r.bitrate,
-            legs: Array.isArray(r.legs) ? r.legs : []
+            legs: Array.isArray(r.legs) ? r.legs : [],
+            isMxl: r.capabilities?.transport === "mxl",
+            mxl: r.mxl || null
           };
 
           if(searchTokens.length > 0){
@@ -323,7 +340,7 @@
             }
           }
           if(ipTokens.length > 0){
-            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ");
+            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ") + (row.mxl ? " " + row.mxl.flowId + " " + row.mxl.domainId : "");
             if(!tokenSearch(ipStr, ipTokens)){
               return;
             }
@@ -350,9 +367,11 @@
           nodeLabel: nodeLabel,
           nodeLabelRaw: dev.nodeLabelRaw || nodeLabel,
           nodeAlias: dev.nodeAlias || "",
+          annotatable: !!dev.annotatable,
           tooltip: tooltipStr,
           alias: deviceAlias,
           name: dev.name || "",
+          num: (typeof dev.num === "number") ? dev.num : -1,
           available: !!dev.available,
           gmid: dev.gmid || "",
           gmidLocked: !!dev.gmidLocked,
@@ -363,12 +382,13 @@
         });
       });
 
-      // sort by combined label
-      newList.sort((a,b)=>(a.label||"").localeCompare(b.label||""));
+      // No sort here: the server sends devices in crosspoint number order
+      // (deviceOrder.ts), the order of the matrix.
 
       // Group devices by their NMOS node. Groups keep the position of their
-      // first device in the sorted list; only nodes with 2+ devices get the
-      // header treatment, single-device nodes render as plain cards.
+      // first device, so a node sits at its lowest number; only nodes with
+      // 2+ devices get the header treatment, single-device nodes render as
+      // plain cards.
       let groupByKey:{[key:string]:NodeGroup} = {};
       let newGroups:NodeGroup[] = [];
       newList.forEach((row)=>{
@@ -791,7 +811,47 @@
     let labelModalName:string = "";
     let labelModalAlias:string = "";
     let labelModalValue:string = "";
+    // IS-13: see crosspoint.svelte — same two buttons, same behaviour.
+    let labelModalAnnotatable:boolean = false;
+    let labelModalBusy:boolean = false;
+    let labelModalError:string = "";
+    // Asked once when the dialog opens, straight from the crosspoint state
+    // the server computed it in (devices and flows carry `annotatable`).
+    function annotatableId(id:string):boolean{
+      try{
+        if(id.startsWith("node_")){
+          return Array.isArray(sourceState?.annotatableNodes) && sourceState.annotatableNodes.includes(id.substring(5));
+        }
+        for(const d of (sourceState?.devices || [])){
+          if(!d) continue;
+          if(d.id === id) return !!d.annotatable;
+          for(const k of ["senders", "receivers"]){
+            for(const t of Object.keys(d[k] || {})){
+              for(const f of (d[k][t] || [])){ if(f && f.id === id) return !!f.annotatable; }
+            }
+          }
+        }
+      }catch(e){}
+      return false;
+    }
+    function annotateLabelSend(reset:boolean){
+      labelModalError = "";
+      const label = reset ? null : (labelModalValue || "").trim();
+      if(!reset && !label){ labelModalError = "Type a name first, or reset the device's label."; return; }
+      labelModalBusy = true;
+      ServerConnector.post("annotate", { id: labelModalId, label }).then(()=>{
+        labelModalBusy = false;
+        labelModal.close();
+        ServerConnector.addFeedback({ message: reset ? "Label reset on the device (IS-13)" : "Label set on the device (IS-13)", level: "success" });
+      }).catch((e:any)=>{
+        labelModalBusy = false;
+        labelModalError = (e && e.message) ? e.message : "IS-13 annotation failed";
+      });
+    }
     function openLabelEditor(id:string, name:string, alias:string){
+      labelModalAnnotatable = annotatableId(id);
+      labelModalBusy = false;
+      labelModalError = "";
       labelModalId = id;
       labelModalName = name;
       labelModalAlias = alias;
@@ -803,6 +863,30 @@
     function changeLabelSend(){
       ServerConnector.post("changealias",{id:labelModalId, alias:labelModalValue});
       labelModal.close();
+    }
+
+    // ----- Crosspoint number -----
+    // Sent on change (Enter or leaving the field). The server swaps with the
+    // device that already holds the number; an empty field clears it.
+    // Anything but digits puts the current number back, and so does a
+    // request that fails.
+    function showDeviceNum(input:HTMLInputElement, dev:DeviceRow){
+      input.value = dev.num > 0 ? ("" + dev.num) : "";
+    }
+    function changeDeviceNum(dev:DeviceRow, e:Event){
+      let input = e.currentTarget as HTMLInputElement;
+      let v = input.value.trim();
+      let newNum = v === "" ? -1 : (/^\d+$/.test(v) ? Number(v) : 0);
+      if(!(newNum === -1 || (newNum > 0 && Number.isSafeInteger(newNum)))){
+        showDeviceNum(input, dev);
+        return;
+      }
+      ServerConnector.post("crosspoint", { action:"movedevice", devId: dev.id, newNum })
+        .catch(()=>{ showDeviceNum(input, dev); });
+    }
+    function deviceNumKey(e:KeyboardEvent){
+      if(e.key === "Enter"){ (e.currentTarget as HTMLInputElement).blur(); }
+      if(e.key === "ArrowUp" || e.key === "ArrowDown"){ e.preventDefault(); }
     }
 
     // ----- SDP viewer modal -----
@@ -1064,6 +1148,13 @@
               {/if}
             </span>
             <span class="det-head-spacer"></span>
+            <input type="text" inputmode="numeric" class="det-num-input" placeholder="#"
+                   value={dev.num > 0 ? dev.num : ""}
+                   on:click|stopPropagation
+                   on:keydown={deviceNumKey}
+                   on:change={(e)=>changeDeviceNum(dev, e)}
+                   use:OverlayMenuService.tooltip
+                   data-tooltip="Crosspoint number: devices are listed by it. A number in use swaps with that device; empty clears it." />
             <span class="det-device-counts">{dev.senders.length} TX · {dev.receivers.length} RX</span>
             {#if !dev.available}
               <button class="btn btn-sm det-device-forget"
@@ -1142,7 +1233,16 @@
                       </div>
                     </td>
                     <td class="det-cell-legs">
-                      {#if flow.legs.length === 0}
+                      {#if flow.mxl}
+                        <!-- BCP-007-03: no addresses, no ports — a domain and a
+                             flow id, both set on the device, not here. -->
+                        <div class="det-mxl" use:OverlayMenuService.tooltip
+                             data-tooltip={"MXL (BCP-007-03)\nDomain: " + (flow.mxl.domainId || "—") + "\nFlow: " + (flow.mxl.flowId || "—")}>
+                          <span class="det-mxl-tag">MXL</span>
+                          <span class="det-mxl-id">{flow.mxl.flowId ? flow.mxl.flowId.substring(0, 8) : "no flow"}</span>
+                          <span class="det-media-muted">@ {flow.mxl.domainId ? flow.mxl.domainId.substring(0, 8) : "auto"}</span>
+                        </div>
+                      {:else if flow.legs.length === 0}
                         <span class="det-media-muted">—</span>
                       {:else}
                         <div class="det-legs">
@@ -1181,7 +1281,7 @@
                                 </span>
                               {/if}
                             {:else}
-                              {#if !flow.isVirtual}
+                              {#if !flow.isVirtual && (!flow.transport || flow.transport === "rtp")}
                                 <button class="det-icon-btn det-hover" on:click={()=>startLegEdit(flow, leg.index)}
                                         use:OverlayMenuService.tooltip data-tooltip={flow.legs.length > 1 ? "Edit Multicast / Port (both legs, one PATCH)" : "Edit Multicast / Port"}>
                                   <Icon src={Pencil}></Icon>
@@ -1217,10 +1317,12 @@
                           🎧
                         </button>
                       {/if}
+                      {#if !flow.mxl}
                       <button class="det-icon-btn det-hover" on:click={()=>openSdpView(flow)}
                               use:OverlayMenuService.tooltip data-tooltip="Show SDP file">
                         <Icon src={DocumentText}></Icon>
                       </button>
+                      {/if}
                     </td>
                   </tr>
                 {/each}
@@ -1289,7 +1391,18 @@
                       </div>
                     </td>
                     <td class="det-cell-legs">
-                      {#if recv.legs.length === 0}
+                      {#if recv.isMxl}
+                        <div class="det-mxl" use:OverlayMenuService.tooltip
+                             data-tooltip={recv.mxl ? "MXL (BCP-007-03)\nReads flow: " + (recv.mxl.flowId || "—") + "\nSender's domain: " + (recv.mxl.domainId || "—") + "\n(a receiver staged with domain \"auto\" may read a replica in another domain)" : "MXL receiver — nothing connected"}>
+                          <span class="det-mxl-tag">MXL</span>
+                          {#if recv.mxl && recv.mxl.flowId}
+                            <span class="det-mxl-id">{recv.mxl.flowId.substring(0, 8)}</span>
+                            <span class="det-media-muted">@ {recv.mxl.domainId ? recv.mxl.domainId.substring(0, 8) : "auto"}</span>
+                          {:else}
+                            <span class="det-media-muted">—</span>
+                          {/if}
+                        </div>
+                      {:else if recv.legs.length === 0}
                         <span class="det-media-muted">—</span>
                       {:else}
                         <div class="det-legs">
@@ -1402,7 +1515,15 @@
       <span>Source Name: {labelModalName}</span><br/>
       <span>Alias: {labelModalAlias}</span>
       <input on:keypress={(e)=>{if(e.keyCode == 13) changeLabelSend()}} bind:this={labelModalInput} bind:value={labelModalValue} type="text" placeholder="Type here" class="input input-bordered w-full max-w-xs" />
+      {#if labelModalAnnotatable}
+        <p class="det-label-is13">This device supports IS-13: <b>Save to device</b> renames it on the device itself, for every controller. <b>Save</b> keeps the name here only.</p>
+      {/if}
+      {#if labelModalError}<p class="text-error det-label-is13">{labelModalError}</p>{/if}
       <div class="modal-action">
+        {#if labelModalAnnotatable}
+          <button class="btn btn-primary" disabled={labelModalBusy} on:click={()=>annotateLabelSend(false)}>Save to device (IS-13)</button>
+          <button class="btn" disabled={labelModalBusy} on:click={()=>annotateLabelSend(true)}>Reset on device</button>
+        {/if}
         <form method="dialog">
           <button on:click={()=>{labelModalValue = ""; changeLabelSend()}} class="btn">Remove</button>
           <button on:click={()=>{changeLabelSend()}} class="btn">Save</button>

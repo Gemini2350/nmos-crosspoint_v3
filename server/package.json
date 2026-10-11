@@ -1,6 +1,6 @@
 {
   "name": "nmos_crosspoint_server",
-  "version": "4.30",
+  "version": "4.38",
   "author": "Johannes Grieb",
   "license": "MIT",
   "description": "",
@@ -10,7 +10,7 @@
     "run": "node ./dist/server.js",
     "devnmos": "tsc-watch --onSuccess \"node --inspect=0.0.0.0:9230 ./dist/server.js -debug -devnmos\" --onFailure \"echo WHOOPS! Server compilation failed\"",
     "dev": "tsc-watch --onSuccess \"node --inspect=0.0.0.0:9230 ./dist/server.js -debug\" --onFailure \"echo WHOOPS! Server compilation failed\"",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsc && node --test test/*.test.js"
   },
   "dependencies": {
     "@discordjs/opus": "^0.10.0",

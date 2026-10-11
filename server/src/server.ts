@@ -1177,6 +1177,17 @@ server.addRoute("POST", "changealias","global", (client: WebsocketClient, query:
     });
 });
 
+// IS-13: set or reset a label on the device itself. `label` null = reset.
+server.addRoute("POST", "annotate","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        const label = (postData?.label === null) ? null : ("" + (postData?.label ?? ""));
+        crosspoint
+            .annotate("" + (postData?.id || ""), label)
+            .then((m) => resolve(m))
+            .catch((e:any) => reject({ message: e?.message || "IS-13 annotation failed" }));
+    });
+});
+
 server.addRoute("POST", "enableFlow","global", (client: WebsocketClient, query:string[], postData: any) => {
     return new Promise((resolve, reject) => {
         crosspoint

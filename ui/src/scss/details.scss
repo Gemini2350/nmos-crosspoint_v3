@@ -137,6 +137,25 @@ $det-color-data:  theme('colors.blue.500');
         white-space: nowrap;
     }
 
+    // Crosspoint number. Theme colours only, so it reads in both designs.
+    .det-num-input {
+        width: 4.5em;
+        flex: 0 0 auto;
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.78rem;
+        text-align: right;
+        background-color: theme('colors.base-100');
+        border: 1px solid theme('colors.base-300');
+        border-radius: 3px;
+        padding: 0 5px;
+        color: inherit;
+
+        &:focus {
+            outline: none;
+            border-color: theme('colors.info');
+        }
+    }
+
     // Status dot (device online / PTP state)
     .det-device-dot {
         display: inline-block;
@@ -408,6 +427,30 @@ $det-color-data:  theme('colors.blue.500');
         padding-left: 28px;
     }
 
+    // MXL (BCP-007-03) in the legs column: a domain and a flow id instead
+    // of addresses. Starts on the same edge as the multicast values (the
+    // pencil footprint), ids in monospace, shortened — the full ids are in
+    // the tooltip and in the IP search.
+    .det-mxl {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-left: 28px;
+    }
+    .det-mxl-tag {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 0 5px;
+        border-radius: 4px;
+        border: 1px solid currentColor;
+        opacity: 0.7;
+    }
+    .det-mxl-id {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+    }
+
     // "Virtual" badge next to the sender name.
     .det-virtual-badge {
         font-size: 0.68rem;
@@ -584,4 +627,11 @@ html[data-theme="light"] {
         white-space: pre;
         margin-top: 12px;
     }
+}
+
+// IS-13 hint and the device's own error text in the rename dialog.
+.det-label-is13 {
+    font-size: 13px;
+    margin: 8px 0 0 0;
+    max-width: 28rem;
 }

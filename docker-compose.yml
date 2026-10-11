@@ -2,7 +2,7 @@ services:
   nmos-crosspoint:
     build:
       context: ./
-    image: gemini2350/nmos-crosspoint_v3:latest
+    image: ghcr.io/qvest-digital/dmf-app-nmos-crosspoint:latest
 
     container_name: nmos-crosspoint_v3
     hostname: nmos-crosspoint_v3
