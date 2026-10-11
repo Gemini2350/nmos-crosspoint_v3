@@ -84,6 +84,9 @@
       // returns 405 for virtual senders (their address comes from the
       // pasted SDP, not from IS-05).
       isVirtual:boolean;
+      // Transport family ("rtp", "mxl", ...), "" when unknown. Only an RTP
+      // sender has a destination address, so only it gets the edit pencil.
+      transport:string;
     }
     interface ReceiverRow {
       id:string;
@@ -119,6 +122,8 @@
       // The crosspoint device's alias (used for the change-alias modal)
       alias:string;
       name:string;
+      // Crosspoint number; the matrix lists devices by it. -1 when none.
+      num:number;
       available:boolean;
       // PTP Grand-Master ID the node clock is locked to (or "" if none / not PTP).
       gmid:string;
@@ -259,7 +264,8 @@
             bitrate: s.bitrate,
             legs,
             sdp: (typeof s.sdp === "string") ? s.sdp : "",
-            isVirtual: !!s.isVirtual
+            isVirtual: !!s.isVirtual,
+            transport: s.capabilities?.transport || ""
           };
 
           if(searchTokens.length > 0){
@@ -353,6 +359,7 @@
           tooltip: tooltipStr,
           alias: deviceAlias,
           name: dev.name || "",
+          num: (typeof dev.num === "number") ? dev.num : -1,
           available: !!dev.available,
           gmid: dev.gmid || "",
           gmidLocked: !!dev.gmidLocked,
@@ -363,12 +370,13 @@
         });
       });
 
-      // sort by combined label
-      newList.sort((a,b)=>(a.label||"").localeCompare(b.label||""));
+      // No sort here: the server sends devices in crosspoint number order
+      // (deviceOrder.ts), the order of the matrix.
 
       // Group devices by their NMOS node. Groups keep the position of their
-      // first device in the sorted list; only nodes with 2+ devices get the
-      // header treatment, single-device nodes render as plain cards.
+      // first device, so a node sits at its lowest number; only nodes with
+      // 2+ devices get the header treatment, single-device nodes render as
+      // plain cards.
       let groupByKey:{[key:string]:NodeGroup} = {};
       let newGroups:NodeGroup[] = [];
       newList.forEach((row)=>{
@@ -805,6 +813,30 @@
       labelModal.close();
     }
 
+    // ----- Crosspoint number -----
+    // Sent on change (Enter or leaving the field). The server swaps with the
+    // device that already holds the number; an empty field clears it.
+    // Anything but digits puts the current number back, and so does a
+    // request that fails.
+    function showDeviceNum(input:HTMLInputElement, dev:DeviceRow){
+      input.value = dev.num > 0 ? ("" + dev.num) : "";
+    }
+    function changeDeviceNum(dev:DeviceRow, e:Event){
+      let input = e.currentTarget as HTMLInputElement;
+      let v = input.value.trim();
+      let newNum = v === "" ? -1 : (/^\d+$/.test(v) ? Number(v) : 0);
+      if(!(newNum === -1 || (newNum > 0 && Number.isSafeInteger(newNum)))){
+        showDeviceNum(input, dev);
+        return;
+      }
+      ServerConnector.post("crosspoint", { action:"movedevice", devId: dev.id, newNum })
+        .catch(()=>{ showDeviceNum(input, dev); });
+    }
+    function deviceNumKey(e:KeyboardEvent){
+      if(e.key === "Enter"){ (e.currentTarget as HTMLInputElement).blur(); }
+      if(e.key === "ArrowUp" || e.key === "ArrowDown"){ e.preventDefault(); }
+    }
+
     // ----- SDP viewer modal -----
     let sdpModal:any;
     let sdpModalTitle:string = "";
@@ -1064,6 +1096,13 @@
               {/if}
             </span>
             <span class="det-head-spacer"></span>
+            <input type="text" inputmode="numeric" class="det-num-input" placeholder="#"
+                   value={dev.num > 0 ? dev.num : ""}
+                   on:click|stopPropagation
+                   on:keydown={deviceNumKey}
+                   on:change={(e)=>changeDeviceNum(dev, e)}
+                   use:OverlayMenuService.tooltip
+                   data-tooltip="Crosspoint number: devices are listed by it. A number in use swaps with that device; empty clears it." />
             <span class="det-device-counts">{dev.senders.length} TX · {dev.receivers.length} RX</span>
             {#if !dev.available}
               <button class="btn btn-sm det-device-forget"
@@ -1181,7 +1220,7 @@
                                 </span>
                               {/if}
                             {:else}
-                              {#if !flow.isVirtual}
+                              {#if !flow.isVirtual && (!flow.transport || flow.transport === "rtp")}
                                 <button class="det-icon-btn det-hover" on:click={()=>startLegEdit(flow, leg.index)}
                                         use:OverlayMenuService.tooltip data-tooltip={flow.legs.length > 1 ? "Edit Multicast / Port (both legs, one PATCH)" : "Edit Multicast / Port"}>
                                   <Icon src={Pencil}></Icon>

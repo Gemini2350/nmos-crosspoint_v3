@@ -5,9 +5,10 @@
       import { afterUpdate, onDestroy, onMount } from "svelte";
       import { createEventDispatcher } from 'svelte';
 
-      import { Icon, ChevronRight, ChevronDoubleUp, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
-    import { getSearchTokens, tokenSearch, midSplit } from "../lib/functions";
+      import { Icon, ChevronRight, ChevronDoubleUp, ChevronDoubleDown, ChevronDown, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
+    import { getSearchTokens, tokenSearch, midSplit, transportFamily, transportsCompatible } from "../lib/functions";
     import MidLabel from "../lib/MidLabel.svelte";
+    import TransportBadge from "../lib/TransportBadge.svelte";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
       interface CrosspointConnect {
@@ -26,14 +27,24 @@
     
 
 
-    let filter:any = {
+    // Keys added later are filled in from here when a stored filter lacks
+    // them (see onMount), so adding one does not need a version bump -- a
+    // bump throws away every operator's expansion state.
+    const filterDefaults:any = {
       version:11338,
       showUnavailable:false,
       showHidden: false,
+      showVideo: true,
+      showAudio: true,
+      showData: true,
+      show2110: true,
+      showMxl: true,
+      showLegend: true,
       searchReceivers:"",
       searchSenders:"",
       expanded: { senders :[], receivers :[]}
     };
+    let filter:any = structuredClone(filterDefaults);
 
     let searchExpandedReceivers:string[] = [];
     let searchExpandedSenders:string[] = [];
@@ -88,6 +99,9 @@
     // a slim node band (header row above the sender columns / separator row
     // before the receiver rows). Single-device nodes render exactly as
     // before with the combined "<Node> - <Device>" label.
+    // A group takes the position of its first device, and the server sends
+    // devices by crosspoint number, so a node sits at its lowest number and
+    // its devices follow in number order.
     interface CpNodeGroup {
       key:string;
       label:string;
@@ -201,6 +215,9 @@
         // you look at first, and losing it the moment you open the node is
         // exactly when you need it. The devices below repeat their own share
         // of it — that is a breakdown, not a double count.
+        // Every flow of the node, open or folded: the transport badge on the
+        // strip describes the whole node either way. Not read by any cell.
+        transportFlows: mergeFlows(g.devices, side),
         monitorSummaryTx: mergeMonitorSummary(g.devices, "monitorSummaryTx"),
         monitorSummaryRx: mergeMonitorSummary(g.devices, "monitorSummaryRx"),
       };
@@ -284,7 +301,7 @@
         if(f){
           let tempFilter = JSON.parse(f);
           if(tempFilter.version == filter.version){
-            filter = tempFilter;
+            filter = { ...structuredClone(filterDefaults), ...tempFilter };
           }else{
             console.log("Resetting crosspoint filter localstorage.");
             saveFilter();
@@ -295,6 +312,7 @@
       sync = ServerConnector.sync("crosspoint");
       sync.subscribe((obj:any)=>{
         sourceState = obj;
+        rebuildDeviceFamilies();
         scheduleFilter();
         refreshMonitorModalFlow();
       });
@@ -447,6 +465,22 @@
           });
         }
 
+        // Essence and transport, from the Show menu. A flow whose essence or
+        // transport has no switch there (unknown, websocket, ...) is always
+        // shown; a device left without flows goes, like an unavailable one.
+        if(!showsAllFlowKinds()){
+          const keep = (list:any[], kind:"senders"|"receivers")=>list.filter((dev:any)=>{
+            let count = 0;
+            flowTypes.forEach((type)=>{
+              dev[kind][type] = dev[kind][type].filter((flow:any)=>flowShown(flow));
+              count += dev[kind][type].length;
+            });
+            return count > 0;
+          });
+          receivers = keep(receivers, "receivers");
+          senders = keep(senders, "senders");
+        }
+
         // Search
         if(filter.searchReceivers != ""){
           let searchTokens = getSearchTokens(filter.searchReceivers);
@@ -529,6 +563,140 @@
     }
 
     }
+    function essenceShown(type:string):boolean{
+      switch(type){
+        case "video": return filter.showVideo !== false;
+        case "audio":
+        case "audiochannel": return filter.showAudio !== false;
+        case "data":
+        case "mqtt":
+        case "websocket": return filter.showData !== false;
+      }
+      return true;
+    }
+    function flowShown(flow:any):boolean{
+      if(!essenceShown(flow.type)) return false;
+      switch(transportFamily(flow.capabilities?.transport)){
+        case "rtp": return filter.show2110 !== false;
+        case "mxl": return filter.showMxl !== false;
+      }
+      return true;
+    }
+    function showsAllFlowKinds():boolean{
+      return filter.showVideo !== false && filter.showAudio !== false && filter.showData !== false &&
+             filter.show2110 !== false && filter.showMxl !== false;
+    }
+
+    // ----- Transport shown per flow and per device -----
+    /** The transport of a device or folded node on one axis: one family, or
+     *  "mixed" when its flows use several. Redundant when every 2110 flow of
+     *  it is ST 2022-7. Unknown transports are left out of the set. */
+    function deviceTransport(dev:any, side:"senders"|"receivers"):{family:string, redundant:boolean, tip:string}{
+      // Computed once per axis rebuild (doFilter makes fresh device copies).
+      let key = "_transport_" + side;
+      if(dev && dev[key]){ return dev[key]; }
+      let r = computeDeviceTransport(dev, side);
+      if(dev){ dev[key] = r; }
+      return r;
+    }
+    function computeDeviceTransport(dev:any, side:"senders"|"receivers"):{family:string, redundant:boolean, tip:string}{
+      let families:string[] = [];
+      let rtp = 0, dup = 0;
+      let flows = (dev && dev.transportFlows) ? dev.transportFlows : (dev ? dev[side] : null);
+      flowTypes.forEach((t)=>{
+        for(const f of ((flows && flows[t]) || [])){
+          let fam = transportFamily(f.capabilities?.transport);
+          if(!fam){ continue; }
+          if(!families.includes(fam)){ families.push(fam); }
+          if(fam === "rtp"){ rtp++; if(f.capabilities?.dash7){ dup++; } }
+        }
+      });
+      if(families.length === 0){ return { family:"", redundant:false, tip:"" }; }
+      let redundant = rtp > 0 && dup === rtp;
+      if(families.length === 1){ return { family:families[0], redundant, tip:"" }; }
+      let names = families.map((f)=>f === "rtp" ? (redundant ? "ST 2110 (ST 2022-7)" : "ST 2110") : f === "mxl" ? "MXL" : f);
+      return { family:"mixed", redundant:false, tip:"Transports: " + names.join(", ") };
+    }
+
+    // Transport families per device on the FULL registry state, not the
+    // filtered axes: the server matches against every flow of a device, so
+    // whether a device cell can do anything is decided on all of them.
+    let deviceFamilies:Map<string,{senders:Set<string>, receivers:Set<string>}> = new Map();
+    function rebuildDeviceFamilies(){
+      deviceFamilies = new Map();
+      for(const dev of (sourceState.devices || [])){
+        let e = { senders:new Set<string>(), receivers:new Set<string>() };
+        for(const side of ["senders", "receivers"] as const){
+          flowTypes.forEach((t)=>{
+            for(const f of ((dev[side] && dev[side][t]) || [])){ e[side].add(transportFamily(f.capabilities?.transport)); }
+          });
+        }
+        deviceFamilies.set(dev.id, e);
+      }
+    }
+    /** A receiver of family `dst` can be fed by some sender of `srcFamilies`. */
+    function familyFed(dst:string, srcFamilies:Set<string>):boolean{
+      if(dst === "" || srcFamilies.has("")) return true;
+      return srcFamilies.has(dst);
+    }
+    /** A device-level cell the server would refuse outright: no receiver
+     *  behind it shares a transport family with any sender behind it (see
+     *  matchConnections). Node entries unfold on click and are never
+     *  refused; neither is a pair that already shows a connection. */
+    function cellRefused(srcDev:any, src:any, dstDev:any, dst:any):boolean{
+      if((srcDev && srcDev.isNode) || (dstDev && dstDev.isNode)) return false;
+      if(src && dst){ return !transportsCompatible(dst.capabilities?.transport, src.capabilities?.transport); }
+      let srcFams = src ? null : deviceFamilies.get(srcDev?.id)?.senders;
+      let dstFams = dst ? null : deviceFamilies.get(dstDev?.id)?.receivers;
+      if(src){
+        let sf = transportFamily(src.capabilities?.transport);
+        if(!dstFams || dstFams.size === 0 || sf === "") return false;
+        for(const f of dstFams){ if(f === "" || f === sf) return false; }
+        return true;
+      }
+      if(!srcFams || srcFams.size === 0) return false;
+      if(dst){ return !familyFed(transportFamily(dst.capabilities?.transport), srcFams); }
+      if(!dstFams || dstFams.size === 0) return false;
+      for(const f of dstFams){ if(familyFed(f, srcFams)) return false; }
+      return true;
+    }
+
+    // ----- Full names on hover -----
+    // A name cut off with an ellipsis says so on hover, in the app's own
+    // tooltip. Hangs on the whole label but stands back for the buttons and
+    // counters inside it, which carry tooltips of their own.
+    function nameTooltip(node:HTMLElement, text:string){
+      let current = text;
+      const vertical = ()=>!!node.closest("thead");
+      // The name is shortened INSIDE the label now (MidLabel: the head span
+      // ellipsizes, the label itself never overflows) — so the spans are
+      // asked as well, on both axes for the vertical header.
+      const clipped = (el:any)=>el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
+      const truncated = ()=>clipped(node) || Array.from(node.querySelectorAll(".cp-mid-head, .cp-mid-node")).some(clipped);
+      const over = (e:any)=>{
+        if(e.target && e.target.closest && e.target.closest(".cp-edit, .cp-mon")){
+          // The button's own tooltip takes over; the name steps back.
+          OverlayMenuService.tooltipObservable.next({ active:false, uipos:{x:0, y:0}, text:"" });
+          return;
+        }
+        if(!current || !truncated()){ return; }
+        let r = node.getBoundingClientRect();
+        OverlayMenuService.tooltipObservable.next(vertical()
+          ? { active:true, uipos:{ x:r.x + r.width, y:r.y + 24, mx:0, my:0 }, text:current }
+          : { active:true, uipos:{ x:r.x + r.width, y:r.y + r.height/2, mx:0, my:50 }, text:current });
+      };
+      const out = (e:any)=>{
+        if(e.relatedTarget && node.contains(e.relatedTarget)){ return; }
+        OverlayMenuService.tooltipObservable.next({ active:false, uipos:{x:0, y:0}, text:"" });
+      };
+      node.addEventListener("mouseover", over);
+      node.addEventListener("mouseout", out);
+      return {
+        update(t:string){ current = t; },
+        destroy(){ node.removeEventListener("mouseover", over); node.removeEventListener("mouseout", out); }
+      };
+    }
+
     function isSenderExpanded(id:string){
       if(searchExpandedSenders.includes(id)){
         return true;
@@ -813,6 +981,60 @@
       doFilter();
     }
 
+    // The counterpart of collapseAll: every device and every node of the
+    // registry open, whatever the filters hide right now.
+    function expandAll(){
+      let s:string[] = [], r:string[] = [], nodes:any = { senders:[], receivers:[] };
+      for(const dev of (sourceState.devices || [])){
+        let nk = dev.nodeId || dev.id;
+        let hasS = flowTypes.some((t)=>dev.senders && dev.senders[t] && dev.senders[t].length > 0);
+        let hasR = flowTypes.some((t)=>dev.receivers && dev.receivers[t] && dev.receivers[t].length > 0);
+        if(hasS){ s.push(dev.id); if(!nodes.senders.includes(nk)){ nodes.senders.push(nk); } }
+        if(hasR){ r.push(dev.id); if(!nodes.receivers.includes(nk)){ nodes.receivers.push(nk); } }
+      }
+      filter.expanded.senders = s;
+      filter.expanded.receivers = r;
+      filter.expandedNodes = nodes;
+      saveFilter();
+      doFilter();
+    }
+
+    // ----- Show menu -----
+    let showMenuOpen = false;
+    let showMenuButton:any;
+    let showMenuPanel:any;
+    function toggleShowMenu(){
+      showMenuOpen = !showMenuOpen;
+      if(showMenuOpen){
+        // First switch gets the focus, so the menu is usable from the keyboard.
+        setTimeout(()=>{ try{ showMenuPanel.querySelector("input").focus(); }catch(e){} });
+      }
+    }
+    function closeShowMenu(returnFocus:boolean){
+      if(!showMenuOpen) return;
+      showMenuOpen = false;
+      if(returnFocus){ try{ showMenuButton.focus(); }catch(e){} }
+    }
+    function showMenuKey(e:KeyboardEvent){
+      if(e.key === "Escape"){ e.stopPropagation(); closeShowMenu(true); }
+    }
+    function showMenuWindowClick(e:any){
+      if(!showMenuOpen) return;
+      if(showMenuPanel && showMenuPanel.contains(e.target)) return;
+      if(showMenuButton && showMenuButton.contains(e.target)) return;
+      closeShowMenu(false);
+    }
+    function showMenuFocusOut(e:any){
+      // Tabbing out of the panel closes it, like any other menu.
+      if(e.relatedTarget && showMenuPanel && !showMenuPanel.contains(e.relatedTarget) && e.relatedTarget !== showMenuButton){
+        closeShowMenu(false);
+      }
+    }
+    // Essence and transport default to on: the button says when any is off,
+    // or rows would go missing without a visible reason.
+    $: showMenuNarrowed = filter.showVideo === false || filter.showAudio === false || filter.showData === false ||
+                          filter.show2110 === false || filter.showMxl === false;
+
     function toggleExpandSender(id:string){
       let index = searchExpandedSenders.indexOf(id);
       if(index != -1){
@@ -863,11 +1085,14 @@
  
 
 
+    // Same rule as the server's matcher (connectionMatch.ts): the same
+    // essence, and a transport of the same family -- a 2110 sender has
+    // nothing to give an MXL receiver and the other way round.
     function receiverCapable(dest:any, src:any){
-      if(dest.type == src.type){
-        return true;
+      if(dest.type != src.type){
+        return false;
       }
-      return false;
+      return transportsCompatible(dest.capabilities?.transport, src.capabilities?.transport);
     }
 
 
@@ -1095,8 +1320,8 @@
 
     /**
      * Local port of CrosspointAbstraction.makeConnection's preview branch:
-     * same source/destination string parsing, same type matching, same
-     * usedSources / lowest-num preference. The hover preview must predict
+     * same source/destination string parsing, same type and transport
+     * matching (connectionMatch.ts), same usedSources / lowest-num preference. The hover preview must predict
      * exactly what TAKE (which runs the server version) will do, so any
      * change to the matcher has to land in BOTH places.
      */
@@ -1127,7 +1352,7 @@
 
       let srcFlows:any[] = [];
       for(let dev of devices){
-        if(dev.num == s.deviceNum){
+        if(dev.num > 0 && dev.num == s.deviceNum){
           for(let type in dev.senders){
             if(type == s.flowType || s.deviceOnly){
               for(let flow of dev.senders[type]){
@@ -1140,7 +1365,7 @@
 
       let dstFlows:any[] = [];
       for(let dev of devices){
-        if(dev.num == d.deviceNum){
+        if(dev.num > 0 && dev.num == d.deviceNum){
           for(let type in dev.receivers){
             if(type == d.flowType || d.deviceOnly){
               for(let flow of dev.receivers[type]){
@@ -1154,14 +1379,15 @@
       if((srcFlows.length > 0 || disconnect) && dstFlows.length > 0){
         let usedSources:any[] = [];
         for(let dstFlow of dstFlows){
+          // A receiver no sender here shares a transport family with is
+          // refused and left alone -- no preview, as there will be no switch.
+          if(!disconnect && !srcFlows.some((sf:any)=>transportsCompatible(dstFlow.capabilities?.transport, sf.capabilities?.transport))){
+            continue;
+          }
           let picked:any = null;
           if(!disconnect){
             for(let srcFlow of srcFlows){
-              let connect = false;
-              if(dstFlow.type == "audio" && srcFlow.type == "audio"){ connect = true; }
-              else if(dstFlow.type == "video" && srcFlow.type == "video"){ connect = true; }
-              else if(dstFlow.type == "data"){ if(srcFlow.type == "data"){ connect = true; } }
-              else if(dstFlow.type == srcFlow.type){ connect = true; }
+              let connect = receiverCapable(dstFlow, srcFlow);
 
               if(connect && !usedSources.includes(srcFlow.id)){
                 if(picked == null){
@@ -1665,6 +1891,7 @@
 
     
   </script>
+  <svelte:window on:click={showMenuWindowClick}/>
   <div class="content-container crosspoint">
     <ul class="menu bg-base-200 menu-horizontal rounded-box filter-nav">
       <li>
@@ -1682,18 +1909,44 @@
       </li> 
 
 
-      <li>
-        <label class="label cursor-pointer gap-2">
-          <span class="label-text">Show unavailable</span>
-          <input on:input={()=>changeFilter()} bind:checked={filter.showUnavailable} type="checkbox" class="toggle toggle-info" />
-        </label>
+      <li class="cp-show">
+        <button class="label gap-2" bind:this={showMenuButton} on:click={toggleShowMenu}
+                aria-expanded={showMenuOpen} aria-controls="cp-show-menu" on:keydown={showMenuKey}>
+          <span class="label-text">Show</span>{#if showMenuNarrowed}<span class="cp-show-narrowed" aria-hidden="true"></span><span class="sr-only">(filtered)</span>{/if}
+          <Icon src={ChevronDown} size="16"></Icon>
+        </button>
+        {#if showMenuOpen}
+        <!-- Three groups of switches; each takes effect at once and is kept
+             like the rest of the filter. -->
+        <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+        <div id="cp-show-menu" class="cp-show-menu" role="group" aria-label="Show"
+             bind:this={showMenuPanel} on:keydown={showMenuKey} on:focusout={showMenuFocusOut}>
+          <fieldset>
+            <legend>Options</legend>
+            <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showUnavailable} on:change={()=>changeFilter()}/><span>Unavailable</span></label>
+            <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showHidden} on:change={()=>changeFilter()}/><span>Hidden</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Essences</legend>
+            <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showVideo} on:change={()=>changeFilter()}/><span>Video</span></label>
+            <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showAudio} on:change={()=>changeFilter()}/><span>Audio</span></label>
+            <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showData} on:change={()=>changeFilter()}/><span>Data</span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Transports</legend>
+            <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.show2110} on:change={()=>changeFilter()}/><span>2110</span></label>
+            <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showMxl} on:change={()=>changeFilter()}/><span>MXL</span></label>
+          </fieldset>
+        </div>
+        {/if}
       </li>
 
       <li>
-        <label class="label cursor-pointer gap-2">
-          <span class="label-text">Show hidden</span>
-          <input on:input={()=>changeFilter()} bind:checked={filter.showHidden} type="checkbox" class="toggle toggle-info" />
-        </label>
+        <button class="label gap-2" on:click={expandAll}
+                use:OverlayMenuService.tooltip data-tooltip="Unfold every node and device down to the sender and receiver level">
+          <Icon src={ChevronDoubleDown} size="18"></Icon>
+          <span class="label-text">Expand all</span>
+        </button>
       </li>
 
       <li>
@@ -1714,6 +1967,48 @@
       {/if}
     </ul>
 
+
+    <!-- What the marks in the matrix mean. Only what carries meaning: an
+         empty cell and a cell that cannot be switched explain themselves. -->
+    <div class="cp-legend">
+      <button class="cp-legend-toggle" aria-expanded={!!filter.showLegend} aria-controls="cp-legend-body"
+              on:click={()=>{ filter.showLegend = !filter.showLegend; saveFilter(); }}>
+        <span class="cp-legend-chevron" class:open={filter.showLegend}><Icon src={ChevronRight} size="12"></Icon></span>Legend
+      </button>
+      {#if filter.showLegend}
+      <ul id="cp-legend-body" class="cp-legend-body">
+        <li><span class="cp-lg-glyph"><Icon src={VideoCamera}></Icon></span><span class="cp-lg-glyph"><Icon src={Microphone}></Icon></span><span class="cp-lg-glyph"><Icon src={CodeBracketSquare}></Icon></span>video / audio / data sender</li>
+        <li><span class="cp-lg-glyph"><Icon src={Tv}></Icon></span><span class="cp-lg-glyph"><Icon src={SpeakerWave}></Icon></span>video / audio receiver</li>
+        {#if bcp008On}
+        <li><span class="cp-lg-glyph cp-lg-run"><Icon src={VideoCamera}></Icon></span>running, no BCP-008 monitor</li>
+        <li><span class="cp-lg-glyph cp-lg-ok"><Icon src={VideoCamera}></Icon></span><span class="cp-lg-glyph cp-lg-warn"><Icon src={VideoCamera}></Icon></span><span class="cp-lg-glyph cp-lg-err"><Icon src={VideoCamera}></Icon></span>healthy / partially healthy / unhealthy</li>
+        {:else}
+        <li><span class="cp-lg-glyph cp-lg-video"><Icon src={VideoCamera}></Icon></span><span class="cp-lg-glyph cp-lg-audio"><Icon src={Microphone}></Icon></span><span class="cp-lg-glyph cp-lg-data"><Icon src={CodeBracketSquare}></Icon></span>running</li>
+        {/if}
+        <li><span class="cp-lg-glyph cp-lg-off"><Icon src={VideoCamera}></Icon></span>not running</li>
+        {#if bcp008On}
+        <li><span class="cp-lg-count">3</span>BCP-008 transitions since reset</li>
+        <li><span class="cp-lg-mon">2</span>flows of a device not healthy</li>
+        {/if}
+        <li class="cp-lg-sep"><TransportBadge family="rtp" plain/>ST 2110</li>
+        <li><TransportBadge family="rtp" redundant plain/>ST 2110 with ST 2022-7</li>
+        <li><TransportBadge family="mxl" plain/>MXL</li>
+        <li><TransportBadge family="mixed" plain/>device with both</li>
+        <li class="cp-lg-sep"><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-active"></span></span>connected</li>
+        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-dot cp-lg-active"></span></span>devices connected</li>
+        {#if bcp008On}
+        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-warn"></span></span><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-err"></span></span>connected, partially healthy / unhealthy</li>
+        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-unmon"></span></span>connected, not monitored</li>
+        {/if}
+        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-staged"></span></span>staged / would switch</li>
+        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-working"></span></span>switching</li>
+        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-disc"></span></span>disconnect staged</li>
+        <li><span class="cp-lg-cell cp-lg-open"></span>can be switched</li>
+        <li><span class="cp-lg-cell cp-lg-plus">+</span>folded node, click unfolds</li>
+        <li><span class="cp-lg-name">name</span><span class="cp-lg-name cp-lg-name-off">name</span><span class="cp-lg-name cp-lg-name-hidden">name</span>running / not running / hidden</li>
+      </ul>
+      {/if}
+    </div>
 
     <div class="cp-container" class:cp-scrolling={isScrolling} on:scroll={onMatrixScroll}
          on:mousemove={moveCrosshair} on:mouseleave={hideCrosshair}>
@@ -1750,7 +2045,7 @@
                           class:expanded={dev.isNode ? dev.isOpen : isSenderExpanded(dev.id)}
                           on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
-                        --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
+                        --><span class="cp-label {(dev.hidden?"hidden":"")}" use:nameTooltip={deviceRowLabel(dev, inStrip)}><!--
                         -->{#if labelNodePart(dev, inStrip)}<MidLabel nodePart={labelNodePart(dev, inStrip)} text={labelRestPart(dev, inStrip)} />{:else}<MidLabel text={deviceRowLabel(dev, inStrip)} />{/if}<!--
                         -->{#if dev.monitorSummaryTx && dev.monitorSummaryTx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryTx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                               use:OverlayMenuService.tooltip
@@ -1764,13 +2059,14 @@
                           {/if}
                         </span></span><!--
                         --><span class="cp-type-spacer"></span><!--
+                        --><span class="cp-tb-slot"><TransportBadge family={deviceTransport(dev, "senders").family} redundant={deviceTransport(dev, "senders").redundant} tip={deviceTransport(dev, "senders").tip}/></span><!--
                       --></th>
                       {#if isSenderExpanded(dev.id)}
                         {#each flowTypes as type}
                           {#each dev.senders[type] as flow}
                             <th class="cp-flow" class:cp-grp={inStrip}><!--
                               --><span class="cp-expand"></span><!--
-                              --><span class="cp-label {(flow.hidden?"hidden":"")}"><MidLabel text={flow.alias} /><!--
+                              --><span class="cp-label {(flow.hidden?"hidden":"")}" use:nameTooltip={flow.alias}><MidLabel text={flow.alias} /><!--
                                 --><span class="cp-edit">
                                   <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                                   <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
@@ -1781,7 +2077,7 @@
                                     on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
                                 --><span class="cp-detail"><span class="cp-detail-main">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                               --></span><!--
-                              
+                              --><span class="cp-tb-slot"><TransportBadge family={transportFamily(flow.capabilities?.transport)} redundant={!!flow.capabilities?.dash7}/></span><!--
                             --></th>
                           {/each}
                         {/each}
@@ -1803,7 +2099,7 @@
                   <td class="cp-line-stick" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
-                    --><span class="cp-label {(dev.hidden?"hidden":"")}"><!--
+                    --><span class="cp-label {(dev.hidden?"hidden":"")}" use:nameTooltip={deviceRowLabel(dev, inStrip)}><!--
                     -->{#if labelNodePart(dev, inStrip)}<MidLabel nodePart={labelNodePart(dev, inStrip)} text={labelRestPart(dev, inStrip)} />{:else}<MidLabel text={deviceRowLabel(dev, inStrip)} />{/if}<!--
                     --><!--
                         --><span class="cp-edit">
@@ -1816,24 +2112,34 @@
                           {/if}
                         </span><!--
                     --></span><!--
-                    -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
+                    --><span class="cp-glyph-slot">{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip
                           data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}>{dev.monitorSummaryRx.count}</span>{/if}<!--
+                    --></span><!--
+                    --><span class="cp-tb-slot"><TransportBadge family={deviceTransport(dev, "receivers").family} redundant={deviceTransport(dev, "receivers").redundant} tip={deviceTransport(dev, "receivers").tip}/></span><!--
                   --></td>
 
                   {#each senders as sourceDev}
+                      {#if cellRefused(sourceDev, null, dev, null) && !getConnectClass(sourceDev, null, dev, null)}
+                      <td class="cp-connect-mismatch"><div></div></td>
+                      {:else}
                       <td class="cp-connect-device" class:cp-connect-expand={!!(sourceDev.isNode || dev.isNode)}><div><span class="{ getConnectClass(sourceDev, null, dev, null)}"
                                   on:click={()=>connect( sourceDev, null, dev, null)}
                                   on:mouseover={()=>getDeviceConnectionPreview(sourceDev, null, dev, null)} 
                                   on:mouseleave={()=>clearDeviceConnectionPreview()} ></span></div></td>
+                      {/if}
                       {#if isSenderExpanded(sourceDev.id)}
                         {#each flowTypes as type}
                           {#if type !== "audiochannel" }
                             {#each sourceDev.senders[type] as sourceFlow}
+                              {#if cellRefused(sourceDev, sourceFlow, dev, null)}
+                              <td class="cp-connect-mismatch"><div></div></td>
+                              {:else}
                               <td class="cp-connect-device" class:cp-connect-expand={!!(dev.isNode)}><div><span 
                                     on:click={()=>connect( sourceDev, sourceFlow, dev, null)}
                                     on:mouseover={()=>getDeviceConnectionPreview(sourceDev, sourceFlow, dev, null)}
                                     on:mouseleave={()=>clearDeviceConnectionPreview()}></span></div></td>
+                              {/if}
                             {/each}
                           {/if}
                         {/each}
@@ -1849,7 +2155,7 @@
                     <tr class="cp-flow" class:cp-grp={inStrip}>
                       <td class="cp-line-stick">
                         <span class="cp-expand"></span><!--
-                        --><span class="cp-label {(flow.hidden?"hidden":"")}"><MidLabel text={flow.alias} /><!--
+                        --><span class="cp-label {(flow.hidden?"hidden":"")}" use:nameTooltip={flow.alias}><MidLabel text={flow.alias} /><!--
                         --><span class="cp-edit">
                           <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
                           <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip  data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
@@ -1860,15 +2166,20 @@
                               on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
                           --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                         --></span><!--
+                        --><span class="cp-tb-slot"><TransportBadge family={transportFamily(flow.capabilities?.transport)} redundant={!!flow.capabilities?.dash7}/></span><!--
                       --></td>
 
 
 
                       {#each senders as sourceDev}
+                      {#if cellRefused(sourceDev, null, dev, flow)}
+                      <td class="cp-connect-mismatch"><div></div></td>
+                      {:else}
                       <td class="cp-connect-device" class:cp-connect-expand={!!(sourceDev.isNode)}><div><span 
                               on:click={()=>connect( sourceDev, null, dev, flow) } 
                               on:mouseover={()=>getDeviceConnectionPreview(sourceDev, null, dev, flow) } 
                               on:mouseleave={()=>clearDeviceConnectionPreview()} ></span></div></td>
+                      {/if}
                       {#if isSenderExpanded(sourceDev.id)}
                         {#each flowTypes as type}
                           {#if type !== "audiochannel" }

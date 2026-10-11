@@ -1,5 +1,8 @@
 import { CrosspointDevice, CrosspointFlow, CrosspointShadowState, CrosspointState, CrosspointShadowDevice } from "./crosspointAbstraction";
 import { ComplexCompare, ShortenNames } from "./functions";
+import { TRANSPORT_MXL } from "./nmosConnectionPatch";
+import { transportFamily, senderIsRedundant, receiverIsRedundant, connectedSenderId } from "./transport";
+import { moveDeviceNum } from "./deviceOrder";
 
 import { BitrateCalculator } from "./bitrateHelper/BitrateCalculator"
 import { parseSettings } from "./parseSettings";
@@ -324,27 +327,15 @@ class CrosspointUpdateThread{
         }
 
         if(change.action == "movedevice"){
-            let newNum = Number.parseInt(""+change.newNum);
-            let oldNum = this.crosspointShadow.devices[change.devId].num;
-
-            if(oldNum != newNum){
-                if(newNum == -1){
-                    this.crosspointShadow.devices[change.devId].num = -1;
-                    changed = true;
+            if(moveDeviceNum(this.crosspointShadow.devices, change.devId, change.newNum, ()=>this.nextDeviceNum++)){
+                changed = true;
+                // A number set by hand at or above the next dynamic number
+                // must not be handed out again to the next device that
+                // appears. Same rule as the scan at startup.
+                let num = this.crosspointShadow.devices[change.devId].num;
+                if(num >= this.nextDeviceNum){
+                    this.nextDeviceNum = num + 1;
                 }
-                if(newNum > 0){
-
-                    for(let dev of Object.keys(this.crosspointShadow.devices)){
-                        if(this.crosspointShadow.devices[dev].num == newNum){
-                            this.crosspointShadow.devices[dev].num = oldNum;
-                            changed = true;
-                        }
-                    }
-
-                    this.crosspointShadow.devices[change.devId].num = newNum;
-                    changed = true;
-                }
-
             }
         }
 
@@ -968,14 +959,15 @@ class CrosspointUpdateThread{
                                     source.available = true;
                                     source.format = this.getNmosSenderForamt(nmosId);
                                     source.bitrate = this.getNmosSenderBitrate(nmosId);
-                                    if(this.nmosState.senders[nmosId].interface_bindings?.length > 1){
-                                        source.capabilities.dash7 = true;
-                                    }
-                                    if(
-                                        this.nmosState.senders[nmosId].transport == "urn:x-nmos:transport:rtp" ||
-                                        this.nmosState.senders[nmosId].transport == "urn:x-nmos:transport:rtp.mcast"
-                                    ){
-                                        source.capabilities.transport = "rtp";
+                                    source.capabilities.dash7 = senderIsRedundant(
+                                        this.nmosState.senders[nmosId],
+                                        this.nmosState.senderActiveData?.[nmosId],
+                                        this.nmosState.sendersManifestDetail?.[nmosId]);
+                                    source.capabilities.transport = transportFamily(this.nmosState.senders[nmosId].transport);
+                                    if(this.nmosState.senders[nmosId].transport == TRANSPORT_MXL){
+                                        // No transport file to fetch (manifest_href is null);
+                                        // the flow is read from the sender's IS-05 /active.
+                                        source.manifestOk = true;
                                     }
                                     source.capabilities.mediaTypes.push(this.nmosState.flows[this.nmosState.senders[nmosId].flow_id].media_type);
                                     // Subscription may not yet be populated for a freshly-
@@ -1032,25 +1024,29 @@ class CrosspointUpdateThread{
                                     
                                 ){
                                     receiver.available = true;
-                                    if(
-                                        this.nmosState.receivers[nmosId].transport == "urn:x-nmos:transport:rtp" ||
-                                        this.nmosState.receivers[nmosId].transport == "urn:x-nmos:transport:rtp.mcast"
-                                    ){
-                                        receiver.capabilities.transport = "rtp";
-                                    }
+                                    receiver.capabilities.transport = transportFamily(this.nmosState.receivers[nmosId].transport);
+                                    receiver.capabilities.dash7 = receiverIsRedundant(
+                                        this.nmosState.receivers[nmosId],
+                                        this.nmosState.receiverActiveData?.[nmosId]);
                                     // Same defensive treatment as the sender side — a brand-
                                     // new IS-04 receiver may lack `subscription` or `caps`
                                     // until the registry pushes the full record.
                                     receiver.active = !!this.nmosState.receivers[nmosId].subscription?.active;
                                     receiver.capabilities.mediaTypes = this.nmosState.receivers[nmosId].caps?.media_types || [];
-                                    let sub:any = this.nmosState.receivers[nmosId].subscription;
-                                    if(sub && sub.active && sub.sender_id){
-                                        // Every sender — including the
-                                        // virtual ones registered by
-                                        // NmosNodeRegistration — appears
-                                        // in nmosState.senders, so a single
-                                        // nmos_<id> reference always works.
-                                        let flowRef = "nmos_" + sub.sender_id;
+                                    // Every sender -- including the virtual
+                                    // ones registered by NmosNodeRegistration
+                                    // -- appears in nmosState.senders, so a
+                                    // single nmos_<id> reference always works.
+                                    // A receiver that runs without naming its
+                                    // sender is matched by address, see
+                                    // connectedSenderId.
+                                    let connectedId = connectedSenderId(
+                                        this.nmosState.receivers[nmosId],
+                                        this.nmosState.receiverActiveData?.[nmosId],
+                                        this.nmosState.senderActiveData || {},
+                                        this.nmosState.senders);
+                                    if(connectedId){
+                                        let flowRef = "nmos_" + connectedId;
                                         receiver.connectedFlow = flowRef;
                                         device.connectedFlows.push(flowRef);
                                     }
@@ -1441,7 +1437,7 @@ class CrosspointUpdateThread{
 
                     
 
-                    if(p.destination_ip == "" && this.nmosState.sneders.hasOwnProperty(senderId) && this.nmosState.flows.hasOwnProperty(this.nmosState.senders[senderId].flow_id) ){
+                    if(p.destination_ip == "" && this.nmosState.senders.hasOwnProperty(senderId) && this.nmosState.flows.hasOwnProperty(this.nmosState.senders[senderId].flow_id) ){
                         if(!workingOnLeg){
                             // One leg at a time
                             workingOnLeg = true;

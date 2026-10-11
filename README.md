@@ -12,7 +12,7 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 ## What it does 
 - **Autodiscover.** Finds Senders and Receivers according to NMOS IS-04
 - **Registry discovery.** Finds the NMOS registry on its own: unicast DNS-SD against the DNS search domain first, mDNS as fallback, and a static IP always wins when one is configured. The Setup page shows the detected domain, the discovered registry with its source and priority, and the live state of the query subscriptions.
-- **Crosspoint matrix.** Click a sender and a receiver to connect them according to NMOS IS-05. Autotake or "stage and then TAKE" workflow.
+- **Crosspoint matrix.** Click a sender and a receiver to connect them according to NMOS IS-05. Autotake or "stage and then TAKE" workflow. Each sender and receiver shows its transport: ST 2110 (split in two tones for ST 2022-7) or MXL. Only senders and receivers of the same transport family can be crosspointed. A receiver connected by transport file alone, with no sender id in IS-04 or IS-05, is matched to its sender by multicast group, port and source; an MXL receiver by the flow it reads. An MXL receiver taking a sender but reading another flow or domain than that sender writes, as after the sender moved while it runs, is pointed at the sender's flow, once per flow; a sender that stops naming a flow leaves its receivers as they are. The Show menu filters by availability, hidden state, essence and transport. Devices are listed by their crosspoint number on both axes and on the Details page, a node at the lowest number of its devices; devices without one follow in natural name order. New devices are numbered from `firstDynamicNumber` (default 1000) on, and the number is changed on the Details page: a number already in use swaps with that device.
 - **Activate / Deactivate Senders.** Toggle a Sender to be master enabled=true/false. (option) 
 - **Multicast DHCP.** Hands out and tracks multicast addresses automatically from a pool you define. (option) 
 - **Manual multicast editing.** Each sender's leg can be overridden with a custom address on the Details page; clearing the field falls back to the DHCP-reserved one. 
@@ -48,7 +48,7 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 The Setup page is where everything is configured. Each section in short:
 
 **NMOS Registry, Acceptable PTP GMID, Receiver Auto-Reconnect**
-The top of the Setup page. The registry is found automatically (unicast DNS-SD → mDNS → static IP, where a static IP always wins); the live status below the form shows the detected DNS-SD domain and the connected registry with source, priority and subscription health. Changes apply live, no restart needed. Plus: which Grand-Master ID counts as "right" (devices locked to it get a green dot on the Details page, others a yellow one), and whether receivers should re-execute when a sender's SDP changes (off by default — many devices renegotiate on their own).
+The top of the Setup page. The registry is found automatically (unicast DNS-SD -> mDNS -> static IP, where a static IP always wins); the live status below the form shows the detected DNS-SD domain and the connected registry with source, priority and subscription health. Changes apply live, no restart needed. Plus: which Grand-Master ID counts as "right" (devices locked to it get a green dot on the Details page, others a yellow one), and whether receivers should re-execute when a sender's SDP changes (off by default -- many devices renegotiate on their own). MXL receivers follow their sender's flow whatever this says, since the flow they were pointed at is no longer written.
 
 ![Setup: registry discovery with DNS-SD domain and live status](Screenshots/setup-registry.png)
 
@@ -113,7 +113,7 @@ docker run -d \
   --hostname nmos-crosspoint_v3 \
   -v "$(pwd)/server/config:/nmos-crosspoint/server/config" \
   -v "$(pwd)/server/state:/nmos-crosspoint/server/state" \
-  gemini2350/nmos-crosspoint_v3:latest
+  ghcr.io/qvest-digital/dmf-app-nmos-crosspoint:latest
 ```
 
 Via File Copy:
@@ -169,3 +169,4 @@ In `/server` and `/ui` each run `npm install && npm run dev` — the server rest
 
 The **Logs** page in the nav shows the live server log stream; `http://<host>/debug` exposes the full live state for tracing connection or patch behaviour.
 
+MXL is a trademark of LF Projects, LLC. The MXL logo is used unmodified from [dmf-mxl/mxl-logos](https://github.com/dmf-mxl/mxl-logos).

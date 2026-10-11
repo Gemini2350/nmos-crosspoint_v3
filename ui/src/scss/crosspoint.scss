@@ -54,6 +54,14 @@ $cp-color-red:#e21e1e;
 // blue looked like a fourth state).
 $cp-color-unmonitored:#6b7280;
 
+// Transport badges. 2110 is a red of its own, deeper than the status red, so
+// a badge does not read as "unhealthy"; the ST 2022-7 badge splits it into a
+// light and a dark half. MXL blue is the logo's own background.
+$cp-color-2110:     #c81e1e;
+$cp-color-2110-a:   #dc2626;
+$cp-color-2110-b:   #450a0a;
+$cp-color-mxl:      #1b4098;
+
 
 
 
@@ -344,7 +352,7 @@ $cp-border: 1px solid transparent;
         }
         thead th .cp-label .cp-mon {
             position: absolute;
-            bottom: 17px;          /* same centre line as the glyph (20px box vs 14px pill) */
+            bottom: 17px + $cp-sizePP;   /* same centre line as the glyph (20px box vs 14px pill) */
             left: 50%;
             transform: translateX(-50%);
             margin: 0;
@@ -802,6 +810,15 @@ $cp-border: 1px solid transparent;
         // grid. The label carries no card of its own any more; it only keeps
         // the page colour so it can overlap its neighbours (the -32px trick)
         // without letting anything shine through.
+        // The transport badge takes one more glyph slot after the essence
+        // glyph. The label keeps its width and hangs one slot further over
+        // them, so the column is as wide as before and the card still runs
+        // under both; the name gives up that slot.
+        tbody td.cp-line-stick .cp-label {
+            margin-right: -2 * $cp-sizePP;
+            padding-right: 36px + $cp-sizePP;
+            .cp-edit { right: 40px + $cp-sizePP; }
+        }
         tbody tr td.cp-line-stick {
             min-height: $cp-sizePP;
             max-height: $cp-sizePP;
@@ -923,7 +940,7 @@ $cp-border: 1px solid transparent;
                     // the receiver. The 56px came from the days when the glyph
                     // sat higher; since it moved down to the card's end there
                     // is room again (text ends at 296, glyph starts at 302).
-                    padding: 30px 4px 36px 4px;
+                    padding: 30px 4px (36px + $cp-sizePP) 4px;
                     // Flush with the top of the header, the gutter to the
                     // matrix taken off the bottom only — centring it left a 4px
                     // gap above the name that the grid lines ran straight past.
@@ -971,7 +988,9 @@ $cp-border: 1px solid transparent;
                     position: absolute;
                     left: 0;
                     right: 0;
-                    bottom: 14px;   /* down at the card's end, not a third of the way up */   /* fully inside the card, which ends 8px above the matrix */
+                    // One slot up from the card's end: the transport badge
+                    // sits below it, where the glyph used to be.
+                    bottom: 14px + $cp-sizePP;
                     margin-left: auto;
                     margin-right: auto;
                 }
@@ -1004,7 +1023,7 @@ $cp-border: 1px solid transparent;
                         // ABOVE the essence glyph, which now sits inside the
                         // card at its lower end: at 6px the buttons landed
                         // exactly on top of it.
-                        bottom:48px;
+                        bottom:48px + $cp-sizePP;
 
                         right: unset;
                         top:unset;
@@ -1022,8 +1041,9 @@ $cp-border: 1px solid transparent;
                         // runs upwards from the icon, capped just below the
                         // header height (232px) so it can't poke out the top.
                         height:max-content;
-                        min-height:168px;
-                        max-height:200px;
+                        // One slot less than before: the glyph moved up by it.
+                        min-height:140px;
+                        max-height:172px;
                         // Wide enough for two lines: in vertical writing mode
                         // they stack along the WIDTH, and at a fixed 24px the
                         // state line was cut off.
@@ -1376,6 +1396,235 @@ $cp-border: 1px solid transparent;
 
 
 
+// ----- Transport badges (TransportBadge.svelte) -----
+// Exactly the essence glyph's box: 20px plus 4px of margin, one 28px slot.
+.crosspoint {
+    .cp-tb-slot {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        vertical-align: top;
+        width: $cp-typeSize;
+        height: $cp-typeSize;
+        margin: 4px;
+        position: relative;
+    }
+    .cp-tb {
+        display: block;
+        width: $cp-typeSize;
+        height: $cp-typeSize;
+        box-sizing: border-box;
+        flex: none;
+    }
+    .cp-tb-2110, .cp-tb-mixed { border-radius: 2px; }
+    .cp-tb-2110 {
+        background-color: $cp-color-2110;
+        color: #fff;
+        font: 700 7.5px/#{$cp-typeSize} Roboto, sans-serif;
+        letter-spacing: -0.2px;
+        text-align: center;
+        writing-mode: horizontal-tb;
+        user-select: none;
+        cursor: default;
+        // Split along the diagonal, light half top left, dark half bottom
+        // right; the text keeps its contrast on both.
+        &.cp-tb-dup {
+            background: linear-gradient(135deg, $cp-color-2110-a 50%, $cp-color-2110-b 50%);
+            text-shadow: 0 0 2px rgba(0,0,0,0.55);
+        }
+    }
+    .cp-tb-mixed {
+        background: linear-gradient(135deg, $cp-color-2110 50%, $cp-color-mxl 50%);
+    }
+    .cp-tb-mxl { user-select: none; }
+
+    .cp-container {
+        // Receiver rows: one line with the glyph, same nudge as the glyph.
+        tbody td.cp-line-stick .cp-tb-slot { top: 2px; }
+        // The BCP-008 counter of a device row sits in the glyph's slot, so
+        // the transport badge lines up with the flow rows below it.
+        tbody td.cp-line-stick .cp-glyph-slot {
+            display: inline-block;
+            vertical-align: top;
+            position: relative;
+            top: 2px;
+            width: $cp-typeSize;
+            height: $cp-typeSize;
+            margin: 4px;
+            .cp-mon {
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                transform: translate(-50%, -50%);
+                margin: 0;
+            }
+        }
+        // Sender header: below the glyph, at the card's end.
+        thead th .cp-tb-slot {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: 14px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+    }
+
+    // ----- Show menu -----
+    .filter-nav .cp-show { position: relative; }
+    .filter-nav .cp-show > .cp-show-menu {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        z-index: 40;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-top: 6px;
+        padding: 10px 14px;
+        border-radius: var(--rounded-box, 1rem);
+        background-color: theme('colors.base-200');
+        box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+        cursor: default;
+        &:hover { background-color: theme('colors.base-200'); }
+        fieldset {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            margin: 0;
+            padding: 0;
+            border: none;
+            min-width: 150px;
+        }
+        legend {
+            padding: 0 0 4px 0;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: theme('colors.neutral-500');
+        }
+        label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+    }
+    .cp-show-narrowed {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background-color: theme('colors.info');
+    }
+
+    // ----- Legend -----
+    .cp-legend {
+        margin: 0 0.5rem 4px 18px;
+        font-size: 11px;
+        line-height: 20px;
+        color: theme('colors.base-content / 70%');
+    }
+    .cp-legend-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 0 4px 0 0;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: theme('colors.neutral-500');
+        border-radius: 4px;
+        &:focus-visible { outline: 2px solid theme('colors.info'); outline-offset: 1px; }
+    }
+    .cp-legend-chevron {
+        display: inline-flex;
+        transition: transform 0.15s;
+        &.open { transform: rotate(90deg); }
+    }
+    .cp-legend-body {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px 16px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        li {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            white-space: nowrap;
+        }
+        li.cp-lg-sep {
+            padding-left: 16px;
+            border-left: 1px solid theme('colors.base-content / 15%');
+        }
+        .cp-tb { width: 16px; height: 16px; font-size: 6px; line-height: 16px; letter-spacing: -0.2px; }
+    }
+    .cp-lg-glyph {
+        display: inline-flex;
+        svg { width: 15px; height: 15px; stroke-width: 2; color: theme('colors.base-content'); }
+        + .cp-lg-glyph { margin-left: -3px; }
+        &.cp-lg-ok   svg { color: $cp-color-green; }
+        &.cp-lg-warn svg { color: $cp-color-warn; }
+        &.cp-lg-err  svg { color: $cp-color-red; }
+        &.cp-lg-off  svg { color: theme('colors.neutral-500'); stroke-width: 1.6; }
+        &.cp-lg-video svg { color: $cp-color-video; }
+        &.cp-lg-audio svg { color: $cp-color-audio; }
+        &.cp-lg-data  svg { color: $cp-color-data; }
+    }
+    .cp-lg-count, .cp-lg-mon {
+        display: inline-block;
+        min-width: 15px;
+        height: 14px;
+        padding: 0 3px;
+        border-radius: 7px;
+        background-color: theme('colors.neutral-900');
+        font-size: 9px;
+        line-height: 14px;
+        font-weight: 700;
+        text-align: center;
+    }
+    .cp-lg-count { color: theme('colors.white'); }
+    .cp-lg-mon { color: $cp-color-warn; }
+    // A matrix cell at 16px instead of 28: the marks scaled with it.
+    .cp-lg-cell {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        box-shadow: inset 0 0 0 1px theme('colors.base-content / 10%');
+        + .cp-lg-cell { margin-left: -3px; }
+        &.cp-lg-open { background-color: rgba(150,150,150,0.13); }
+        &.cp-lg-plus { font-size: 12px; font-weight: 700; color: theme('colors.base-content / 70%'); }
+    }
+    .cp-lg-mark {
+        display: block;
+        box-sizing: border-box;
+        &.cp-lg-flow { width: 12px; height: 12px; border-radius: 3px; }
+        &.cp-lg-dot  { width: 9px;  height: 9px;  border-radius: 50%; }
+        &.cp-lg-active  { background-color: $cp-color-green; }
+        &.cp-lg-warn    { background-color: $cp-color-warn; }
+        &.cp-lg-err     { background-color: $cp-color-red; }
+        &.cp-lg-unmon   { background-color: $cp-color-unmonitored; }
+        &.cp-lg-staged  { border: 1.5px dashed $cp-color-grey; }
+        &.cp-lg-working { background-color: $cp-color-grey; }
+        &.cp-lg-disc    { background-color: rgba(70, 170, 20, 0.35); border: 1.5px dashed $cp-color-grey; }
+    }
+    .cp-lg-name {
+        font-size: 11px;
+        color: theme('colors.neutral-200');
+        + .cp-lg-name { margin-left: -1px; }
+        &.cp-lg-name-off { opacity: 0.5; }
+        &.cp-lg-name-hidden { color: theme('colors.neutral-500'); }
+    }
+}
+
 html[data-theme="light"] {
     .crosspoint {
         .cp-container{
@@ -1576,6 +1825,17 @@ html[data-theme="light"] {
 
         }
     }
+}
+
+html[data-theme="light"] .crosspoint {
+    .filter-nav .cp-show > .cp-show-menu {
+        background-color: theme('colors.base-100');
+        box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+        &:hover { background-color: theme('colors.base-100'); }
+    }
+    .cp-lg-count { background-color: theme('colors.neutral-400'); color: theme('colors.base-100'); }
+    .cp-lg-mon { background-color: theme('colors.base-300'); }
+    .cp-lg-name { color: theme('colors.neutral-900'); &.cp-lg-name-hidden { color: theme('colors.neutral-400'); } }
 }
 
 // ----- BCP-008 status modal (click on the status heart) -----

@@ -137,6 +137,25 @@ $det-color-data:  theme('colors.blue.500');
         white-space: nowrap;
     }
 
+    // Crosspoint number. Theme colours only, so it reads in both designs.
+    .det-num-input {
+        width: 4.5em;
+        flex: 0 0 auto;
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.78rem;
+        text-align: right;
+        background-color: theme('colors.base-100');
+        border: 1px solid theme('colors.base-300');
+        border-radius: 3px;
+        padding: 0 5px;
+        color: inherit;
+
+        &:focus {
+            outline: none;
+            border-color: theme('colors.info');
+        }
+    }
+
     // Status dot (device online / PTP state)
     .det-device-dot {
         display: inline-block;

@@ -1006,7 +1006,7 @@
         mode:
       </p>
       <div class="setup-probe-cmd">
-        <code>docker run -d --name nmos_crosspoint_v3_probe --restart unless-stopped --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" gemini2350/nmos-crosspoint_v3</code>
+        <code>docker run -d --name nmos_crosspoint_v3_probe --restart unless-stopped --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" ghcr.io/qvest-digital/dmf-app-nmos-crosspoint</code>
       </div>
       <p class="setup-section-hint">
         The token is minted once and persisted in <code>settings.json</code>,

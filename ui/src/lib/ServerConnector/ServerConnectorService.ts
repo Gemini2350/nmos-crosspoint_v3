@@ -217,22 +217,10 @@ class _ServerConnector {
 
       this.disconnect();
 
-      this.wsUrl = '';
-      if (window.location.protocol == 'https') {
-          this.wsUrl += 'wss://';
-      } else {
-          this.wsUrl += 'ws://';
-      }
-      this.wsUrl += window.location.hostname;
-      if (
-          (window.location.port == '443' && window.location.protocol == 'https') ||
-          (window.location.port == '80' && window.location.protocol == 'http')
-      ) {
-          //port is default no changes
-      } else {
-          this.wsUrl += ':' + window.location.port;
-      }
-      this.wsUrl += '/sync/';
+      // location.protocol carries its trailing colon, and location.host
+      // already omits a default port.
+      this.wsUrl = (window.location.protocol == 'https:' ? 'wss://' : 'ws://') +
+          window.location.host + '/sync/';
 
       setTimeout(()=>{
         this.connect();

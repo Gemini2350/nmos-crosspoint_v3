@@ -1,0 +1,78 @@
+# Checks for pull requests. Pushes to master run the server and ui jobs
+# too, which also seeds the npm caches pull requests restore from; the
+# image on master is built by docker-publish.yml.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      # --ignore-scripts skips compiling @discordjs/opus (~30s), which the
+      # tests never load; the image job still builds it in prod-deps.
+      - run: npm ci --no-audit --no-fund --ignore-scripts
+      - run: npm test
+
+  ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      # svelte-check exits non-zero on errors only; the existing warnings
+      # are reported but do not fail the job.
+      - run: npm run check
+      - run: npm run build
+
+  image:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # amd64 only: arm64 needs QEMU for the prod-deps stage and is left to
+      # the publish build on master. docker-publish.yml writes the default
+      # gha scope (buildkit), which is read here but never written; a pull
+      # request writes its own scope, which only it and later runs of the
+      # same pull request can see.
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          cache-from: |
+            type=gha
+            type=gha,scope=pr
+          cache-to: type=gha,scope=pr,mode=max

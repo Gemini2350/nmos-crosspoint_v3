@@ -37,7 +37,7 @@ const iface = ("" + (process.env.PROBE_IFACE || "")).trim();
 
 if (!url || !token) {
     console.error("crosspoint_probe: CROSSPOINT_URL and PROBE_TOKEN are required.");
-    console.error("  docker run --network host -e MODE=probe -e CROSSPOINT_URL=ws://<crosspoint> -e PROBE_TOKEN=<token> [-e PROBE_NAME=\"Studio A\"] [-e PROBE_IFACE=<ip>] gemini2350/nmos-crosspoint_v3");
+    console.error("  docker run --network host -e MODE=probe -e CROSSPOINT_URL=ws://<crosspoint> -e PROBE_TOKEN=<token> [-e PROBE_NAME=\"Studio A\"] [-e PROBE_IFACE=<ip>] ghcr.io/qvest-digital/dmf-app-nmos-crosspoint");
     process.exit(1);
 }
 url = url.replace(/^http/, "ws");
