@@ -628,3 +628,10 @@ html[data-theme="light"] {
         margin-top: 12px;
     }
 }
+
+// IS-13 hint and the device's own error text in the rename dialog.
+.det-label-is13 {
+    font-size: 13px;
+    margin: 8px 0 0 0;
+    max-width: 28rem;
+}

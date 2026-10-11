@@ -329,6 +329,24 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         });
     }
 
+    /**
+     * IS-13: set (label) or reset (null) the label of a node, device, sender
+     * or receiver on the device itself. On success the local alias goes: the
+     * device's own label is the one to show, and it arrives through IS-04.
+     * `id` is a crosspoint id — "node_<node id>" or "nmos_<resource id>".
+     */
+    async annotate(id:string, label:string|null): Promise<any> {
+        const conn = NmosRegistryConnector.instance;
+        if(!conn) throw new Error("NMOS connection not running.");
+        let kind:any = null, nmosId = "";
+        if(id.startsWith("node_")){ kind = "node"; nmosId = id.substring(5); }
+        else if(id.startsWith("nmos_")){ nmosId = id.substring(5); kind = conn.annotationKindOf(nmosId); }
+        if(!kind || !nmosId) throw new Error("Not an NMOS resource: " + id);
+        await conn.annotateLabel(kind, nmosId, label);
+        try{ await this.changeAlias(id, ""); }catch(e){}
+        return { message: 200 };
+    }
+
     changeAlias(id:string, alias:string){
         // "node_<nodeId>" ids rename the NMOS node's display name (band /
         // group header) instead of a single crosspoint device.
@@ -1381,6 +1399,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
         let nodeLabelByDev:    { [devId:string]: string }  = {};
         let isVirtualByDev:    { [devId:string]: boolean } = {};
+        // IS-13: the Nodes that offer the Annotation API.
+        const annotatableNodes: Set<string> = NmosRegistryConnector.instance?.annotatableNodeIds() || new Set<string>();
+        (this.crosspointState as any).annotatableNodes = Array.from(annotatableNodes);
         for(let dev of this.crosspointState.devices){
             let info = this.resolveDeviceNodeInfo(dev);
 
@@ -1419,6 +1440,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             d.nodeLabelRaw = nodeLabelRaw;
             d.nodeAlias  = nodeAlias;
             d.nodeId     = nodeId;
+            d.annotatable = !!nodeId && annotatableNodes.has(nodeId);
             d.gmid       = gm.gmid;
             d.gmidLocked = gm.locked;
             d.deviceUrl  = this.buildDeviceUrl(info.nodeId);
@@ -1462,6 +1484,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                         codec = this.mediaTypesToCodec(s.capabilities.mediaTypes);
                     }
                     let sf = s as CrosspointFlow;
+                    sf.annotatable = !!(dev as CrosspointDevice).annotatable;
                     sf.legs = legs;
                     sf.codec = codec;
                     sf.mxl = isMxl ? this.buildMxlFromNmos(nmosId) : null;
@@ -1551,6 +1574,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     let f = r as CrosspointFlow;
                     let nmosId = (typeof r.id === "string" && r.id.startsWith("nmos_")) ? r.id.substring(5) : "";
                     f.mxl = connected ? (connected.mxl || null) : null;
+                    f.annotatable = !!(dev as CrosspointDevice).annotatable;
                     // BCP-004-01 for MXL receivers — BCP-007-03 requires a
                     // Controller to evaluate them. RTP receivers keep the
                     // type + transport check for now.
@@ -1838,6 +1862,9 @@ export interface CrosspointFlow {
     // receiver — the signatures its caps accept (only set where evaluated).
     capSig?:string,
     capOk?:string[],
+    // IS-13: the Node behind this flow offers the Annotation API, so the
+    // label can be changed on the device itself.
+    annotatable?:boolean,
     // Receiver-only: identity + display label of the currently-connected
     // sender (mirrored from the sender side so the Details page can show
     // "← <Device> / <Sender>" without a second lookup).
@@ -1918,6 +1945,8 @@ export interface CrosspointDevice {
     // currently affected — the matrix badge shows "⚠ <count>". Tracked
     // per direction so the sender column only reports sender health.
     monitorSummaryTx?:{ worst:number, count:number },
+    // IS-13: the Node behind this device offers the Annotation API.
+    annotatable?:boolean,
     monitorSummaryRx?:{ worst:number, count:number }
   }
 export interface CrosspointTotals {

@@ -1823,7 +1823,7 @@
 
     function editFlowLabel(flow:any){
       clearNodeField();
-      openLabelEditor(flow.id, flow.name, flow.alias)
+      openLabelEditor(flow.id, flow.name, flow.alias, !!flow.annotatable)
     }
 
     // A device row of a single-device node reads "<Node> - <Device>", so the
@@ -1834,7 +1834,7 @@
       labelModalNodeName  = dev.nodeLabelRaw || dev.nodeLabel || "";
       labelModalNodeOrig  = dev.nodeAlias || "";
       labelModalNodeValue = dev.nodeAlias || labelModalNodeName;
-      openLabelEditor(dev.id, dev.name, dev.alias)
+      openLabelEditor(dev.id, dev.name, dev.alias, !!dev.annotatable)
     }
 
     // Renaming a node strip renames the NMOS NODE, not a device: the server
@@ -1843,7 +1843,8 @@
     function editNodeLabel(dev:any){
       if(!dev || !dev.nodeId){ return; }
       clearNodeField();
-      openLabelEditor("node_" + dev.nodeId, dev.nodeLabelRaw || dev.displayLabel, dev.nodeAlias || dev.nodeLabelRaw || dev.displayLabel);
+      openLabelEditor("node_" + dev.nodeId, dev.nodeLabelRaw || dev.displayLabel, dev.nodeAlias || dev.nodeLabelRaw || dev.displayLabel,
+        Array.isArray(sourceState?.annotatableNodes) && sourceState.annotatableNodes.includes(dev.nodeId));
     }
     function clearNodeField(){
       labelModalNodeId = "";
@@ -1865,7 +1866,15 @@
       let labelModalNodeName:string = "";
       let labelModalNodeValue:string = "";
       let labelModalNodeOrig:string = "";
-      function openLabelEditor(id:string, name:string, alias:string){
+      // IS-13: the node behind the edited resource offers the Annotation API,
+      // so the name can also be set on the device itself.
+      let labelModalAnnotatable:boolean = false;
+      let labelModalBusy:boolean = false;
+      let labelModalError:string = "";
+      function openLabelEditor(id:string, name:string, alias:string, annotatable:boolean = false){
+        labelModalAnnotatable = annotatable;
+        labelModalBusy = false;
+        labelModalError = "";
         labelModalIsNode = id.startsWith("node_");
         labelModalId = id;
         labelModalName = name;
@@ -1877,6 +1886,24 @@
           labelModalInput.select();
         })
         
+      }
+      // IS-13: set (or reset) the label on the device. The new name comes back
+      // through the registry like any other IS-04 change, and the local alias
+      // is dropped server-side so the device's own name is the one shown.
+      // A refusal stays in the dialog with the device's own words.
+      function annotateLabelSend(reset:boolean){
+        labelModalError = "";
+        const label = reset ? null : (labelModalValue || "").trim();
+        if(!reset && !label){ labelModalError = "Type a name first, or reset the device's label."; return; }
+        labelModalBusy = true;
+        ServerConnector.post("annotate", { id: labelModalId, label }).then(()=>{
+          labelModalBusy = false;
+          labelModal.close();
+          ServerConnector.addFeedback({ message: reset ? "Label reset on the device (IS-13)" : "Label set on the device (IS-13)", level: "success" });
+        }).catch((e:any)=>{
+          labelModalBusy = false;
+          labelModalError = (e && e.message) ? e.message : "IS-13 annotation failed";
+        });
       }
       function changeLabelSend(){
         ServerConnector.post("changealias",{id:labelModalId, alias:labelModalValue})
@@ -2231,7 +2258,15 @@
           <br/><span>Node Name: {labelModalNodeName}</span>
           <input on:keypress={(e)=>{if(e.keyCode == 13) changeLabelSend()}} bind:value={labelModalNodeValue} type="text" placeholder="Type here" class="input input-bordered w-full max-w-xs" />
         {/if}
+        {#if labelModalAnnotatable}
+          <p class="cp-label-is13">This device supports IS-13: <b>Save to device</b> renames it on the device itself, for every controller. <b>Save</b> keeps the name here only.</p>
+        {/if}
+        {#if labelModalError}<p class="text-error cp-label-is13">{labelModalError}</p>{/if}
         <div class="modal-action">
+          {#if labelModalAnnotatable}
+            <button class="btn btn-primary" disabled={labelModalBusy} on:click={()=>annotateLabelSend(false)}>Save to device (IS-13)</button>
+            <button class="btn" disabled={labelModalBusy} on:click={()=>annotateLabelSend(true)}>Reset on device</button>
+          {/if}
           <form method="dialog">
             <!-- if there is a button in form, it will close the modal -->
             <button on:click={()=>{labelModalValue = ""; changeLabelSend()}} class="btn" >Remove</button>
