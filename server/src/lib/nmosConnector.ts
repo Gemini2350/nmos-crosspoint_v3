@@ -4,6 +4,7 @@
 */
 
 import * as WebSocket from "ws";
+import { annotationHref, annotationPath, buildLabelPatch, annotationErrorText, AnnotationKind } from "./annotation";
 import * as dns from "dns";
 import axios from "axios";
 import { SyncObject } from "./SyncServer/syncObject";
@@ -2362,6 +2363,58 @@ export class NmosRegistryConnector {
             if(st.sources?.[id]){ return ("Source " + (st.sources[id].label || "")).trim(); }
         }catch(e){}
         return null;
+    }
+
+    // ---- IS-13 NMOS Annotation ----------------------------------------
+    /** Node ids that list the Annotation API in their IS-04 services. */
+    public annotatableNodeIds(): Set<string> {
+        const out = new Set<string>();
+        try{
+            for(const id of Object.keys(this.nmosState.nodes || {})){
+                if(annotationHref(this.nmosState.nodes[id])){ out.add(id); }
+            }
+        }catch(e){}
+        return out;
+    }
+
+    /** What an NMOS id is, for the Annotation API path. */
+    public annotationKindOf(id:string): AnnotationKind | null {
+        const st:any = this.nmosState;
+        if(st.senders?.[id]) return "sender";
+        if(st.receivers?.[id]) return "receiver";
+        if(st.devices?.[id]) return "device";
+        if(st.nodes?.[id]) return "node";
+        return null;
+    }
+
+    /**
+     * IS-13: set (string) or reset (null) a resource's label ON THE DEVICE.
+     * The device then raises the resource's IS-04 version and the registry
+     * pushes the new label to every Controller, this one included — the
+     * crosspoint does not write the label into its own state.
+     */
+    public async annotateLabel(kind:AnnotationKind, id:string, label:string|null): Promise<void> {
+        const st:any = this.nmosState;
+        let nodeId = "";
+        if(kind === "node"){ nodeId = id; }
+        else if(kind === "device"){ nodeId = st.devices?.[id]?.node_id || ""; }
+        else {
+            const r = kind === "sender" ? st.senders?.[id] : st.receivers?.[id];
+            nodeId = st.devices?.[r?.device_id]?.node_id || "";
+        }
+        const base = annotationHref(st.nodes?.[nodeId]);
+        if(!base){ throw new Error("This device does not offer IS-13 annotation."); }
+        const href = base + annotationPath(kind, id);
+        const body = buildLabelPatch(label);
+        try{
+            const r = await axios.patch(href, body, { timeout: 10000 });
+            SyncLog.log("success", "annotation", "IS-13 " + (label === null ? "reset the label of " : "set the label of ") + kind + " " + id,
+                { href, data: body, status: r?.status, response: r?.data });
+        }catch(e:any){
+            const msg = annotationErrorText(e?.response?.status, e?.response?.data, "IS-13 PATCH failed: " + (e?.message || e));
+            SyncLog.log("error", "annotation", msg + " — " + kind + " " + id, { href, data: body, status: e?.response?.status, error: e?.response?.data });
+            throw new Error(msg);
+        }
     }
 
     async setFlowMulticast(senderId:string, data:any){

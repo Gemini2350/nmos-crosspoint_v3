@@ -123,6 +123,8 @@
       // Raw registry node label + operator node alias (for the rename modal).
       nodeLabelRaw:string;
       nodeAlias:string;
+      // IS-13: the node behind this device offers the Annotation API.
+      annotatable:boolean;
       // Tooltip with original NMOS labels
       tooltip:string;
       // The crosspoint device's alias (used for the change-alias modal)
@@ -365,6 +367,7 @@
           nodeLabel: nodeLabel,
           nodeLabelRaw: dev.nodeLabelRaw || nodeLabel,
           nodeAlias: dev.nodeAlias || "",
+          annotatable: !!dev.annotatable,
           tooltip: tooltipStr,
           alias: deviceAlias,
           name: dev.name || "",
@@ -808,7 +811,47 @@
     let labelModalName:string = "";
     let labelModalAlias:string = "";
     let labelModalValue:string = "";
+    // IS-13: see crosspoint.svelte — same two buttons, same behaviour.
+    let labelModalAnnotatable:boolean = false;
+    let labelModalBusy:boolean = false;
+    let labelModalError:string = "";
+    // Asked once when the dialog opens, straight from the crosspoint state
+    // the server computed it in (devices and flows carry `annotatable`).
+    function annotatableId(id:string):boolean{
+      try{
+        if(id.startsWith("node_")){
+          return Array.isArray(sourceState?.annotatableNodes) && sourceState.annotatableNodes.includes(id.substring(5));
+        }
+        for(const d of (sourceState?.devices || [])){
+          if(!d) continue;
+          if(d.id === id) return !!d.annotatable;
+          for(const k of ["senders", "receivers"]){
+            for(const t of Object.keys(d[k] || {})){
+              for(const f of (d[k][t] || [])){ if(f && f.id === id) return !!f.annotatable; }
+            }
+          }
+        }
+      }catch(e){}
+      return false;
+    }
+    function annotateLabelSend(reset:boolean){
+      labelModalError = "";
+      const label = reset ? null : (labelModalValue || "").trim();
+      if(!reset && !label){ labelModalError = "Type a name first, or reset the device's label."; return; }
+      labelModalBusy = true;
+      ServerConnector.post("annotate", { id: labelModalId, label }).then(()=>{
+        labelModalBusy = false;
+        labelModal.close();
+        ServerConnector.addFeedback({ message: reset ? "Label reset on the device (IS-13)" : "Label set on the device (IS-13)", level: "success" });
+      }).catch((e:any)=>{
+        labelModalBusy = false;
+        labelModalError = (e && e.message) ? e.message : "IS-13 annotation failed";
+      });
+    }
     function openLabelEditor(id:string, name:string, alias:string){
+      labelModalAnnotatable = annotatableId(id);
+      labelModalBusy = false;
+      labelModalError = "";
       labelModalId = id;
       labelModalName = name;
       labelModalAlias = alias;
@@ -1472,7 +1515,15 @@
       <span>Source Name: {labelModalName}</span><br/>
       <span>Alias: {labelModalAlias}</span>
       <input on:keypress={(e)=>{if(e.keyCode == 13) changeLabelSend()}} bind:this={labelModalInput} bind:value={labelModalValue} type="text" placeholder="Type here" class="input input-bordered w-full max-w-xs" />
+      {#if labelModalAnnotatable}
+        <p class="det-label-is13">This device supports IS-13: <b>Save to device</b> renames it on the device itself, for every controller. <b>Save</b> keeps the name here only.</p>
+      {/if}
+      {#if labelModalError}<p class="text-error det-label-is13">{labelModalError}</p>{/if}
       <div class="modal-action">
+        {#if labelModalAnnotatable}
+          <button class="btn btn-primary" disabled={labelModalBusy} on:click={()=>annotateLabelSend(false)}>Save to device (IS-13)</button>
+          <button class="btn" disabled={labelModalBusy} on:click={()=>annotateLabelSend(true)}>Reset on device</button>
+        {/if}
         <form method="dialog">
           <button on:click={()=>{labelModalValue = ""; changeLabelSend()}} class="btn">Remove</button>
           <button on:click={()=>{changeLabelSend()}} class="btn">Save</button>
