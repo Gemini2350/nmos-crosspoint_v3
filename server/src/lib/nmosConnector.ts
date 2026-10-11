@@ -76,6 +76,13 @@ export class NmosRegistryConnector {
 
         this.registryVersionList = this.settings.nmos.registryVersions;
         this.connectVersionList = this.settings.nmos.connectVersions
+        // IS-05 v1.2 adds transports from the parameter register (MXL among
+        // them, BCP-007-03 requires it) and is otherwise the v1.1 API. Lists
+        // written before it existed say ["v1.1","v1.0"] — a node that offers
+        // only sr-ctrl/v1.2 would then have no connection API at all.
+        if(Array.isArray(this.connectVersionList) && !this.connectVersionList.includes("v1.2")){
+            this.connectVersionList = ["v1.2", ...this.connectVersionList];
+        }
 
         // TODO dev cleanup
         //if(loaddev){
@@ -421,7 +428,12 @@ export class NmosRegistryConnector {
     private lastDnssdDomains: string[] = [];
     private mdnsBrowser: any = null;
     private registryVersionList = ["v1.3","v1.2"];
-    private connectVersionList = ["v1.1", "v1.0"];
+    private connectVersionList = ["v1.2", "v1.1", "v1.0"];
+
+    /** IS-05 control types to look for on a device, newest first. */
+    private connectControlTypes(): Array<{ type:string, version:string }> {
+        return (this.connectVersionList || []).map((v) => ({ type: "urn:x-nmos:control:sr-ctrl/" + v, version: v }));
+    }
     private channelmappingVersionList = ["v1.0"];
     private nmosRegistryList: NmosRegistry[] = [];
 
@@ -1222,7 +1234,7 @@ export class NmosRegistryConnector {
                         // Order matters: v1.1 first, so newer devices that
                         // advertise both don't get stuck on the older URL
                         // (which may exist for compatibility but lack fields).
-                        let preferred = ["urn:x-nmos:control:sr-ctrl/v1.1", "urn:x-nmos:control:sr-ctrl/v1.0"];
+                        let preferred = this.connectControlTypes().map((c) => c.type);
                         for(let ctrlType of preferred){
                             device.controls.forEach((c:any)=>{
                                 if(c.type === ctrlType){
@@ -1636,6 +1648,27 @@ export class NmosRegistryConnector {
             return info;
         }
 
+        // BCP-007-03: an MXL Sender has no transport file (manifest_href is
+        // null, /transportfile answers 404). What a Receiver needs instead is
+        // the Sender's mxl_flow_id / mxl_domain_id from its IS-05 /active —
+        // asked fresh, the Sender may have been reconfigured since the last
+        // fetch; the cached value only stands in if the device does not answer.
+        if(sender.transport === "urn:x-nmos:transport:mxl"){
+            info.transport = "mxl";
+            info.active = !!sender.subscription?.active;
+            try{ await this.refreshSenderActive(senderId); }catch(e){}
+            let tp:any = this.nmosState.senderActiveData?.[senderId]?.transport_params?.[0];
+            if(!tp || typeof tp.mxl_flow_id !== "string" || !tp.mxl_flow_id || tp.mxl_flow_id === "auto"){
+                info.error = "MXL sender has no mxl_flow_id in its IS-05 /active — there is nothing a receiver could read.";
+                return info;
+            }
+            info.mxl = {
+                flowId: tp.mxl_flow_id,
+                domainId: (typeof tp.mxl_domain_id === "string" && tp.mxl_domain_id !== "auto") ? tp.mxl_domain_id : "",
+            };
+            return info;
+        }
+
         // TODO: need to load manifest always
         // Now: Always load manifest
         //if(this.nmosState.sendersManifestDetail.hasOwnProperty(senderId)){
@@ -1670,6 +1703,31 @@ export class NmosRegistryConnector {
         info.active = sender.subscription.active;
 
         return info
+    }
+
+    /** mxl_domain_id to stage on an MXL Receiver. The Sender's domain when
+     *  the Receiver can reach it — its /constraints list no enum, or one that
+     *  contains it. Otherwise "auto": BCP-007-03 has the Receiver then search
+     *  its own domains for the flow (flows may be replicated across domains,
+     *  so Sender and Receiver can legitimately sit in different ones). */
+    private async mxlDomainForReceiver(receiverId:string, device:any, senderDomain:string): Promise<string> {
+        if(!senderDomain) return "auto";
+        for(const t of this.connectControlTypes()){
+            const ctrl = (device?.controls || []).find((c:any) => c.type === t.type);
+            if(!ctrl) continue;
+            const href = ctrl.href + (ctrl.href.endsWith("/") ? "" : "/") + "single/receivers/" + receiverId + "/constraints";
+            try{
+                const r = await axios.get(href, { timeout: 5000 });
+                const allowed = r?.data?.[0]?.mxl_domain_id?.enum;
+                if(Array.isArray(allowed) && allowed.length > 0 && !allowed.includes(senderDomain)){
+                    SyncLog.log("info", "NMOS Connect", "MXL receiver " + receiverId + " cannot reach domain " + senderDomain +
+                        " (constraints: " + allowed.join(", ") + ") — staging mxl_domain_id \"auto\".");
+                    return "auto";
+                }
+            }catch(e){}
+            break;
+        }
+        return senderDomain;
     }
 
     async makeConnection(receiverId:string, senderInfo: CrosspointConnectionSenderInfo){
@@ -1728,6 +1786,26 @@ export class NmosRegistryConnector {
             })
         });
 
+        // BCP-007-03: MXL Senders and Receivers only ever connect to each
+        // other, with exactly one transport_params set and never a transport
+        // file. Decided up front: the RTP leg building below must not run.
+        const rxIsMxl = receiver.transport === "urn:x-nmos:transport:mxl";
+        const mxlMode = rxIsMxl || senderInfo.transport === "mxl";
+        if(mxlMode){
+            if(senderInfo.senderId === "disconnect"){
+                // master_enable:false stops the MXL read; the staged flow may stay.
+                delete patch.transport_params;
+            }else{
+                if(!rxIsMxl || senderInfo.transport !== "mxl" || !senderInfo.mxl){
+                    const id = SyncLog.log("warning", "NMOS Connect", "MXL connects only to MXL — receiver " + receiverId +
+                        " is " + receiver.transport + ", sender " + senderInfo.senderId + " is " + (senderInfo.transport || "unknown") + ".");
+                    throw new LoggedError("MXL can only be connected to MXL.", id);
+                }
+                const domain = await this.mxlDomainForReceiver(receiverId, device, senderInfo.mxl.domainId);
+                patch.transport_params = [{ mxl_flow_id: senderInfo.mxl.flowId, mxl_domain_id: domain }];
+            }
+        }
+
         // Parse the SDP so we can build EXPLICIT transport_params per leg
         // (multicast_ip / destination_port / source_ip). Some receivers
         // (Anubis among them) reject `{interface_ip:"auto"}` when the SDP
@@ -1760,7 +1838,7 @@ export class NmosRegistryConnector {
             }
         }
 
-        let receiverLegCount = receiver.interface_bindings.length;
+        let receiverLegCount = mxlMode ? 0 : receiver.interface_bindings.length;
         for(let i = 0; i < receiverLegCount; i++){
             if(senderInfo.senderId == "disconnect"){
                 patch.transport_params.push({ rtp_enabled: false });
@@ -1830,7 +1908,7 @@ export class NmosRegistryConnector {
 
         let versionFound = false;
         let controlHrefs = [];
-        let controlTypes = [{type:"urn:x-nmos:control:sr-ctrl/v1.1",version:"v1.1"}, {type:"urn:x-nmos:control:sr-ctrl/v1.0",version:"v1.0"}]
+        let controlTypes = this.connectControlTypes();
 
         for(let type of controlTypes){
             device.controls.forEach((control)=>{
@@ -1898,7 +1976,7 @@ export class NmosRegistryConnector {
             let sender = this.nmosState.senders[senderId];
             let device = this.nmosState.devices[sender.device_id];
 
-            let controlTypes = [{type:"urn:x-nmos:control:sr-ctrl/v1.1",version:"v1.1"}, {type:"urn:x-nmos:control:sr-ctrl/v1.0",version:"v1.0"}]
+            let controlTypes = this.connectControlTypes();
 
             for(let type of controlTypes){
                 device.controls.forEach((control)=>{
@@ -2001,10 +2079,7 @@ export class NmosRegistryConnector {
             }
             let device = this.nmosState.devices[receiver.device_id];
 
-            let controlTypes = [
-                {type:"urn:x-nmos:control:sr-ctrl/v1.1", version:"v1.1"},
-                {type:"urn:x-nmos:control:sr-ctrl/v1.0", version:"v1.0"}
-            ];
+            let controlTypes = this.connectControlTypes();
             for(let type of controlTypes){
                 device.controls.forEach((control:any)=>{
                     if(control.type == type.type){
@@ -2087,6 +2162,14 @@ export class NmosRegistryConnector {
 
     async setFlowMulticast(senderId:string, data:any){
 
+        // Destination addresses exist for RTP only — an MXL sender (or any
+        // other transport) has nothing to set and would reject the PATCH.
+        const tr = "" + (this.nmosState.senders?.[senderId]?.transport || "");
+        if(tr && tr !== "urn:x-nmos:transport:rtp" && tr !== "urn:x-nmos:transport:rtp.mcast"){
+            SyncLog.log("warning", "nmos", "Not setting a multicast on " + senderId + ": transport " + tr + " has no destination address.");
+            return;
+        }
+
         try{
             let versionFound = false;
             let controlHrefs = [];
@@ -2094,7 +2177,7 @@ export class NmosRegistryConnector {
             let sender = this.nmosState.senders[senderId];
             let device = this.nmosState.devices[sender.device_id];
 
-            let controlTypes = [{type:"urn:x-nmos:control:sr-ctrl/v1.1",version:"v1.1"}, {type:"urn:x-nmos:control:sr-ctrl/v1.0",version:"v1.0"}]
+            let controlTypes = this.connectControlTypes();
 
             for(let type of controlTypes){
                 device.controls.forEach((control)=>{
@@ -2367,7 +2450,7 @@ export class NmosRegistryConnector {
             // Accept both supported IS-05 control versions — QSC and other
             // newer devices advertise v1.1 only. v1.1 wins when both are
             // present (newer schema, better field coverage).
-            let preferred = ["urn:x-nmos:control:sr-ctrl/v1.1", "urn:x-nmos:control:sr-ctrl/v1.0"];
+            let preferred = this.connectControlTypes().map((c) => c.type);
             for(let ctrlType of preferred){
                 for(let c of device.controls){
                     if(c && c.type === ctrlType){
@@ -2402,6 +2485,9 @@ export class NmosRegistryConnector {
 
         let sender = this.nmosState.senders[senderId];
         if(!sender){ return; }
+        // Leases are multicast addresses — only RTP senders have one. An MXL
+        // sender would otherwise get a lease and a PATCH it must reject.
+        if(sender.transport !== "urn:x-nmos:transport:rtp" && sender.transport !== "urn:x-nmos:transport:rtp.mcast"){ return; }
         let flow:any = this.nmosState.flows[sender.flow_id];
         if(!flow){ return; }
         let source:any = this.nmosState.sources[flow.source_id];

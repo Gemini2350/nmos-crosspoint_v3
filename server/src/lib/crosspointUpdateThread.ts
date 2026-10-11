@@ -976,6 +976,9 @@ class CrosspointUpdateThread{
                                         this.nmosState.senders[nmosId].transport == "urn:x-nmos:transport:rtp.mcast"
                                     ){
                                         source.capabilities.transport = "rtp";
+                                    }else if(this.nmosState.senders[nmosId].transport == "urn:x-nmos:transport:mxl"){
+                                        // BCP-007-03 — connects to MXL receivers only
+                                        source.capabilities.transport = "mxl";
                                     }
                                     source.capabilities.mediaTypes.push(this.nmosState.flows[this.nmosState.senders[nmosId].flow_id].media_type);
                                     // Subscription may not yet be populated for a freshly-
@@ -1037,6 +1040,8 @@ class CrosspointUpdateThread{
                                         this.nmosState.receivers[nmosId].transport == "urn:x-nmos:transport:rtp.mcast"
                                     ){
                                         receiver.capabilities.transport = "rtp";
+                                    }else if(this.nmosState.receivers[nmosId].transport == "urn:x-nmos:transport:mxl"){
+                                        receiver.capabilities.transport = "mxl";
                                     }
                                     // Same defensive treatment as the sender side — a brand-
                                     // new IS-04 receiver may lack `subscription` or `caps`
@@ -1406,6 +1411,12 @@ class CrosspointUpdateThread{
 
             // -------- NMOS
             for(let senderId in this.nmosState.senderActiveData){
+                // Multicast addresses exist for RTP only. An MXL sender's
+                // transport_params carry no destination_ip at all, and every
+                // one of them landed under the key "undefined" — a phantom
+                // "duplicate" between all MXL senders.
+                const senderTransport = this.nmosState.senders?.[senderId]?.transport;
+                if(senderTransport && senderTransport !== "urn:x-nmos:transport:rtp" && senderTransport !== "urn:x-nmos:transport:rtp.mcast"){ continue; }
                 let nmosId = "nmos_"+senderId
                 let activeData = this.nmosState.senderActiveData[senderId];
                 let multicast = [];

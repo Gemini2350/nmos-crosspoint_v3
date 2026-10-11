@@ -623,23 +623,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                             }else{
                                 for(let srcFlow of srcFlows){
                                     // TODO websocket/mqtt flwos interop
-                                    let connect = false;
-                                    if(dstFlow.type == "audio" && srcFlow.type == "audio"){
-                                        // TODO check for capabilities
-                                        connect = true;
-                                    }else if(dstFlow.type == "video" && srcFlow.type == "video"){
-                                        // TODO check for capabilities
-                                        connect = true;
-                                    }else if(dstFlow.type == "data"){
-                                        if(srcFlow.type == "data"){
-                                            // TODO check for capabilities
-                                            connect = true;
-                                        }
-                                    }else{
-                                        if(dstFlow.type == srcFlow.type){
-                                            connect = true;
-                                        }
-                                    }
+                                    // Same rule the matrix draws its cells with.
+                                    let connect = this.flowsCompatible(dstFlow, srcFlow);
 
                                     if(connect && !usedSources.includes(srcFlow.id)){
                                         if(connection.src == null){
@@ -1116,6 +1101,134 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     // IS-05 /active is authoritative for what a sender is currently
     // transmitting. The SDP may lag (or 404 for inactive senders) so we
     // only fall back to it when no transport_params exist.
+    /** Can this sender go to this receiver? Same essence type; MXL only
+     *  with MXL (BCP-007-03); and where the receiver's BCP-004-01 caps were
+     *  evaluated, the sender's flow signature must be among the accepted. */
+    public flowsCompatible(dst:any, src:any): boolean {
+        if(!dst || !src || dst.type !== src.type) return false;
+        const dMxl = dst.capabilities?.transport === "mxl";
+        const sMxl = src.capabilities?.transport === "mxl";
+        if(dMxl !== sMxl) return false;
+        if(Array.isArray(dst.capOk)) return !!src.capSig && dst.capOk.includes(src.capSig);
+        return true;
+    }
+
+    /** mxl_domain_id / mxl_flow_id from an MXL sender's IS-05 /active. */
+    private buildMxlFromNmos(nmosSenderId:string): { domainId:string, flowId:string } | null {
+        try{
+            const tp:any = this.nmosState?.senderActiveData?.[nmosSenderId]?.transport_params?.[0];
+            if(!tp) return null;
+            const str = (v:any) => (typeof v === "string" && v !== "auto") ? v : "";
+            return { domainId: str(tp.mxl_domain_id), flowId: str(tp.mxl_flow_id) };
+        }catch(e){ return null; }
+    }
+
+    // ---- BCP-004-01 Receiver Capabilities --------------------------------
+    // The Flow attributes a Receiver's Parameter Constraints test against,
+    // keyed by the constraint's URN from the Capabilities register. Absent
+    // attributes stay absent: a constraint whose target is unknown cannot be
+    // evaluated and is ignored (BCP-004-01, Behaviour: Controllers).
+    private flowCapAttrs(nmosSenderId:string): { [cap:string]: any } {
+        const a: { [cap:string]: any } = {};
+        try{
+            const snd:any = this.nmosState?.senders?.[nmosSenderId];
+            const flow:any = snd ? this.nmosState?.flows?.[snd.flow_id] : null;
+            if(!flow) return a;
+            const src:any = this.nmosState?.sources?.[flow.source_id];
+            const C = "urn:x-nmos:cap:format:";
+            const set = (k:string, v:any) => { if(v !== undefined && v !== null && v !== ""){ a[C + k] = v; } };
+            set("media_type", flow.media_type);
+            set("grain_rate", flow.grain_rate);
+            set("frame_width", flow.frame_width);
+            set("frame_height", flow.frame_height);
+            set("interlace_mode", flow.interlace_mode);
+            set("colorspace", flow.colorspace);
+            set("transfer_characteristic", flow.transfer_characteristic);
+            set("sample_rate", flow.sample_rate);
+            set("sample_depth", flow.bit_depth);
+            set("event_type", flow.event_type);
+            if(Array.isArray(flow.components) && flow.components.length > 0){
+                set("component_depth", flow.components[0]?.bit_depth);
+                set("color_sampling", this.colorSamplingOf(flow.components));
+            }
+            if(Array.isArray(src?.channels)){ set("channel_count", src.channels.length); }
+        }catch(e){}
+        return a;
+    }
+
+    /** "YCbCr-4:2:2" etc. from the IS-04 components (the Capabilities register
+     *  values); "" when the layout is not one of the common ones. */
+    private colorSamplingOf(components:any[]): string {
+        const by:any = {};
+        for(const c of components){ if(c && c.name){ by[c.name] = c; } }
+        if(by.R && by.G && by.B) return "RGB";
+        if(by.Y && by.Cb && by.Cr){
+            const w = by.Cb.width / by.Y.width, h = by.Cb.height / by.Y.height;
+            if(w === 1 && h === 1) return "YCbCr-4:4:4";
+            if(w === 0.5 && h === 1) return "YCbCr-4:2:2";
+            if(w === 0.5 && h === 0.5) return "YCbCr-4:2:0";
+            if(w === 0.25 && h === 1) return "YCbCr-4:1:1";
+        }
+        return "";
+    }
+
+    private capSignature(attrs:{ [cap:string]: any }): string {
+        const keys = Object.keys(attrs).sort();
+        return md5(JSON.stringify(keys.map((k) => [k, attrs[k]]))).substring(0, 12);
+    }
+
+    /** Signatures (out of `sigs`) whose flows this receiver's caps accept.
+     *  IS-04 `caps.media_types` / `event_types` and BCP-004-01
+     *  `constraint_sets` must ALL be satisfied; within each, ANY alternative.
+     *  A receiver without caps accepts everything. */
+    private receiverAcceptedSigs(nmosReceiverId:string, sigs:{ [sig:string]: any }): string[] {
+        const recv:any = this.nmosState?.receivers?.[nmosReceiverId];
+        const caps:any = recv?.caps || {};
+        const ok: string[] = [];
+        for(const sig of Object.keys(sigs)){
+            const a = sigs[sig];
+            const C = "urn:x-nmos:cap:format:";
+            if(Array.isArray(caps.media_types) && a[C + "media_type"] !== undefined && !caps.media_types.includes(a[C + "media_type"])) continue;
+            if(Array.isArray(caps.event_types) && a[C + "event_type"] !== undefined && !caps.event_types.includes(a[C + "event_type"])) continue;
+            if(Array.isArray(caps.constraint_sets)){
+                const live = caps.constraint_sets.filter((cs:any) => cs && cs["urn:x-nmos:cap:meta:enabled"] !== false);
+                // "When the list is empty, or none of the Constraint Sets are
+                // satisfied, the constraint_sets as a whole is not satisfied."
+                if(!live.some((cs:any) => this.constraintSetSatisfied(cs, a))) continue;
+            }
+            ok.push(sig);
+        }
+        return ok;
+    }
+
+    private constraintSetSatisfied(cs:any, attrs:{ [cap:string]: any }): boolean {
+        for(const key of Object.keys(cs)){
+            if(key.startsWith("urn:x-nmos:cap:meta:")) continue;      // metadata, not a constraint
+            if(!(key in attrs)) continue;                             // unknown / not evaluable → ignored
+            if(!this.parameterConstraintSatisfied(cs[key], attrs[key])) return false;
+        }
+        return true;   // includes "nothing evaluable" → SHOULD be considered satisfied
+    }
+
+    private parameterConstraintSatisfied(c:any, value:any): boolean {
+        if(!c || typeof c !== "object") return true;
+        const isRational = (v:any) => v && typeof v === "object" && typeof v.numerator === "number";
+        // Rationals compared by cross-multiplication, as BCP-004-01 asks.
+        const cmp = (x:any, y:any) => {
+            if(isRational(x) || isRational(y)){
+                const xn = isRational(x) ? x.numerator : x, xd = isRational(x) ? (x.denominator || 1) : 1;
+                const yn = isRational(y) ? y.numerator : y, yd = isRational(y) ? (y.denominator || 1) : 1;
+                const l = xn * yd, r = yn * xd, sign = (xd * yd) < 0 ? -1 : 1;
+                return sign * (l - r);
+            }
+            return (typeof x === "number" && typeof y === "number") ? (x - y) : (x === y ? 0 : NaN);
+        };
+        if(Array.isArray(c.enum) && !c.enum.some((e:any) => cmp(e, value) === 0)) return false;
+        if(c.minimum !== undefined && !(cmp(value, c.minimum) >= 0)) return false;
+        if(c.maximum !== undefined && !(cmp(value, c.maximum) <= 0)) return false;
+        return true;
+    }
+
     private buildLegsFromNmos(nmosSenderId:string): CrosspointFlowLeg[] {
         let legs:CrosspointFlowLeg[] = [];
         if(!nmosSenderId || !this.nmosState) return legs;
@@ -1446,7 +1559,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // only two active senders on the SAME leg index clash.
         let activeLegIps: { [legIndex:number]: { [ip:string]: Array<{id:string,label:string}> } } = {};
         let activeLegRefs: Array<{ leg:CrosspointFlowLeg, flowId:string }> = [];
-        let senderInfoById: { [id:string]: { legs:CrosspointFlowLeg[], codec:string, format:string, bitrate:CrosspointFlowBitrate, label:string } } = {};
+        let senderInfoById: { [id:string]: { legs:CrosspointFlowLeg[], mxl:any, codec:string, format:string, bitrate:CrosspointFlowBitrate, label:string } } = {};
+        // Distinct flow signatures of all MXL senders → their attributes.
+        // Receivers' caps are evaluated once per signature, not per sender.
+        let mxlSenderSigs: { [sig:string]: { [cap:string]: any } } = {};
         for(let dev of this.crosspointState.devices){
             let nodeLabel = nodeLabelByDev[dev.id] || "";
             let devIsVirtual = isVirtualByDev[dev.id] === true;
@@ -1454,7 +1570,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 for(let s of (dev.senders as any)[type] || []){
                     if(!s) continue;
                     let nmosId = (typeof s.id === "string" && s.id.startsWith("nmos_")) ? s.id.substring(5) : "";
-                    let legs = nmosId ? this.buildLegsFromNmos(nmosId) : [];
+                    const isMxl = s.capabilities?.transport === "mxl";
+                    // MXL has no legs: no addresses, no ports, no interface bindings.
+                    let legs = (nmosId && !isMxl) ? this.buildLegsFromNmos(nmosId) : [];
                     let codec = nmosId ? this.buildCodecFromManifest(nmosId) : "";
                     if(!codec && s.capabilities?.mediaTypes){
                         codec = this.mediaTypesToCodec(s.capabilities.mediaTypes);
@@ -1462,6 +1580,12 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     let sf = s as CrosspointFlow;
                     sf.legs = legs;
                     sf.codec = codec;
+                    sf.mxl = isMxl ? this.buildMxlFromNmos(nmosId) : null;
+                    if(isMxl && nmosId){
+                        const attrs = this.flowCapAttrs(nmosId);
+                        sf.capSig = this.capSignature(attrs);
+                        mxlSenderSigs[sf.capSig] = attrs;
+                    }
                     // BCP-008-02 sender health (device-computed worst-of-all).
                     sf.monitor = this.buildMonitorStatus(nmosId);
                     // Mark virtual-sender flows so the Details page can skip
@@ -1484,6 +1608,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
                     senderInfoById[s.id] = {
                         legs,
+                        mxl:     sf.mxl,
                         codec,
                         format:  s.format || "",
                         bitrate: s.bitrate,
@@ -1541,6 +1666,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     let connected = r.connectedFlow ? senderInfoById[r.connectedFlow] : null;
                     let f = r as CrosspointFlow;
                     let nmosId = (typeof r.id === "string" && r.id.startsWith("nmos_")) ? r.id.substring(5) : "";
+                    f.mxl = connected ? (connected.mxl || null) : null;
+                    if(f.capabilities?.transport === "mxl" && nmosId){
+                        f.capOk = this.receiverAcceptedSigs(nmosId, mxlSenderSigs);
+                    }
                     if(connected){
                         f.legs    = connected.legs;
                         f.codec   = connected.codec;
@@ -1814,6 +1943,14 @@ export interface CrosspointFlow {
     // raw NMOS state.
     legs?:CrosspointFlowLeg[],
     codec?:string,
+    // BCP-007-03: an MXL flow has no addresses, it has a domain and a flow
+    // id (sender: its /active; receiver: those of the connected sender).
+    mxl?:{ domainId:string, flowId:string } | null,
+    // BCP-004-01 compatibility, computed here so the UI only compares:
+    // sender — signature of the flow attributes receivers' caps test against;
+    // receiver — the signatures its caps accept (only set where evaluated).
+    capSig?:string,
+    capOk?:string[],
     // Receiver-only: identity + display label of the currently-connected
     // sender (mirrored from the sender side so the Details page can show
     // "← <Device> / <Sender>" without a second lookup).
@@ -1929,7 +2066,9 @@ export interface CrosspointConnectionSenderInfo {
     interfaces:any[],
     active:boolean,
     error:string,
-    transport:string
+    transport:string,
+    // BCP-007-03: what an MXL receiver has to read (from the sender's /active)
+    mxl?:{ flowId:string, domainId:string }
 }
 
 export interface CrosspointShadowDevice {

@@ -408,6 +408,30 @@ $det-color-data:  theme('colors.blue.500');
         padding-left: 28px;
     }
 
+    // MXL (BCP-007-03) in the legs column: a domain and a flow id instead
+    // of addresses. Starts on the same edge as the multicast values (the
+    // pencil footprint), ids in monospace, shortened — the full ids are in
+    // the tooltip and in the IP search.
+    .det-mxl {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-left: 28px;
+    }
+    .det-mxl-tag {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 0 5px;
+        border-radius: 4px;
+        border: 1px solid currentColor;
+        opacity: 0.7;
+    }
+    .det-mxl-id {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+    }
+
     // "Virtual" badge next to the sender name.
     .det-virtual-badge {
         font-size: 0.68rem;

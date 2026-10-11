@@ -84,6 +84,8 @@
       // returns 405 for virtual senders (their address comes from the
       // pasted SDP, not from IS-05).
       isVirtual:boolean;
+      // BCP-007-03 MXL sender: domain + flow id instead of legs.
+      mxl:{ domainId:string, flowId:string } | null;
     }
     interface ReceiverRow {
       id:string;
@@ -100,6 +102,10 @@
       format:string;
       bitrate:any;
       legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string, dup?:boolean, dupText?:string }>;
+      // MXL receiver: what it reads (copied from the connected sender), or
+      // isMxl with null when nothing is connected yet.
+      isMxl:boolean;
+      mxl:{ domainId:string, flowId:string } | null;
     }
     interface DeviceRow {
       id:string;
@@ -259,7 +265,8 @@
             bitrate: s.bitrate,
             legs,
             sdp: (typeof s.sdp === "string") ? s.sdp : "",
-            isVirtual: !!s.isVirtual
+            isVirtual: !!s.isVirtual,
+            mxl: s.capabilities?.transport === "mxl" ? (s.mxl || { domainId:"", flowId:"" }) : null
           };
 
           if(searchTokens.length > 0){
@@ -275,7 +282,7 @@
             }
           }
           if(ipTokens.length > 0){
-            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ");
+            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ") + (row.mxl ? " " + row.mxl.flowId + " " + row.mxl.domainId : "");
             if(!tokenSearch(ipStr, ipTokens)){
               return;
             }
@@ -307,7 +314,9 @@
             connectedSenderLabel: r.connectedSenderLabel || "",
             format: r.format || "",
             bitrate: r.bitrate,
-            legs: Array.isArray(r.legs) ? r.legs : []
+            legs: Array.isArray(r.legs) ? r.legs : [],
+            isMxl: r.capabilities?.transport === "mxl",
+            mxl: r.mxl || null
           };
 
           if(searchTokens.length > 0){
@@ -323,7 +332,7 @@
             }
           }
           if(ipTokens.length > 0){
-            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ");
+            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ") + (row.mxl ? " " + row.mxl.flowId + " " + row.mxl.domainId : "");
             if(!tokenSearch(ipStr, ipTokens)){
               return;
             }
@@ -1142,7 +1151,16 @@
                       </div>
                     </td>
                     <td class="det-cell-legs">
-                      {#if flow.legs.length === 0}
+                      {#if flow.mxl}
+                        <!-- BCP-007-03: no addresses, no ports — a domain and a
+                             flow id, both set on the device, not here. -->
+                        <div class="det-mxl" use:OverlayMenuService.tooltip
+                             data-tooltip={"MXL (BCP-007-03)\nDomain: " + (flow.mxl.domainId || "—") + "\nFlow: " + (flow.mxl.flowId || "—")}>
+                          <span class="det-mxl-tag">MXL</span>
+                          <span class="det-mxl-id">{flow.mxl.flowId ? flow.mxl.flowId.substring(0, 8) : "no flow"}</span>
+                          <span class="det-media-muted">@ {flow.mxl.domainId ? flow.mxl.domainId.substring(0, 8) : "auto"}</span>
+                        </div>
+                      {:else if flow.legs.length === 0}
                         <span class="det-media-muted">—</span>
                       {:else}
                         <div class="det-legs">
@@ -1217,10 +1235,12 @@
                           🎧
                         </button>
                       {/if}
+                      {#if !flow.mxl}
                       <button class="det-icon-btn det-hover" on:click={()=>openSdpView(flow)}
                               use:OverlayMenuService.tooltip data-tooltip="Show SDP file">
                         <Icon src={DocumentText}></Icon>
                       </button>
+                      {/if}
                     </td>
                   </tr>
                 {/each}
@@ -1289,7 +1309,18 @@
                       </div>
                     </td>
                     <td class="det-cell-legs">
-                      {#if recv.legs.length === 0}
+                      {#if recv.isMxl}
+                        <div class="det-mxl" use:OverlayMenuService.tooltip
+                             data-tooltip={recv.mxl ? "MXL (BCP-007-03)\nReads flow: " + (recv.mxl.flowId || "—") + "\nSender's domain: " + (recv.mxl.domainId || "—") + "\n(a receiver staged with domain \"auto\" may read a replica in another domain)" : "MXL receiver — nothing connected"}>
+                          <span class="det-mxl-tag">MXL</span>
+                          {#if recv.mxl && recv.mxl.flowId}
+                            <span class="det-mxl-id">{recv.mxl.flowId.substring(0, 8)}</span>
+                            <span class="det-media-muted">@ {recv.mxl.domainId ? recv.mxl.domainId.substring(0, 8) : "auto"}</span>
+                          {:else}
+                            <span class="det-media-muted">—</span>
+                          {/if}
+                        </div>
+                      {:else if recv.legs.length === 0}
                         <span class="det-media-muted">—</span>
                       {:else}
                         <div class="det-legs">

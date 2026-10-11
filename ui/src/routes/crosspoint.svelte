@@ -863,11 +863,17 @@
  
 
 
+    // Mirrors CrosspointAbstraction.flowsCompatible() on the server — the
+    // fields it compares are all computed there: same essence type; MXL
+    // only with MXL (BCP-007-03); where the receiver's BCP-004-01 caps were
+    // evaluated (capOk), the sender's flow signature must be accepted.
     function receiverCapable(dest:any, src:any){
-      if(dest.type == src.type){
-        return true;
-      }
-      return false;
+      if(dest.type != src.type) return false;
+      const dMxl = dest.capabilities?.transport === "mxl";
+      const sMxl = src.capabilities?.transport === "mxl";
+      if(dMxl !== sMxl) return false;
+      if(Array.isArray(dest.capOk)) return !!src.capSig && dest.capOk.includes(src.capSig);
+      return true;
     }
 
 
