@@ -5,6 +5,7 @@
     import sha256 from "js-sha256";
 
     import { Icon, ExclamationTriangle, CheckCircle, Plus, Trash } from "svelte-hero-icons";
+    import HelpTip from "../lib/HelpTip.svelte";
 
     interface VendorProfile {
       id: string;
@@ -793,7 +794,7 @@
     {#if dirty}
       <div class="alert alert-warning setup-alert">
         <Icon src={ExclamationTriangle} />
-        <span>You have unsaved changes. Click the <strong>Save</strong> button at the bottom of the page to persist them to <code>./config/settings.json</code>.</span>
+        <span>Unsaved changes. Click <strong>Save</strong> at the bottom of the page.</span>
       </div>
     {/if}
 
@@ -801,14 +802,16 @@
     <h2 class="setup-group">Connection</h2>
 
     <section class="setup-section">
-      <h3>NMOS Registry</h3>
-      <p class="setup-section-hint">
-        How the server finds the NMOS registry. With discovery enabled it first
-        queries the DNS search domain for unicast DNS-SD records
-        (_nmos-register._tcp) and falls back to mDNS when nothing is found.
-        A static IP entered below always wins over any discovered registry.
-        Leave the IP empty to rely on discovery alone.
-      </p>
+      <div class="setup-section-head">
+        <h3>NMOS Registry</h3>
+        <HelpTip label="About the NMOS registry">
+          <p>How the server finds the NMOS registry. With discovery enabled it first
+          queries the DNS search domain for unicast DNS-SD records
+          (<code>_nmos-register._tcp</code>) and falls back to mDNS when nothing is found.</p>
+          <p>A static IP entered below always wins over any discovered registry.
+          Leave the IP empty to rely on discovery alone.</p>
+        </HelpTip>
+      </div>
 
       <div class="setup-form">
         <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
@@ -849,10 +852,14 @@
                  127.0.0.53 stub, and Docker replaces the file inside the
                  container WITHOUT the search list. `resolvectl domain` on the
                  host then shows a domain the container never sees. -->
-            <span>no DNS search domain found. The host may still have one — on a systemd-resolved host Docker
-              hands the container its own <code>resolv.conf</code> without the search list. Either set the domain above,
-              start the container with <code>--dns-search &lt;domain&gt;</code> (compose: <code>dns_search:</code>),
-              or mount <code>/run/systemd/resolve</code> into it. Otherwise mDNS and the static IP take over.</span>
+            <span>no DNS search domain found, mDNS and the static IP take over</span>
+            <HelpTip label="Why no search domain?">
+              <p>The host may still have one: on a systemd-resolved host Docker hands the
+              container its own <code>resolv.conf</code> without the search list.</p>
+              <p>Either set the domain above, start the container with
+              <code>--dns-search &lt;domain&gt;</code> (compose: <code>dns_search:</code>),
+              or mount <code>/run/systemd/resolve</code> into it.</p>
+            </HelpTip>
           {/if}
         </div>
         {#if registryStatusList.length === 0}
@@ -878,13 +885,15 @@
 
 
     <section class="setup-section">
-      <h3>Acceptable PTP GMID</h3>
-      <p class="setup-section-hint">
-        Expected PTP Grand-Master ID. Devices whose node clock is locked to this GMID
-        get a <span class="setup-dot setup-dot-success"></span> green status dot on the
-        Details page, all others get a <span class="setup-dot setup-dot-warning"></span> yellow one.
-        Leave empty to disable the comparison.
-      </p>
+      <div class="setup-section-head">
+        <h3>Acceptable PTP GMID</h3>
+        <HelpTip label="About the PTP GMID">
+          <p>Expected PTP Grand-Master ID. Devices whose node clock is locked to this GMID
+          get a <span class="setup-dot setup-dot-success"></span> green status dot on the
+          Details page, all others get a <span class="setup-dot setup-dot-warning"></span> yellow one.
+          Leave empty to disable the comparison.</p>
+        </HelpTip>
+      </div>
 
       <div class="setup-form">
         <label class="setup-field">
@@ -899,40 +908,34 @@
     <h2 class="setup-group">Switching</h2>
 
     <section class="setup-section">
-      <h3>Receiver Auto-Reconnect</h3>
-      <p class="setup-section-hint">
-        Whenever a sender's SDP changes (Multicast IP / port or like channel count,
-        video format, colorimetry) redo the connection of every receiver currently
-        subscribed to it so they pick up the new manifest. Recommended ON for
-        production. The one-shot „Renew from Pool" sweep in <em>Multicast DHCP</em>
-        ignores this setting and always reconnects.
-      </p>
-
-      <div class="setup-form">
-        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Auto-reconnect receivers on sender SDP change</span>
-          <input type="checkbox" class="toggle" bind:checked={formReconnectReceivers} on:change={markDirty} />
-        </label>
+      <div class="setup-section-head">
+        <h3>Receiver Auto-Reconnect</h3>
+        <HelpTip label="About receiver auto-reconnect">
+          <p>Whenever a sender's SDP changes (multicast IP / port, or e.g. channel count,
+          video format, colorimetry), redo the connection of every receiver currently
+          subscribed to it so they pick up the new manifest. Recommended on for production.</p>
+          <p>The one-shot „Renew from Pool" sweep in <em>Multicast DHCP</em>
+          ignores this setting and always reconnects.</p>
+        </HelpTip>
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Auto-reconnect receivers on sender SDP change"
+               bind:checked={formReconnectReceivers} on:change={markDirty} />
       </div>
     </section>
 
 
     <section class="setup-section">
-      <h3>Crosspoint: Auto-Activate Sender</h3>
-      <p class="setup-section-hint">
-        When a connection is made on the Crosspoint page whose source sender is
-        currently <em>inactive</em> (master_enable&nbsp;=&nbsp;false), automatically
-        PATCH that sender active first, wait for it to (re)publish its SDP,
-        and only then patch the receiver. Off by default. Many control rooms
-        have sender activation through a separate workflow and don't want a
-        stray click on the matrix to push a sender in transmitting state.
-      </p>
-
-      <div class="setup-form">
-        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Auto-activate inactive sender on Crosspoint connect</span>
-          <input type="checkbox" class="toggle" bind:checked={formAutoActivateSender} on:change={markDirty} />
-        </label>
+      <div class="setup-section-head">
+        <h3>Crosspoint: Auto-Activate Sender</h3>
+        <HelpTip label="About auto-activating senders">
+          <p>When a connection is made on the Crosspoint page whose source sender is
+          currently <em>inactive</em> (<code>master_enable&nbsp;=&nbsp;false</code>), automatically
+          PATCH that sender active first, wait for it to (re)publish its SDP,
+          and only then patch the receiver.</p>
+          <p>Off by default. Many control rooms activate senders through a separate
+          workflow and don't want a stray click on the matrix to put a sender on air.</p>
+        </HelpTip>
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Auto-activate inactive sender on Crosspoint connect"
+               bind:checked={formAutoActivateSender} on:change={markDirty} />
       </div>
     </section>
 
@@ -940,80 +943,65 @@
     <h2 class="setup-group">Monitoring</h2>
 
     <section class="setup-section">
-      <h3>BCP-008 Status Monitoring</h3>
-      <p class="setup-section-hint">
-        Live health monitoring of senders and receivers via
-        <strong>AMWA BCP-008</strong> (IS-12 control protocol): for every
-        device that advertises an <code>ncp</code> control endpoint, the
-        server subscribes to its NcSender-/NcReceiverMonitors and shows the
-        health as a heart symbol per flow in the Crosspoint matrix. With
-        the four status domains (Link / Connection / Sync / Stream resp.
-        Transmission / Essence), transition counters, a counter reset and
-        coloured crosspoints when an endpoint of an active connection
-        degrades. Read-only on the network (it never changes device state).
-        Devices without BCP-008 support simply show a greyed-out symbol.
-      </p>
-
-      <div class="setup-form">
-        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Enable BCP-008 Status Monitoring</span>
-          <input type="checkbox" class="toggle" bind:checked={formBcp008Enabled} on:change={markDirty} />
-        </label>
+      <div class="setup-section-head">
+        <h3>BCP-008 Status Monitoring</h3>
+        <HelpTip label="About BCP-008 status monitoring">
+          <p>Live health monitoring of senders and receivers via
+          <strong>AMWA BCP-008</strong> (IS-12 control protocol): for every
+          device that advertises an <code>ncp</code> control endpoint, the
+          server subscribes to its NcSender-/NcReceiverMonitors and shows the
+          health as a heart symbol per flow in the Crosspoint matrix.</p>
+          <p>With the four status domains (Link / Connection / Sync / Stream resp.
+          Transmission / Essence), transition counters, a counter reset and
+          coloured crosspoints when an endpoint of an active connection degrades.</p>
+          <p>Read-only on the network (it never changes device state).
+          Devices without BCP-008 support show a greyed-out symbol.</p>
+        </HelpTip>
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable BCP-008 Status Monitoring"
+               bind:checked={formBcp008Enabled} on:change={markDirty} />
       </div>
     </section>
 
 
     <section class="setup-section">
-      <h3>Audio Monitor (experimental)</h3>
-      <p class="setup-section-hint">
-        Adds a 🎧 button next to each audio sender on the Details page.
-        Clicking it makes the server join that sender's multicast on
-        demand, transcode the PCM to Opus 48 kHz stereo and stream it to
-        your browser via WebRTC. Useful for quick monitoring without
-        needing a dedicated probe receiver. Only one sender is monitored
-        at a time per browser tab; multi-channel streams (8 ch / 16 ch
-        AES67) expose a channel-pair selector in the player overlay.
-        Off by default. The feature costs CPU per active monitor.
-        With this toggle off the 🎧 button is hidden entirely.
-      </p>
-      <details class="setup-more"><summary>More details</summary>
-      <p class="setup-section-hint">
-        <strong>Network requirement:</strong> the server must have access to
-        the multicast / media network to receive the streams (IGMP join on
-        the ST&nbsp;2110 VLAN). When running in Docker this means
-        <code>--network host</code> (or a macvlan/interface in the media
-        VLAN). With the default bridge network the 🎧 button will connect
-        but stay silent. Alternatively run a <strong>probe</strong> container
-        on a host that IS attached to the media network (see below) — the
-        crosspoint then needs no multicast access at all.
-      </p>
-      </details>
-
-      <div class="setup-form">
-        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Enable Audio Monitor</span>
-          <input type="checkbox" class="toggle" bind:checked={formAudioMonitorEnabled} on:change={markDirty} />
-        </label>
+      <div class="setup-section-head">
+        <h3>Audio Monitor (experimental)</h3>
+        <HelpTip label="About the audio monitor">
+          <p>Adds a 🎧 button next to each audio sender on the Details page.
+          Clicking it makes the server join that sender's multicast on
+          demand, transcode the PCM to Opus 48 kHz stereo and stream it to
+          your browser via WebRTC. One sender per browser tab; multi-channel
+          streams (8 ch / 16 ch AES67) get a channel-pair selector in the player.</p>
+          <p>Off by default, it costs CPU per active monitor. With the toggle off
+          the 🎧 button is hidden.</p>
+          <p><strong>Network requirement:</strong> the server must reach the
+          media network to receive the streams (IGMP join on the ST&nbsp;2110 VLAN).
+          In Docker this means <code>--network host</code> (or a macvlan/interface
+          in the media VLAN); on the default bridge network the 🎧 button connects
+          but stays silent. Alternatively use a probe (below).</p>
+        </HelpTip>
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable Audio Monitor"
+               bind:checked={formAudioMonitorEnabled} on:change={markDirty} />
       </div>
 
-      <h4 class="setup-subhead">Multicast Probe</h4>
-      <p class="setup-section-hint">
-        A helper container on a host attached to the media network: it
-        receives the multicast there and forwards it to this server as
-        unicast. When a probe is connected the Audio Monitor uses it
-        automatically instead of a local IGMP join, so this server needs
-        no multicast access at all. It is the same image started in probe
-        mode:
-      </p>
+      <div class="setup-subhead">
+        <h4>Multicast Probe</h4>
+        <HelpTip label="About the multicast probe">
+          <p>A helper container on a host attached to the media network: it
+          receives the multicast there and forwards it to this server as
+          unicast. When a probe is connected the Audio Monitor uses it
+          automatically instead of a local IGMP join, so this server needs
+          no multicast access at all. It is the same image started in probe
+          mode, with the command below.</p>
+          <p>The token is minted once and persisted in <code>settings.json</code>,
+          so it survives updates and restarts as long as the config volume is
+          mounted (container path <code>/nmos-crosspoint/server/config</code>).
+          A probe therefore only needs to be configured once.</p>
+        </HelpTip>
+      </div>
       <div class="setup-probe-cmd">
-        <code>docker run -d --name nmos_crosspoint_v3_probe --restart unless-stopped --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" ghcr.io/qvest-digital/dmf-app-nmos-crosspoint</code>
+        <code>docker run -d --name nmos_crosspoint_v3_probe --restart unless-stopped --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" gemini2350/nmos-crosspoint_v3</code>
       </div>
-      <p class="setup-section-hint">
-        The token is minted once and persisted in <code>settings.json</code>,
-        so it survives updates and restarts as long as the config volume is
-        mounted (container path <code>/nmos-crosspoint/server/config</code>).
-        A probe therefore only needs to be configured once.
-      </p>
       <div class="setup-form">
         <label class="setup-field">
           <span class="setup-label">Probe token</span>
@@ -1043,35 +1031,26 @@
     <h2 class="setup-group">Addressing &amp; Integration</h2>
 
     <section class="setup-section">
-      <h3>Multicast DHCP</h3>
-      <p class="setup-section-hint">
-        When enabled, the server reserves a pair of consecutive multicast addresses per <strong>active</strong> sender
-        (odd for Leg 1, even = odd + 1 for Leg 2). The reservation is kept for the lifetime of the
-        device. Even if the sender goes offline. And is only released when the device is
-        explicitly <em>Forgotten</em> on the Details page or its lease is deleted in the inventory below.
-      </p>
-      <details class="setup-more"><summary>More details</summary>
-      <p class="setup-section-hint">
-        <strong>An address is (re-)assigned in two cases:</strong>
-      </p>
-      </details>
-      <ul class="setup-section-bullets">
-        <li>when a sender becomes <em>active</em> (its NMOS subscription transitions to active) and has no lease yet;</li>
-        <li>when the destination IP of an <em>active</em> sender is cleared. The field on the Details page is emptied or its lease is released here.</li>
-      </ul>
-      <p class="setup-section-hint">
-        Manual overrides on the Details page are respected: typing a different IP marks it as the
-        effective address; clearing the field reverts to the reserved address.
-      </p>
-
-      <div class="setup-form">
-        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Enable Multicast DHCP</span>
-          <input type="checkbox" class="toggle" bind:checked={formAutoMulticastEnabled} on:change={markDirty} />
-        </label>
+      <div class="setup-section-head">
+        <h3>Multicast DHCP</h3>
+        <HelpTip label="About multicast DHCP">
+          <p>The server reserves a pair of consecutive multicast addresses per <strong>active</strong> sender
+          (odd for Leg 1, even = odd + 1 for Leg 2). The reservation is kept for the lifetime of the
+          device, even while the sender is offline, and is only released when the device is
+          <em>Forgotten</em> on the Details page or its lease is deleted in the inventory below.</p>
+          <p><strong>An address is (re-)assigned in two cases:</strong></p>
+          <ul>
+            <li>when a sender becomes <em>active</em> (its NMOS subscription transitions to active) and has no lease yet;</li>
+            <li>when the destination IP of an <em>active</em> sender is cleared: the field on the Details page is emptied or its lease is released here.</li>
+          </ul>
+          <p>Manual overrides on the Details page are respected: typing a different IP marks it as the
+          effective address; clearing the field reverts to the reserved address.</p>
+        </HelpTip>
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable Multicast DHCP"
+               bind:checked={formAutoMulticastEnabled} on:change={markDirty} />
       </div>
 
-      <div class="setup-form" style="margin-top:14px;">
+      <div class="setup-form">
         <label class="setup-field">
           <span class="setup-label">Multicast Range (single pool for all senders)</span>
           <div class="setup-range-row">
@@ -1188,31 +1167,25 @@
 
 
     <section class="setup-section">
-      <h3>Virtual Senders</h3>
-      <p class="setup-section-hint">
-        Operator-defined senders for devices that don't speak NMOS themselves &mdash; paste their SDPs
-        below and NMOS Crosspoint exposes itself as an IS-04 <strong>Node</strong> and publishes each
-        entry as a real NMOS sender (with full Source / Flow / Sender records and an IS-05
-        <code>transport_file</code> endpoint). Once registered, the senders show up in <em>every</em>
-        NMOS-aware controller on the network, not just here. Heartbeats keep the Node alive against
-        the configured registry; switching registries deregisters the old one cleanly.
-      </p>
-      <details class="setup-more"><summary>More details</summary>
-      <p class="setup-section-hint">
-        Each sender keeps the same UUID across restarts, so receivers stay bound. The destination IP
-        comes from the SDP exactly as you typed it &mdash; virtual senders are read-only over IS-05,
-        so the multicast-edit pencil is hidden for them on the Details page.
-      </p>
-      </details>
-
-      <div class="setup-form" style="margin-bottom:14px;">
-        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Enable Virtual NMOS Node</span>
-          <input type="checkbox" class="toggle" bind:checked={formVirtualNodeEnabled} on:change={markDirty} />
-        </label>
+      <div class="setup-section-head">
+        <h3>Virtual Senders</h3>
+        <HelpTip label="About virtual senders">
+          <p>Operator-defined senders for devices that don't speak NMOS themselves: paste their SDPs
+          below and NMOS Crosspoint exposes itself as an IS-04 <strong>Node</strong> and publishes each
+          entry as a real NMOS sender (with full Source / Flow / Sender records and an IS-05
+          <code>transport_file</code> endpoint). Once registered, the senders show up in <em>every</em>
+          NMOS-aware controller on the network, not just here.</p>
+          <p>Heartbeats keep the Node alive against the configured registry; switching registries
+          deregisters the old one cleanly. The toggle turns this Node on and off.</p>
+          <p>Each sender keeps the same UUID across restarts, so receivers stay bound. The destination IP
+          comes from the SDP exactly as you typed it; virtual senders are read-only over IS-05,
+          so the multicast-edit pencil is hidden for them on the Details page.</p>
+        </HelpTip>
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable Virtual NMOS Node"
+               bind:checked={formVirtualNodeEnabled} on:change={markDirty} />
       </div>
 
-      {#if !formVirtualNodeEnabled}
+      {#if !formVirtualNodeEnabled && formVirtualSenders.length > 0}
         <div class="alert alert-warning setup-alert" style="margin-bottom:12px;">
           <Icon src={ExclamationTriangle} />
           <span>
@@ -1268,13 +1241,15 @@
 
 
     <section class="setup-section">
-      <h3>Device Web UI Link Setup</h3>
-      <p class="setup-section-hint">
-        How the „Open device web UI" link on the Details page is built depends on the vendor.
-        Profiles are checked top-to-bottom, the <strong>first</strong> match wins.
-        A profile matches when one of its label entries appears as a substring in the node label
-        or description. Separate multiple labels with <code>,</code>.
-      </p>
+      <div class="setup-section-head">
+        <h3>Device Web UI Link Setup</h3>
+        <HelpTip label="About device web UI links">
+          <p>How the „Open device web UI" link on the Details page is built depends on the vendor.
+          Profiles are checked top-to-bottom, the <strong>first</strong> match wins.</p>
+          <p>A profile matches when one of its label entries appears as a substring in the node label
+          or description. Separate multiple labels with <code>,</code>.</p>
+        </HelpTip>
+      </div>
 
       <div class="vendor-table-wrap">
         <table class="vendor-table">
@@ -1381,37 +1356,31 @@
 
 
     <section class="setup-section">
-      <h3>Push Names to DNS (DDNS)</h3>
-      <p class="setup-section-hint">
-        Publishes each NMOS node as an <strong>A record</strong> via standard
-        <strong>RFC&nbsp;2136 Dynamic Updates</strong>. Works with BIND9,
-        Knot&nbsp;DNS, PowerDNS, Windows DNS Server and any other server that
-        accepts <code>nsupdate</code>-style updates. Authentication is either a
-        <strong>TSIG key</strong> (the zone allows updates signed with the key
-        below, e.g. BIND: <code>update-policy &#123; grant &lt;keyname&gt; zonesub A; &#125;;</code>)
-        or. Algorithm <strong>none&nbsp;(unsigned)</strong>. Plain unauthenticated
-        updates for zones that authorise by source IP (e.g. BIND:
-        <code>allow-update &#123; &lt;server-ip&gt;; &#125;;</code>). Unsigned is fine on an
-        isolated management network; prefer TSIG whenever the DNS server supports it.
-      </p>
-      <details class="setup-more"><summary>More details</summary>
-      <p class="setup-section-hint">
-        The hostname is the node label (or the device alias if you set one on the
-        Crosspoint / Details page); the IP comes from the node's <code>href</code>.
-        NMOS Crosspoint keeps a local inventory of the records it created, so it
-        only ever updates or deletes its own. Deleting a device with the Forget
-        button also removes its DNS record.
-      </p>
-      </details>
-
-      <div class="setup-form">
-        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
-          <span class="label-text">Enable DDNS</span>
-          <input type="checkbox" class="toggle" bind:checked={formDdnsEnabled} on:change={markDirty} />
-        </label>
+      <div class="setup-section-head">
+        <h3>Push Names to DNS (DDNS)</h3>
+        <HelpTip label="About DDNS">
+          <p>Publishes each NMOS node as an <strong>A record</strong> via standard
+          <strong>RFC&nbsp;2136 Dynamic Updates</strong>. Works with BIND9,
+          Knot&nbsp;DNS, PowerDNS, Windows DNS Server and any other server that
+          accepts <code>nsupdate</code>-style updates.</p>
+          <p>Authentication is either a <strong>TSIG key</strong> (the zone allows updates
+          signed with the key below, e.g. BIND:
+          <code>update-policy &#123; grant &lt;keyname&gt; zonesub A; &#125;;</code>)
+          or algorithm <strong>none&nbsp;(unsigned)</strong>: plain unauthenticated
+          updates for zones that authorise by source IP (e.g. BIND:
+          <code>allow-update &#123; &lt;server-ip&gt;; &#125;;</code>). Unsigned is fine on an
+          isolated management network; prefer TSIG whenever the DNS server supports it.</p>
+          <p>The hostname is the node label (or the device alias if you set one on the
+          Crosspoint / Details page); the IP comes from the node's <code>href</code>.
+          NMOS Crosspoint keeps a local inventory of the records it created, so it
+          only ever updates or deletes its own. Deleting a device with the Forget
+          button also removes its DNS record.</p>
+        </HelpTip>
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable DDNS"
+               bind:checked={formDdnsEnabled} on:change={markDirty} />
       </div>
 
-      <div class="setup-form" style="margin-top:8px;">
+      <div class="setup-form">
         <label class="setup-field">
           <span class="setup-label">DNS Server IP / Host</span>
           <input type="text" class="input input-bordered" placeholder="10.0.0.1"
@@ -1429,7 +1398,7 @@
         </label>
       </div>
 
-      <div class="setup-form" style="margin-top:8px;">
+      <div class="setup-form">
         <label class="setup-field">
           <span class="setup-label">Zone</span>
           <input type="text" class="input input-bordered" placeholder="media.example.net"
@@ -1437,7 +1406,7 @@
         </label>
       </div>
 
-      <div class="setup-form" style="margin-top:8px;">
+      <div class="setup-form">
         <label class="setup-field setup-field-narrow">
           <span class="setup-label">Authentication</span>
           <select class="select select-bordered" bind:value={formDdnsKeyAlgorithm} on:change={markDirty}>
@@ -1456,7 +1425,7 @@
         </label>
       </div>
 
-      <div class="setup-form" style="margin-top:8px;">
+      <div class="setup-form">
         <label class="setup-field">
           <span class="setup-label">TSIG Key Secret (base64)</span>
           <input type="password" class="input input-bordered"
@@ -1508,13 +1477,15 @@
     <h2 class="setup-group">Access</h2>
 
     <section class="setup-section">
-      <h3>Change Login &amp; Password</h3>
-      <p class="setup-section-hint">
-        Updates the admin user stored in <code>./config/users.json</code>.
-        You can only edit your own account, and you must know the current
-        password. After a change, the server will ask you to log in again
-        with the new credentials.
-      </p>
+      <div class="setup-section-head">
+        <h3>Change Login &amp; Password</h3>
+        <HelpTip label="About login and password">
+          <p>Updates the admin user stored in <code>./config/users.json</code>.
+          You can only edit your own account, and you must know the current
+          password. After a change, the server asks you to log in again
+          with the new credentials.</p>
+        </HelpTip>
+      </div>
 
       <div class="setup-form">
         <label class="setup-field">
@@ -1529,7 +1500,7 @@
         </label>
       </div>
 
-      <div class="setup-form" style="margin-top:8px;">
+      <div class="setup-form">
         <label class="setup-field">
           <span class="setup-label">New username</span>
           <input type="text" class="input input-bordered" autocomplete="username"
@@ -1537,7 +1508,7 @@
         </label>
       </div>
 
-      <div class="setup-form" style="margin-top:8px;">
+      <div class="setup-form">
         <label class="setup-field">
           <span class="setup-label">New password</span>
           <input type="password" class="input input-bordered" autocomplete="new-password"

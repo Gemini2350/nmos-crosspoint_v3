@@ -145,19 +145,8 @@
         color: theme('colors.sky.500');
         border-bottom: 1px solid theme('colors.base-300');
     }
-
-    // Secondary hint paragraphs are folded away by default. The first
-    // paragraph of every section stays visible.
-    .setup-more {
-        margin: -6px 0 12px 0;
-        summary {
-            cursor: pointer;
-            font-size: 0.8rem;
-            color: theme('colors.sky.500');
-            user-select: none;
-            margin-bottom: 4px;
-        }
-    }
+    // The group heading's own line already separates its first section.
+    .setup-group + .setup-section { border-top: none; }
 
     .setup-section {
         border-top: 1px solid theme('colors.base-300');
@@ -169,31 +158,29 @@
         h3 {
             font-size: 1.05rem;
             font-weight: 600;
-            margin-bottom: 4px;
         }
-        .setup-section-hint {
-            color: theme('colors.slate.400');
-            font-size: 0.85rem;
-            margin-bottom: 12px;
-            line-height: 1.45;
-        }
-        .setup-section-bullets {
-            color: theme('colors.slate.400');
-            font-size: 0.85rem;
-            line-height: 1.55;
-            list-style: disc;
-            padding-left: 22px;
-            margin: 0 0 12px 0;
+    }
 
-            em { font-style: italic; color: theme('colors.slate.300'); }
-            strong { color: theme('colors.slate.300'); }
-        }
+    // Title row of a section: the name, the "?" with the explanation and,
+    // for a section that is switched on and off as a whole, its toggle at
+    // the right edge.
+    .setup-section-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+
+        &:last-child { margin-bottom: 0; }
+
+        .setup-head-toggle { margin-left: auto; }
     }
 
     .setup-form {
         display: flex;
         flex-wrap: wrap;
         gap: 16px;
+
+        & + .setup-form { margin-top: 10px; }
     }
     .setup-field {
         flex: 1 1 280px;
@@ -239,8 +226,11 @@
 
     // Sub-heading inside a section (e.g. the probe block under Audio Monitor)
     .setup-subhead {
-        margin: 18px 0 4px 0;
-        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 18px 0 6px 0;
+        h4 { font-weight: 600; }
     }
     // docker run one-liner for the probe container — scrolls, never wraps.
     .setup-probe-cmd {

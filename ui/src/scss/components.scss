@@ -112,6 +112,61 @@ label svg { width:20px;}
             }
 }
 
+// HelpTip: the "?" beside a heading and the bubble it opens. Fixed
+// positioning, so a scrolling or clipping container never cuts it off.
+.help-tip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 1px solid theme('colors.slate.400');
+    color: theme('colors.slate.400');
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: help;
+    vertical-align: middle;
+
+    &:hover, &:focus-visible, &.help-tip-open {
+        border-color: theme('colors.sky.500');
+        color: theme('colors.sky.500');
+    }
+}
+.help-tip-pop {
+    position: fixed;
+    z-index: 1000;
+    width: max-content;
+    max-width: min(440px, calc(100vw - 16px));
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid theme('colors.base-300');
+    background-color: theme('colors.base-200');
+    color: theme('colors.base-content');
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+    font-size: 0.82rem;
+    font-weight: 400;
+    line-height: 1.45;
+    text-align: left;
+    text-transform: none;
+    letter-spacing: normal;
+
+    p + p, p + ul, ul + p { margin-top: 6px; }
+    ul { list-style: disc; padding-left: 18px; }
+    strong { font-weight: 600; }
+    em { font-style: italic; }
+    code {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.78rem;
+        padding: 0 3px;
+        border-radius: 3px;
+        background-color: theme('colors.base-300');
+        word-break: break-word;
+    }
+}
+
 
 
 
