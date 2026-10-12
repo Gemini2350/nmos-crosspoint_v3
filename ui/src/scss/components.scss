@@ -112,6 +112,97 @@ label svg { width:20px;}
             }
 }
 
+// RenameDialog: the names on top, one input, then the two ways to rename
+// side by side (stacked on a narrow screen). Theme colours only.
+.rename-dialog {
+    .rename-box {
+        max-width: 36rem;
+        padding: 22px 24px 20px 24px;
+    }
+    .rename-close { position: absolute; right: 12px; top: 12px; }
+    .rename-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+        margin-bottom: 12px;
+    }
+    .rename-facts {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 3px 14px;
+        margin-bottom: 16px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background-color: theme('colors.base-200');
+        font-size: 0.85rem;
+        dt { color: theme('colors.base-content / 60%'); }
+        dd { font-weight: 600; overflow-wrap: anywhere; }
+        dd.rename-none { font-weight: 400; font-style: italic; color: theme('colors.base-content / 50%'); }
+    }
+    .rename-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 12px;
+        > span {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: theme('colors.base-content / 60%');
+            em { font-style: normal; text-transform: none; letter-spacing: normal; margin-left: 4px; opacity: 0.8; }
+        }
+    }
+    .rename-ways {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 10px;
+        margin-top: 4px;
+    }
+    .rename-way {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 10px 12px;
+        border: 1px solid theme('colors.base-300');
+        border-radius: 10px;
+        header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.9rem;
+            svg { opacity: 0.7; }
+        }
+        p {
+            flex: 1;
+            font-size: 0.8rem;
+            line-height: 1.4;
+            color: theme('colors.base-content / 65%');
+        }
+        &.rename-way-off {
+            border-style: dashed;
+            header { opacity: 0.6; }
+        }
+    }
+    .rename-badge {
+        margin-left: auto;
+        padding: 0 6px;
+        border-radius: 4px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        background-color: theme('colors.base-300');
+    }
+    .rename-buttons {
+        display: flex;
+        justify-content: flex-end;
+        gap: 6px;
+    }
+    .rename-error {
+        margin-top: 12px;
+        font-size: 0.85rem;
+        color: theme('colors.error');
+    }
+}
+
 // HelpTip: the "?" beside a heading and the bubble it opens. Fixed
 // positioning, so a scrolling or clipping container never cuts it off.
 .help-tip {

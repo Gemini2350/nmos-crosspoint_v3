@@ -8,6 +8,7 @@
       import { Icon, ChevronRight, ChevronDoubleUp, ChevronDoubleDown, ChevronDown, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
     import { getSearchTokens, tokenSearch, midSplit, transportFamily, transportsCompatible } from "../lib/functions";
     import MidLabel from "../lib/MidLabel.svelte";
+    import RenameDialog from "../lib/RenameDialog.svelte";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
       interface CrosspointConnect {
@@ -1785,20 +1786,18 @@
     }
 
 
-    function editFlowLabel(flow:any){
-      clearNodeField();
-      openLabelEditor(flow.id, flow.name, flow.alias, !!flow.annotatable)
+    // ----- Rename (RenameDialog: alias here, or with IS-13 on the device) -----
+    let renameDialog:RenameDialog;
+    function editFlowLabel(flow:any, kind:"sender"|"receiver"){
+      renameDialog.open({ id: flow.id, kind, name: flow.name, alias: flow.alias, annotatable: !!flow.annotatable });
     }
 
     // A device row of a single-device node reads "<Node> - <Device>", so the
     // dialog offers BOTH names: the device alias and the node name itself
     // (the latter is stored per node id and shows up on every page).
     function editDevLabel(dev:any){
-      labelModalNodeId    = dev.nodeId || "";
-      labelModalNodeName  = dev.nodeLabelRaw || dev.nodeLabel || "";
-      labelModalNodeOrig  = dev.nodeAlias || "";
-      labelModalNodeValue = dev.nodeAlias || labelModalNodeName;
-      openLabelEditor(dev.id, dev.name, dev.alias, !!dev.annotatable)
+      renameDialog.open({ id: dev.id, kind: "device", name: dev.name, alias: dev.alias, annotatable: !!dev.annotatable,
+        node: dev.nodeId ? { id: dev.nodeId, name: dev.nodeLabelRaw || dev.nodeLabel || "", alias: dev.nodeAlias || "" } : undefined });
     }
 
     // Renaming a node strip renames the NMOS NODE, not a device: the server
@@ -1806,82 +1805,10 @@
     // and every page — Details included — picks the new name up from there.
     function editNodeLabel(dev:any){
       if(!dev || !dev.nodeId){ return; }
-      clearNodeField();
-      openLabelEditor("node_" + dev.nodeId, dev.nodeLabelRaw || dev.displayLabel, dev.nodeAlias || dev.nodeLabelRaw || dev.displayLabel,
-        Array.isArray(sourceState?.annotatableNodes) && sourceState.annotatableNodes.includes(dev.nodeId));
+      let name = dev.nodeLabelRaw || dev.displayLabel;
+      renameDialog.open({ id: "node_" + dev.nodeId, kind: "node", name, alias: dev.nodeAlias || name,
+        annotatable: Array.isArray(sourceState?.annotatableNodes) && sourceState.annotatableNodes.includes(dev.nodeId) });
     }
-    function clearNodeField(){
-      labelModalNodeId = "";
-      labelModalNodeName = "";
-      labelModalNodeValue = "";
-      labelModalNodeOrig = "";
-    }
-
-
-    let labelModal:any;
-      let labelModalInput:any;
-      let labelModalId:string = "";
-      let labelModalName:string = "";
-      let labelModalAlias:string = "";
-      let labelModalValue:string = "";
-      let labelModalIsNode:boolean = false;
-      // optional second field: the NMOS node behind the edited device
-      let labelModalNodeId:string = "";
-      let labelModalNodeName:string = "";
-      let labelModalNodeValue:string = "";
-      let labelModalNodeOrig:string = "";
-      // IS-13: the node behind the edited resource offers the Annotation API,
-      // so the name can also be set on the device itself.
-      let labelModalAnnotatable:boolean = false;
-      let labelModalBusy:boolean = false;
-      let labelModalError:string = "";
-      function openLabelEditor(id:string, name:string, alias:string, annotatable:boolean = false){
-        labelModalAnnotatable = annotatable;
-        labelModalBusy = false;
-        labelModalError = "";
-        labelModalIsNode = id.startsWith("node_");
-        labelModalId = id;
-        labelModalName = name;
-        labelModalAlias = alias;
-        labelModalValue = alias;
-        labelModal.showModal();
-        labelModalInput.focus();
-        setTimeout(()=>{
-          labelModalInput.select();
-        })
-        
-      }
-      // IS-13: set (or reset) the label on the device. The new name comes back
-      // through the registry like any other IS-04 change, and the local alias
-      // is dropped server-side so the device's own name is the one shown.
-      // A refusal stays in the dialog with the device's own words.
-      function annotateLabelSend(reset:boolean){
-        labelModalError = "";
-        const label = reset ? null : (labelModalValue || "").trim();
-        if(!reset && !label){ labelModalError = "Type a name first, or reset the device's label."; return; }
-        labelModalBusy = true;
-        ServerConnector.post("annotate", { id: labelModalId, label }).then(()=>{
-          labelModalBusy = false;
-          labelModal.close();
-          ServerConnector.addFeedback({ message: reset ? "Label reset on the device (IS-13)" : "Label set on the device (IS-13)", level: "success" });
-        }).catch((e:any)=>{
-          labelModalBusy = false;
-          labelModalError = (e && e.message) ? e.message : "IS-13 annotation failed";
-        });
-      }
-      function changeLabelSend(){
-        ServerConnector.post("changealias",{id:labelModalId, alias:labelModalValue})
-        // second field, only when the device sits behind a known node and the
-        // operator actually touched the node name
-        if(labelModalNodeId){
-          let v = (labelModalNodeValue || "").trim();
-          if(v === labelModalNodeName){ v = ""; }        // back to the registry name = no alias
-          if(v !== labelModalNodeOrig){
-            ServerConnector.post("changealias",{id:"node_" + labelModalNodeId, alias:v})
-          }
-        }
-        labelModal.close()
-      }
 
 
 
@@ -2008,7 +1935,7 @@
                           {#if dev.isNode}
                             {#if dev.nodeId}<span on:click={(e)=>{e.stopPropagation(); editNodeLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename node"><Icon src={Pencil}></Icon></span>{/if}
                           {:else}
-                            <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
+                            <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                             <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
                           {/if}
                         </span></span><!--
@@ -2021,7 +1948,7 @@
                               --><span class="cp-expand"></span><!--
                               --><span class="cp-label {(flow.hidden?"hidden":"")}" use:nameTooltip={flow.alias}><MidLabel text={flow.alias} /><!--
                                 --><span class="cp-edit">
-                                  <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
+                                  <span on:click={()=>editFlowLabel(flow, "sender")} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                                   <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
                                   <span on:click={()=>activate(dev,flow, flow.active)} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip data-tooltip="toggle activate"><Icon src={Link}></Icon></span>
                                 </span><!--
@@ -2058,7 +1985,7 @@
                           {#if dev.isNode}
                             {#if dev.nodeId}<span on:click={(e)=>{e.stopPropagation(); editNodeLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename node"><Icon src={Pencil}></Icon></span>{/if}
                           {:else}
-                            <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
+                            <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                             <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
                             <span on:click={(e)=>{e.stopPropagation(); connect(null, null, dev,null);}} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip data-tooltip="disconnect"><Icon src={Link}></Icon></span>
                           {/if}
@@ -2107,7 +2034,7 @@
                         <span class="cp-expand"></span><!--
                         --><span class="cp-label {(flow.hidden?"hidden":"")}" use:nameTooltip={flow.alias}><MidLabel text={flow.alias} /><!--
                         --><span class="cp-edit">
-                          <span on:click={()=>editFlowLabel(flow)} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="change alias"><Icon src={Pencil}></Icon></span>
+                          <span on:click={()=>editFlowLabel(flow, "receiver")} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                           <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip  data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
                           <span on:click={()=>connect(null, null, dev,flow)} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip  data-tooltip="disconnect"><Icon src={Link}></Icon></span>
                         </span><!--
@@ -2162,37 +2089,7 @@
     </div>
 
 
-    <dialog bind:this={labelModal} class="modal">
-      <div class="modal-box">
-        <form method="dialog">
-          <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
-        </form>
-        <h3 class="font-bold text-lg">{labelModalIsNode ? "Rename Node" : "Change Alias"}</h3>
-        <span>{labelModalIsNode ? "Node Name" : "Source Name"}: {labelModalName}</span><br/>
-        <span>Alias: {labelModalAlias}</span>
-          <input on:keypress={(e)=>{if(e.keyCode == 13) changeLabelSend()}} bind:this={labelModalInput} bind:value={labelModalValue} type="text" placeholder="Type here" class="input input-bordered w-full max-w-xs" />
-        {#if labelModalNodeId}
-          <br/><span>Node Name: {labelModalNodeName}</span>
-          <input on:keypress={(e)=>{if(e.keyCode == 13) changeLabelSend()}} bind:value={labelModalNodeValue} type="text" placeholder="Type here" class="input input-bordered w-full max-w-xs" />
-        {/if}
-        {#if labelModalAnnotatable}
-          <p class="cp-label-is13">This device supports IS-13: <b>Save to device</b> renames it on the device itself, for every controller. <b>Save</b> keeps the name here only.</p>
-        {/if}
-        {#if labelModalError}<p class="text-error cp-label-is13">{labelModalError}</p>{/if}
-        <div class="modal-action">
-          {#if labelModalAnnotatable}
-            <button class="btn btn-primary" disabled={labelModalBusy} on:click={()=>annotateLabelSend(false)}>Save to device (IS-13)</button>
-            <button class="btn" disabled={labelModalBusy} on:click={()=>annotateLabelSend(true)}>Reset on device</button>
-          {/if}
-          <form method="dialog">
-            <!-- if there is a button in form, it will close the modal -->
-            <button on:click={()=>{labelModalValue = ""; changeLabelSend()}} class="btn" >Remove</button>
-            <button on:click={()=>{changeLabelSend()}} class="btn" >Save</button>
-            <button class="btn">Close</button>
-          </form>
-        </div>
-      </div>
-    </dialog>
+    <RenameDialog bind:this={renameDialog} />
 
     <!-- Crosspoint-wide counter reset. Two buttons, because "all receivers"
        and "all senders" are the two questions that actually come up. -->
