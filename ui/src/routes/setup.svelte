@@ -950,7 +950,7 @@
           <strong>AMWA BCP-008</strong> (IS-12 control protocol): for every
           device that advertises an <code>ncp</code> control endpoint, the
           server subscribes to its NcSender-/NcReceiverMonitors and shows the
-          health as a heart symbol per flow in the Crosspoint matrix.</p>
+          health as the colour of each flow's essence glyph in the Crosspoint matrix.</p>
           <p>With the four status domains (Link / Connection / Sync / Stream resp.
           Transmission / Essence), transition counters, a counter reset and
           coloured crosspoints when an endpoint of an active connection degrades.</p>

@@ -8,7 +8,6 @@
       import { Icon, ChevronRight, ChevronDoubleUp, ChevronDoubleDown, ChevronDown, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
     import { getSearchTokens, tokenSearch, midSplit, transportFamily, transportsCompatible } from "../lib/functions";
     import MidLabel from "../lib/MidLabel.svelte";
-    import TransportBadge from "../lib/TransportBadge.svelte";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
       interface CrosspointConnect {
@@ -39,7 +38,6 @@
       showData: true,
       show2110: true,
       showMxl: true,
-      showLegend: true,
       searchReceivers:"",
       searchSenders:"",
       expanded: { senders :[], receivers :[]}
@@ -215,9 +213,6 @@
         // you look at first, and losing it the moment you open the node is
         // exactly when you need it. The devices below repeat their own share
         // of it — that is a breakdown, not a double count.
-        // Every flow of the node, open or folded: the transport badge on the
-        // strip describes the whole node either way. Not read by any cell.
-        transportFlows: mergeFlows(g.devices, side),
         monitorSummaryTx: mergeMonitorSummary(g.devices, "monitorSummaryTx"),
         monitorSummaryRx: mergeMonitorSummary(g.devices, "monitorSummaryRx"),
       };
@@ -585,37 +580,6 @@
     function showsAllFlowKinds():boolean{
       return filter.showVideo !== false && filter.showAudio !== false && filter.showData !== false &&
              filter.show2110 !== false && filter.showMxl !== false;
-    }
-
-    // ----- Transport shown per flow and per device -----
-    /** The transport of a device or folded node on one axis: one family, or
-     *  "mixed" when its flows use several. Redundant when every 2110 flow of
-     *  it is ST 2022-7. Unknown transports are left out of the set. */
-    function deviceTransport(dev:any, side:"senders"|"receivers"):{family:string, redundant:boolean, tip:string}{
-      // Computed once per axis rebuild (doFilter makes fresh device copies).
-      let key = "_transport_" + side;
-      if(dev && dev[key]){ return dev[key]; }
-      let r = computeDeviceTransport(dev, side);
-      if(dev){ dev[key] = r; }
-      return r;
-    }
-    function computeDeviceTransport(dev:any, side:"senders"|"receivers"):{family:string, redundant:boolean, tip:string}{
-      let families:string[] = [];
-      let rtp = 0, dup = 0;
-      let flows = (dev && dev.transportFlows) ? dev.transportFlows : (dev ? dev[side] : null);
-      flowTypes.forEach((t)=>{
-        for(const f of ((flows && flows[t]) || [])){
-          let fam = transportFamily(f.capabilities?.transport);
-          if(!fam){ continue; }
-          if(!families.includes(fam)){ families.push(fam); }
-          if(fam === "rtp"){ rtp++; if(f.capabilities?.dash7){ dup++; } }
-        }
-      });
-      if(families.length === 0){ return { family:"", redundant:false, tip:"" }; }
-      let redundant = rtp > 0 && dup === rtp;
-      if(families.length === 1){ return { family:families[0], redundant, tip:"" }; }
-      let names = families.map((f)=>f === "rtp" ? (redundant ? "ST 2110 (ST 2022-7)" : "ST 2110") : f === "mxl" ? "MXL" : f);
-      return { family:"mixed", redundant:false, tip:"Transports: " + names.join(", ") };
     }
 
     // Transport families per device on the FULL registry state, not the
@@ -2000,48 +1964,6 @@
     </ul>
 
 
-    <!-- What the marks in the matrix mean. Only what carries meaning: an
-         empty cell and a cell that cannot be switched explain themselves. -->
-    <div class="cp-legend">
-      <button class="cp-legend-toggle" aria-expanded={!!filter.showLegend} aria-controls="cp-legend-body"
-              on:click={()=>{ filter.showLegend = !filter.showLegend; saveFilter(); }}>
-        <span class="cp-legend-chevron" class:open={filter.showLegend}><Icon src={ChevronRight} size="12"></Icon></span>Legend
-      </button>
-      {#if filter.showLegend}
-      <ul id="cp-legend-body" class="cp-legend-body">
-        <li><span class="cp-lg-glyph"><Icon src={VideoCamera}></Icon></span><span class="cp-lg-glyph"><Icon src={Microphone}></Icon></span><span class="cp-lg-glyph"><Icon src={CodeBracketSquare}></Icon></span>video / audio / data sender</li>
-        <li><span class="cp-lg-glyph"><Icon src={Tv}></Icon></span><span class="cp-lg-glyph"><Icon src={SpeakerWave}></Icon></span>video / audio receiver</li>
-        {#if bcp008On}
-        <li><span class="cp-lg-glyph cp-lg-run"><Icon src={VideoCamera}></Icon></span>running, no BCP-008 monitor</li>
-        <li><span class="cp-lg-glyph cp-lg-ok"><Icon src={VideoCamera}></Icon></span><span class="cp-lg-glyph cp-lg-warn"><Icon src={VideoCamera}></Icon></span><span class="cp-lg-glyph cp-lg-err"><Icon src={VideoCamera}></Icon></span>healthy / partially healthy / unhealthy</li>
-        {:else}
-        <li><span class="cp-lg-glyph cp-lg-video"><Icon src={VideoCamera}></Icon></span><span class="cp-lg-glyph cp-lg-audio"><Icon src={Microphone}></Icon></span><span class="cp-lg-glyph cp-lg-data"><Icon src={CodeBracketSquare}></Icon></span>running</li>
-        {/if}
-        <li><span class="cp-lg-glyph cp-lg-off"><Icon src={VideoCamera}></Icon></span>not running</li>
-        {#if bcp008On}
-        <li><span class="cp-lg-count">3</span>BCP-008 transitions since reset</li>
-        <li><span class="cp-lg-mon">2</span>flows of a device not healthy</li>
-        {/if}
-        <li class="cp-lg-sep"><TransportBadge family="rtp" plain/>ST 2110</li>
-        <li><TransportBadge family="rtp" redundant plain/>ST 2110 with ST 2022-7</li>
-        <li><TransportBadge family="mxl" plain/>MXL</li>
-        <li><TransportBadge family="mixed" plain/>device with both</li>
-        <li class="cp-lg-sep"><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-active"></span></span>connected</li>
-        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-dot cp-lg-active"></span></span>devices connected</li>
-        {#if bcp008On}
-        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-warn"></span></span><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-err"></span></span>connected, partially healthy / unhealthy</li>
-        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-unmon"></span></span>connected, not monitored</li>
-        {/if}
-        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-staged"></span></span>staged / would switch</li>
-        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-working"></span></span>switching</li>
-        <li><span class="cp-lg-cell"><span class="cp-lg-mark cp-lg-flow cp-lg-disc"></span></span>disconnect staged</li>
-        <li><span class="cp-lg-cell cp-lg-open"></span>can be switched</li>
-        <li><span class="cp-lg-cell cp-lg-plus">+</span>folded node, click unfolds</li>
-        <li><span class="cp-lg-name">name</span><span class="cp-lg-name cp-lg-name-off">name</span><span class="cp-lg-name cp-lg-name-hidden">name</span>running / not running / hidden</li>
-      </ul>
-      {/if}
-    </div>
-
     <div class="cp-container" class:cp-scrolling={isScrolling} on:scroll={onMatrixScroll}
          on:mousemove={moveCrosshair} on:mouseleave={hideCrosshair}>
       <!-- Crosshair. Two strips laid over the matrix, positioned from the cell
@@ -2091,7 +2013,6 @@
                           {/if}
                         </span></span><!--
                         --><span class="cp-type-spacer"></span><!--
-                        --><span class="cp-tb-slot"><TransportBadge family={deviceTransport(dev, "senders").family} redundant={deviceTransport(dev, "senders").redundant} tip={deviceTransport(dev, "senders").tip}/></span><!--
                       --></th>
                       {#if isSenderExpanded(dev.id)}
                         {#each flowTypes as type}
@@ -2106,11 +2027,10 @@
                                 </span><!--
                                 --></span><!--
                               --><span class={"cp-type cp-type-"+flow.type + " " + (flow.active ? "active" : "") + monitorRing(flow)}
-                                    on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
+                                    on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if transportFamily(flow.capabilities?.transport) === "mxl"}<span class="cp-mxl-tag">MXL</span>{/if}{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
                                 --><span class="cp-detail"><span class="cp-detail-main">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                               --></span><!--
-                              --><span class="cp-tb-slot"><TransportBadge family={transportFamily(flow.capabilities?.transport)} redundant={!!flow.capabilities?.dash7}/></span><!--
-                            --></th>
+                                                          --></th>
                           {/each}
                         {/each}
                       {/if}
@@ -2144,11 +2064,9 @@
                           {/if}
                         </span><!--
                     --></span><!--
-                    --><span class="cp-glyph-slot">{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
+                    -->{#if dev.monitorSummaryRx && dev.monitorSummaryRx.worst >= 2}<span class={"cp-mon " + (dev.monitorSummaryRx.worst === 3 ? "cp-mon-err" : "cp-mon-warn")}
                           use:OverlayMenuService.tooltip
                           data-tooltip={"BCP-008: " + dev.monitorSummaryRx.count + (dev.monitorSummaryRx.count === 1 ? " receiver " : " receivers ") + (dev.monitorSummaryRx.worst === 3 ? "unhealthy" : "partially healthy")}>{dev.monitorSummaryRx.count}</span>{/if}<!--
-                    --></span><!--
-                    --><span class="cp-tb-slot"><TransportBadge family={deviceTransport(dev, "receivers").family} redundant={deviceTransport(dev, "receivers").redundant} tip={deviceTransport(dev, "receivers").tip}/></span><!--
                   --></td>
 
                   {#each senders as sourceDev}
@@ -2195,11 +2113,10 @@
                         </span><!--
                         --></span><!--
                         --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "") + monitorRing(flow)}
-                              on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
+                              on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if transportFamily(flow.capabilities?.transport) === "mxl"}<span class="cp-mxl-tag">MXL</span>{/if}{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
                           --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                         --></span><!--
-                        --><span class="cp-tb-slot"><TransportBadge family={transportFamily(flow.capabilities?.transport)} redundant={!!flow.capabilities?.dash7}/></span><!--
-                      --></td>
+                                              --></td>
 
 
 
