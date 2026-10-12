@@ -44,7 +44,7 @@ export function sortDevices<T extends OrderedDevice>(devices: T[]): T[] {
 }
 
 /**
- * Gives device `devId` the crosspoint number `newNum`. A device already
+ * Gives device `devId` the sorting number `newNum`. A device already
  * holding `newNum` takes the moved device's old number, so two devices never
  * end up sharing one through a move; when the moved device had none, the
  * displaced one gets `freshNum()` instead of losing its number. -1 clears

@@ -130,7 +130,7 @@
       // The crosspoint device's alias (used for the change-alias modal)
       alias:string;
       name:string;
-      // Crosspoint number; the matrix lists devices by it. -1 when none.
+      // Sorting number; the matrix lists devices by it. -1 when none.
       num:number;
       available:boolean;
       // PTP Grand-Master ID the node clock is locked to (or "" if none / not PTP).
@@ -382,7 +382,7 @@
         });
       });
 
-      // No sort here: the server sends devices in crosspoint number order
+      // No sort here: the server sends devices in sorting number order
       // (deviceOrder.ts), the order of the matrix.
 
       // Group devices by their NMOS node. Groups keep the position of their
@@ -865,7 +865,9 @@
       labelModal.close();
     }
 
-    // ----- Crosspoint number -----
+    // ----- Sorting number -----
+    // The field reads "Sorting"; the number itself shows on hover and while
+    // the field has focus, which is also the way in on a touch screen.
     // Sent on change (Enter or leaving the field). The server swaps with the
     // device that already holds the number; an empty field clears it.
     // Anything but digits puts the current number back, and so does a
@@ -1148,13 +1150,16 @@
               {/if}
             </span>
             <span class="det-head-spacer"></span>
-            <input type="text" inputmode="numeric" class="det-num-input" placeholder="#"
-                   value={dev.num > 0 ? dev.num : ""}
-                   on:click|stopPropagation
-                   on:keydown={deviceNumKey}
-                   on:change={(e)=>changeDeviceNum(dev, e)}
-                   use:OverlayMenuService.tooltip
-                   data-tooltip="Crosspoint number: devices are listed by it. A number in use swaps with that device; empty clears it." />
+            <span class="det-num" use:OverlayMenuService.tooltip
+                  data-tooltip="Sorting number: devices are listed by it, in the crosspoint and here. A number in use swaps with that device; empty clears it.">
+              <span class="det-num-label" aria-hidden="true">Sorting</span>
+              <input type="text" inputmode="numeric" class="det-num-input" placeholder="#"
+                     aria-label="Sorting number"
+                     value={dev.num > 0 ? dev.num : ""}
+                     on:click|stopPropagation
+                     on:keydown={deviceNumKey}
+                     on:change={(e)=>changeDeviceNum(dev, e)} />
+            </span>
             <span class="det-device-counts">{dev.senders.length} TX · {dev.receivers.length} RX</span>
             {#if !dev.available}
               <button class="btn btn-sm det-device-forget"
