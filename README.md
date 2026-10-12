@@ -144,6 +144,8 @@ docker run -d --restart unless-stopped --network host \
 
 Forward again: `docker rm -f nmos-crosspoint_v3 && docker compose up -d --build`.
 
+Without Docker Compose, or over a connection that may drop: `scripts/update.sh` builds this checkout and switches the container in one step that keeps running in the background (log: `~/crosspoint-update.log`). It stops nothing until the new image is built and checked, and starts the previous image again if the new one does not come up. `scripts/update.sh rollback` switches back to the image that ran before.
+
 Only one Crosspoint may control a plant at a time — stop one before you start the other. After a switch in either direction, reload every open browser tab: a tab keeps the UI it was loaded with.
 
 `docker-compose.yml` mounts two persistent folders, so your settings and lease history survive container rebuilds:
