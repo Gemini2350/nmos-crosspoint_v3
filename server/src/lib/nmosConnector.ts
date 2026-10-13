@@ -23,6 +23,7 @@ import * as sdpTransform from 'sdp-transform';
 import { CrosspointAbstraction, CrosspointConnectionSenderInfo } from "./crosspointAbstraction";
 import { MxlEndpoint, SR_CTRL_TYPES, TRANSPORT_MXL, selectControlHrefs, transportKind, joinHref, mxlEndpointFromActive, resolvedMxlEndpoint, buildMxlReceiverPatch, buildMxlDisconnectPatch, buildRtpTransportParams, buildSenderEnablePatch, usesMulticastLease, hasRtpDestination, tryNextControl } from "./nmosConnectionPatch";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
+import { LeaseRetryGate } from "./leaseRetry";
 import { DdnsService } from "./ddnsService";
 import { receiverActiveRead, transportFamily, mxlReceiverReads } from "./transport";
 import { MxlSenderSeen, MxlRetry, mxlSenderStep, mxlPendingFollow, mxlRepatchTargets, mxlRepatchKey, mxlRepatchEligible, mxlSettleClaim, mxlNamedSender, receiverActiveChanged, ReadOrder } from "./mxlFollow";
@@ -33,6 +34,8 @@ const fs = require("fs");
 
 export class NmosRegistryConnector {
     private logReset = true;
+    // Multicast DHCP: one reconcile PATCH per sender at a time, growing waits.
+    private leaseRetry = new LeaseRetryGate();
     static instance:null|NmosRegistryConnector = null;
     public syncNmos: SyncObject;
     public syncConnectionState: SyncObject;
@@ -2417,7 +2420,9 @@ export class NmosRegistryConnector {
         }
     }
 
-    async setFlowMulticast(senderId:string, data:any){
+    // Resolves true once the device accepted the PATCH, false otherwise —
+    // the lease reconcile paces its retries on it.
+    async setFlowMulticast(senderId:string, data:any): Promise<boolean>{
 
         try{
             let versionFound = false;
@@ -2426,7 +2431,7 @@ export class NmosRegistryConnector {
             let sender = this.nmosState.senders[senderId];
             if(!hasRtpDestination(sender)){
                 SyncLog.log("warning", "nmos", "Sender "+senderId+" is not an RTP sender; it has no destination to set.");
-                return;
+                return false;
             }
             let device = this.nmosState.devices[sender.device_id];
 
@@ -2601,7 +2606,7 @@ export class NmosRegistryConnector {
             // nothing on the device changes.
             if(!meaningfulChange){
                 SyncLog.log("warn", "nmos", "Refusing to send empty setFlowMulticast PATCH for " + senderId + " (no destination_ip / destination_port).");
-                return;
+                return false;
             }
 
             
@@ -2649,7 +2654,7 @@ export class NmosRegistryConnector {
                     }
 
 
-                    return;
+                    return true;
                 }catch(e){
                     if (axios.isAxiosError(e)) {
                         if(tryNextControl(e)){
@@ -2662,17 +2667,17 @@ export class NmosRegistryConnector {
                             }else{
                                 SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
                             }
-                            return;
+                            return false;
                         }
                     }else{
-                        return;
+                        return false;
                     }
                 }
             }
         }catch(e){
 
         }
-
+        return false;
     }
 
 
@@ -2802,6 +2807,7 @@ export class NmosRegistryConnector {
         }
 
         let legs:any[] = [];
+        let target:string[] = [];
         active.transport_params.forEach((tp:any, idx:number)=>{
             // Effective IP honours manual overrides — if the user set one,
             // we reconcile towards that; otherwise to the reserved address.
@@ -2810,6 +2816,7 @@ export class NmosRegistryConnector {
             // prevents an infinite reconcile loop with empty destination_ip
             // PATCHes if a lease somehow ended up with an empty IP.
             if(!desiredIp || typeof desiredIp !== "string"){ return; }
+            target.push(idx + "=" + desiredIp + ":" + lease.port);
 
             let needIp   = (tp && tp.destination_ip !== desiredIp);
             let needPort = (tp && typeof tp.destination_port === "number" && tp.destination_port !== lease.port);
@@ -2821,12 +2828,28 @@ export class NmosRegistryConnector {
             }
         });
 
-        if(legs.length > 0){
-            SyncLog.log("info", "Multicast Lease", "Reconciling sender " + senderId + " to lease addresses.", {legs});
-            // Fire-and-forget — the PATCH triggers another getSenderActive,
-            // which lands here again but finds no diff and stops.
-            this.setFlowMulticast(senderId, { legs, _forceReconnect: forceReconnect }).catch(()=>{});
+        if(legs.length === 0){
+            this.leaseRetry.inSync(senderId);
+            return;
         }
+        // Paced (leaseRetry): a device that refuses the PATCH, or takes it and
+        // does not apply it, leaves /active as it was, and every refresh of
+        // it lands here again. Only "Renew from Pool" skips the wait.
+        const key = target.join(",");
+        const now = Date.now();
+        if(!this.leaseRetry.mayTry(senderId, key, now, forceReconnect).ok){ return; }
+        const attempt = this.leaseRetry.begin(senderId, key, now);
+        SyncLog.log("info", "Multicast Lease", "Reconciling sender " + senderId + " to lease addresses" +
+            (attempt > 1 ? " (attempt " + attempt + ")" : "") + ".", {legs});
+        // The PATCH triggers another getSenderActive, which lands here again
+        // and finds no diff (inSync) — or the same one, which then waits.
+        this.setFlowMulticast(senderId, { legs, _forceReconnect: forceReconnect }).then((ok:boolean)=>{
+            const next = this.leaseRetry.end(senderId);
+            if(!ok && next > 0){
+                SyncLog.log("warning", "Multicast Lease", "Sender " + senderId + " did not take its lease address (attempt " + attempt +
+                    "); no new try for " + Math.round((next - Date.now()) / 1000) + " s.");
+            }
+        }).catch(()=>{ this.leaseRetry.end(senderId); });
     }
 
 
