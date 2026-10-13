@@ -2,7 +2,10 @@ services:
   nmos-crosspoint:
     build:
       context: ./
-    image: gemini2350/nmos-crosspoint_v3:latest
+    # Built locally from this folder (docker compose up -d --build). A name
+    # without a registry prefix, so no pull can swap in an image from
+    # somewhere else.
+    image: nmos-crosspoint_v3:local
 
     container_name: nmos-crosspoint_v3
     hostname: nmos-crosspoint_v3

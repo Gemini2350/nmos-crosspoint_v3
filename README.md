@@ -26,6 +26,8 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 
 ![Offline device with Forget buttons](Screenshots/details-offline-forget.png)
 
+- **Connections the registry does not name.** Some devices keep receiving after a reboot but come back with no sender in the registry, so the matrix would show nothing. For such a receiver Crosspoint asks the device itself (IS-05 `/active`): a sender the device names is shown as a normal crosspoint, a sender found by the multicast the receiver takes is shown as a ring. Nothing is stored — a route made outside Crosspoint shows up the same way, and the hover on the receiver says what it receives when no single sender matches.
+
 - **Web-UI links.** One click opens the device's own configuration page in a new tab.
 - **DDNS hostname push.** Each device's name lands as an A record on your DNS server via standard RFC 2136 Dynamic Updates (TSIG-signed) — works with BIND9, Knot, PowerDNS, Windows DNS —, so `Camera1.media.example.net` resolves automatically. (option)
 - **Aliases.** Rename a device or a single flow to whatever your operators call it; the original NMOS label is still visible as a tooltip. NMOS IS-13 is planned to push  the Aliases back to the Device.
@@ -35,7 +37,7 @@ Tested with a wide range of devices — Lawo, Riedel, Embrionix, AJA, Imagine, S
 
 ![BCP-008 status panel with the four domains and packet counters](Screenshots/bcp008-status-modal.png)
 - **Audio monitor.** A headphone button next to each audio sender on the Details page: the server joins the multicast on demand, transcodes to Opus and streams it to your browser via WebRTC, with a channel-pair selector for multichannel AES67. (option, off by default; the server needs access to the media network — or use the multicast probe below)
-- **Multicast probe.** The same Docker image started with `MODE=probe` on a host that IS attached to the media network: it receives the multicast there and forwards it to the crosspoint as unicast over a token-authenticated websocket. When a probe is connected the audio monitor uses it automatically, so the crosspoint container itself needs no multicast access at all. The Setup page shows the token, the ready-made `docker run` command and the connected probes.
+- **Multicast probe.** The same Docker image started with `MODE=probe` on a host that IS attached to the media network (build it there, or copy it over with `docker save nmos-crosspoint_v3:local | ssh <probe-host> docker load`): it receives the multicast there and forwards it to the crosspoint as unicast over a token-authenticated websocket. When a probe is connected the audio monitor uses it automatically, so the crosspoint container itself needs no multicast access at all. The Setup page shows the token, the ready-made `docker run` command and the connected probes.
 - **Bandwidth estimates.** Crosspoint computes a Mbit/s estimate per flow from the SDP.
 - **SDP viewer.** One click next to a sender opens the raw SDP manifest in a modal.
 
@@ -107,28 +109,44 @@ If you don't have one yet, the ready-made image from rhastie is a fast way to ge
 
 ## Installation
 
-Via Docker Registry:
-
-```
-docker run -d \
-  --restart unless-stopped \
-  --network host \
-  --name nmos-crosspoint_v3 \
-  --hostname nmos-crosspoint_v3 \
-  -v "$(pwd)/server/config:/nmos-crosspoint/server/config" \
-  -v "$(pwd)/server/state:/nmos-crosspoint/server/state" \
-  gemini2350/nmos-crosspoint_v3:latest
-```
-
-Via File Copy:
-
-Copy Files to your Docker Host
+The image is built on your Docker host from this repository — it is not published to any registry.
 
 ```shell
-docker-compose up
+git clone https://github.com/Rekomia/nmos-crosspoint_v3.git
+cd nmos-crosspoint_v3
+docker compose up -d --build
 ```
 
-That starts the Crosspoint container. Point a browser at the host IP on port 80.
+That builds the image `nmos-crosspoint_v3:local` and starts the Crosspoint container. Point a browser at the host IP on port 80.
+
+### Updating and rolling back
+
+Keep the image that runs now under its own name, then build the new version:
+
+```shell
+docker tag "$(docker inspect -f '{{.Image}}' nmos-crosspoint_v3)" nmos-crosspoint_v3:backup
+git pull
+docker compose up -d --build
+```
+
+This tags whatever the running container was started from — also a build from before 4.47, whose image was still called `gemini2350/nmos-crosspoint_v3:latest`.
+
+Back to the previous version, on the same config and state:
+
+```shell
+docker compose down
+docker run -d --restart unless-stopped --network host \
+  --name nmos-crosspoint_v3 --hostname nmos-crosspoint_v3 \
+  -v "$(pwd)/server/config:/nmos-crosspoint/server/config" \
+  -v "$(pwd)/server/state:/nmos-crosspoint/server/state" \
+  nmos-crosspoint_v3:backup
+```
+
+Forward again: `docker rm -f nmos-crosspoint_v3 && docker compose up -d --build`.
+
+Without Docker Compose, or over a connection that may drop: `scripts/update.sh` builds this checkout and switches the container in one step that keeps running in the background (log: `~/crosspoint-update.log`). It stops nothing until the new image is built and checked, and starts the previous image again if the new one does not come up. `scripts/update.sh rollback` switches back to the image that ran before.
+
+Only one Crosspoint may control a plant at a time — stop one before you start the other. After a switch in either direction, reload every open browser tab: a tab keeps the UI it was loaded with.
 
 `docker-compose.yml` mounts two persistent folders, so your settings and lease history survive container rebuilds:
 
@@ -173,3 +191,11 @@ In `/server` and `/ui` each run `npm install && npm run dev` — the server rest
 
 The **Logs** page in the nav shows the live server log stream; `http://<host>/debug` exposes the full live state for tracing connection or patch behaviour.
 
+
+## Credits
+
+- **Johannes Grieb** — original author of NMOS Crosspoint (MIT License, © 2021, see [LICENSE.md](LICENSE.md)).
+- **[Gemini2350](https://github.com/Gemini2350)** — the `nmos-crosspoint_v3` line this repository is forked from: everything up to version 4.27 in this history. Gemini2350 publishes ready-built images of their own version as [`gemini2350/nmos-crosspoint_v3`](https://hub.docker.com/r/gemini2350/nmos-crosspoint_v3) on Docker Hub — that is their code, not this fork's.
+- **Rekomia** — this fork, from version 4.28 on.
+
+Thanks also to [nmos-cpp](https://github.com/sony/nmos-cpp) and [rhastie/build-nmos-cpp](https://github.com/rhastie/build-nmos-cpp), which this project is tested against.

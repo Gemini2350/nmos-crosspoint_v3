@@ -3,6 +3,7 @@ import { ComplexCompare, ShortenNames } from "./functions";
 
 import { BitrateCalculator } from "./bitrateHelper/BitrateCalculator"
 import { parseSettings } from "./parseSettings";
+import { deriveReceiverConnection, SenderStreams, senderStreamIndex } from "./receiverConnection";
 
 const crypto = require('crypto');
 const md5 = data => crypto.createHash('md5').update(data).digest("hex")
@@ -26,6 +27,9 @@ class CrosspointUpdateThread{
     crosspointAlias = {};
     crosspointHidden = {};
     nextDeviceNum :number = 1;
+    // Receiver id → what was last shown for it from the device's own answer
+    // (DerivedConnection.key), so the log names each change once.
+    derivedKeys: Map<string, string> = new Map();
 
     informMulticast = true;
     storedMulticast:any={};
@@ -891,6 +895,16 @@ class CrosspointUpdateThread{
         this.crosspointState = {
             devices:[]
         }
+        // Senders by multicast group, built on first need: only receivers
+        // whose registry entry names no sender look into it.
+        let streams:SenderStreams|null = null;
+        const streamIndex = () => {
+            if(streams === null){ streams = senderStreamIndex(this.nmosState); }
+            return streams;
+        };
+        const senderLabel = (id:string) => this.nmosState?.senders?.[id]?.label || id;
+        let derivedSeen:Set<string> = new Set();
+        let derivedLog:string[] = [];
         // devices
         for (let dev of Object.values(this.crosspointShadow.devices)) {
             try {
@@ -1052,7 +1066,33 @@ class CrosspointUpdateThread{
                                         // nmos_<id> reference always works.
                                         let flowRef = "nmos_" + sub.sender_id;
                                         receiver.connectedFlow = flowRef;
+                                        receiver.connectedVia = "registry";
                                         device.connectedFlows.push(flowRef);
+                                    }else{
+                                        // The registry names no sender: what
+                                        // the device itself says, if we
+                                        // could read it (nmosConnector
+                                        // readReceiverConnection).
+                                        let conn:any = this.nmosState.receiverActiveData?.[nmosId];
+                                        let d = conn ? deriveReceiverConnection(conn, streamIndex(), senderLabel) : null;
+                                        if(d){
+                                            // master_enable from the device
+                                            // outranks the registry's copy.
+                                            receiver.active = true;
+                                            receiver.connectionNote = d.note;
+                                            if(d.senderId){
+                                                let flowRef = "nmos_" + d.senderId;
+                                                receiver.connectedFlow = flowRef;
+                                                receiver.connectedVia = d.via as "device"|"stream";
+                                                device.connectedFlows.push(flowRef);
+                                            }
+                                            derivedSeen.add(nmosId);
+                                            if(this.derivedKeys.get(nmosId) !== d.key){
+                                                this.derivedKeys.set(nmosId, d.key);
+                                                derivedLog.push("Receiver \"" + (this.nmosState.receivers[nmosId].label || nmosId) + "\": " + d.note +
+                                                    (d.senderId ? " Shown as connected to \"" + senderLabel(d.senderId) + "\"." : ""));
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1081,6 +1121,21 @@ class CrosspointUpdateThread{
                               raw:{ devId: (dev && (dev as any).id) || "?" } }
                     }));
                 } catch(e) {}
+            }
+        }
+
+        // One line per receiver whose derived connection changed, or a
+        // summary when many changed at once (e.g. right after a start).
+        for(const id of Array.from(this.derivedKeys.keys())){
+            if(!derivedSeen.has(id)){ this.derivedKeys.delete(id); }
+        }
+        if(derivedLog.length > 0){
+            const lines = derivedLog.length <= 10 ? derivedLog
+                : [derivedLog.length + " receivers name no sender in the registry; shown from what the devices report."];
+            for(const text of lines){
+                parentPort.postMessage(JSON.stringify({
+                    log:{ severity:"info", topic:"Crosspoint", text, raw: derivedLog.length > 10 ? { receivers: derivedLog.slice(0, 50) } : null }
+                }));
             }
         }
 

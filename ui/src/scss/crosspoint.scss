@@ -1273,6 +1273,23 @@ $cp-border: 1px solid transparent;
                         background-color: $cp-color-unmonitored;
                     }
 
+                    // Matched by stream — neither the registry nor the device
+                    // names the sender: a ring in the status colour instead of
+                    // a fill. Two classes, so it out-ranks the fills above.
+                    &.active.cp-derived {
+                        background-color: transparent;
+                        box-shadow: inset 0 0 0 3px $cp-color-green;
+                    }
+                    &.active.cp-derived.cp-health-warn {
+                        box-shadow: inset 0 0 0 3px $cp-color-warn;
+                    }
+                    &.active.cp-derived.cp-health-err {
+                        box-shadow: inset 0 0 0 3px $cp-color-red;
+                    }
+                    &.active.cp-derived.cp-health-none {
+                        box-shadow: inset 0 0 0 3px $cp-color-unmonitored;
+                    }
+
                     // Hover = preview of what a click would prepare: same
                     // dashed grey outline as a prepared point. Background is
                     // left alone so an ACTIVE (filled green) cell keeps its
@@ -1331,6 +1348,13 @@ $cp-border: 1px solid transparent;
                 // box: on hover the dot gains a dashed border, and a
                 // padding-box gradient would tile into it and paint the edge
                 // of the empty half.
+                // Every connection between the two devices matched by
+                // stream: the ring alone, same as on the flow cells.
+                &.active.cp-derived {
+                    background: transparent;
+                    box-shadow: inset 0 0 0 3px var(--cp-dot);
+                }
+
                 &.active.cp-partial {
                     background: linear-gradient(90deg, var(--cp-dot) 50%, transparent 50%) border-box;
                     box-shadow: inset 0 0 0 2px var(--cp-dot);
@@ -1556,6 +1580,10 @@ html[data-theme="light"] {
                         background: linear-gradient(90deg, var(--cp-dot) 50%, transparent 50%) border-box;
                         box-shadow: inset 0 0 0 2px var(--cp-dot);
                     }
+                    &.active.cp-derived {
+                        background: transparent;
+                        box-shadow: inset 0 0 0 3px var(--cp-dot);
+                    }
                 }
             }
 
@@ -1682,4 +1710,98 @@ html[data-theme="light"] {
     td:nth-child(3) { width: 48%; }
     td:nth-child(4) { width: 20%; }
     thead td { color: theme('colors.slate.500'); font-size: 12px; }
+}
+
+
+// ----- Legend (dialog behind the "Legend" button) -----
+// GLOBAL scope like the status modal: the dialog sits outside the .crosspoint
+// root. The swatches use the matrix's own size and colour variables, so they
+// keep matching the matrix when those change.
+.cp-legend-box {
+    max-width: 640px;
+}
+.cp-legend-intro {
+    margin: 4px 0 8px;
+    opacity: 0.75;
+}
+.cp-legend-head {
+    margin: 16px 0 6px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.7;
+}
+.cp-legend-row {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    padding: 4px 0;
+}
+.cp-legend-sw {
+    display: flex;
+    gap: 6px;
+}
+.cp-legend-cell {
+    position: relative;
+    display: block;
+    flex: none;
+    width: $cp-sizePP;
+    height: $cp-sizePP;
+    background-color: rgba(150, 150, 150, 0.13);
+    box-shadow: inset -1px -1px 0 0 rgba(150, 150, 150, 0.25);
+
+    span {
+        --cp-dot: #{$cp-color-green};
+        position: absolute;
+        top: ($cp-sizePP - $cp-size) * 0.5;
+        left: ($cp-sizePP - $cp-size) * 0.5;
+        width: $cp-size;
+        height: $cp-size;
+        border-radius: $cp-round;
+        transform: scale(0.76);
+
+        &.dev {
+            top: ($cp-sizePP - 16px) * 0.5;
+            left: ($cp-sizePP - 16px) * 0.5;
+            width: 16px;
+            height: 16px;
+            border-radius: 8px;
+            transform: none;
+        }
+        &.warn { --cp-dot: #{$cp-color-warn}; }
+        &.err  { --cp-dot: #{$cp-color-red}; }
+        &.none { --cp-dot: #{$cp-color-unmonitored}; }
+
+        &.on   { background-color: var(--cp-dot); }
+        &.ring { box-shadow: inset 0 0 0 3px var(--cp-dot); }
+        &.half {
+            background: linear-gradient(90deg, var(--cp-dot) 50%, transparent 50%) border-box;
+            box-shadow: inset 0 0 0 2px var(--cp-dot);
+        }
+        &.prepared      { border: 2px dashed $cp-color-grey; }
+        &.working       { background-color: $cp-color-grey; }
+        &.disc-prepared { background-color: rgba(70, 170, 20, 0.35); border: 2px dashed $cp-color-grey; }
+        &.disc-working  { background-color: rgba(70, 170, 20, 0.35); border: 2px solid $cp-color-grey; }
+    }
+}
+.cp-legend-hover {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 0;
+
+    code {
+        font-size: 12px;
+        overflow-wrap: anywhere;
+    }
+    span { opacity: 0.75; }
+}
+.cp-legend-note {
+    margin-top: 16px;
+    padding: 8px 12px;
+    border-left: 3px solid $cp-color-warn;
+    background-color: rgba(150, 150, 150, 0.1);
+    border-radius: 4px;
 }

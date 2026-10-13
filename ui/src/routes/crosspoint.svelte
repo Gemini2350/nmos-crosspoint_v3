@@ -5,7 +5,7 @@
       import { afterUpdate, onDestroy, onMount } from "svelte";
       import { createEventDispatcher } from 'svelte';
 
-      import { Icon, ChevronRight, ChevronDoubleUp, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
+      import { Icon, ChevronRight, ChevronDoubleUp, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath, QuestionMarkCircle } from "svelte-hero-icons";
     import { getSearchTokens, tokenSearch } from "../lib/functions";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
@@ -1399,7 +1399,7 @@
       // EVERY active connection between the two devices is staged for
       // disconnect; health = solid fill in the WORST status of any
       // connection between the two devices (red beats orange beats green).
-      const devAgg: Map<string,{anyUnstaged:boolean,sawPrepared:boolean,sawWorking:boolean,healths:number[],sawUnmon:boolean,sDev:any,rDev:any}> = new Map();
+      const devAgg: Map<string,{anyUnstaged:boolean,sawPrepared:boolean,sawWorking:boolean,healths:number[],sawUnmon:boolean,allDerived:boolean,sDev:any,rDev:any}> = new Map();
 
       // 1) ACTIVE connections — walk the receivers once.
       for(const [rid, rE] of receiverByFlowId){
@@ -1412,7 +1412,12 @@
         // BCP-008 monitor. Light blue then — it is not a fault, it is a blind
         // spot, and a real fault still outranks it.
         const unmon = bcp008On && (!sE.flow.monitor || !rE.flow.monitor);
+        // Nobody names the sender — not the registry, not the device: the
+        // server matched it by the stream the receiver takes. A ring instead
+        // of a fill, so it reads as "worked out", not "reported".
+        const derived = rE.flow.connectedVia === "stream";
         let cls = "active";
+        if(derived){ cls += " cp-derived"; }
         if(discPrepared.has(rid)){ cls += " cp-disc-prepared"; }
         else if(discWorking.has(rid)){ cls += " cp-disc-working"; }
         if(h === 3){ cls += " cp-health-err"; }
@@ -1422,7 +1427,8 @@
 
         const k = sE.dev.id + "|" + rE.dev.id;
         let a = devAgg.get(k);
-        if(!a){ a = {anyUnstaged:false, sawPrepared:false, sawWorking:false, healths:[], sawUnmon:false, sDev:sE.dev, rDev:rE.dev}; devAgg.set(k, a); }
+        if(!a){ a = {anyUnstaged:false, sawPrepared:false, sawWorking:false, healths:[], sawUnmon:false, allDerived:true, sDev:sE.dev, rDev:rE.dev}; devAgg.set(k, a); }
+        if(!derived){ a.allDerived = false; }
         a.healths.push(h);
         if(unmon){ a.sawUnmon = true; }
         if(discPrepared.has(rid)){ a.sawPrepared = true; }
@@ -1448,6 +1454,8 @@
           cls += a.sawPrepared ? " cp-disc-prepared" : " cp-disc-working";
         }else if(partial.has(k)){
           cls += " cp-partial";
+        }else if(a.allDerived){
+          cls += " cp-derived";
         }
         // Worst status wins and FILLS the dot: one unhealthy connection
         // among many healthy ones must be as loud as a uniformly bad pair.
@@ -1753,6 +1761,8 @@
     }
 
 
+    // What the dots, rings and colours of the matrix mean.
+    let legendModal:any;
     let labelModal:any;
       let labelModalInput:any;
       let labelModalId:string = "";
@@ -1832,6 +1842,13 @@
                 use:OverlayMenuService.tooltip data-tooltip="Fold every expanded sender and receiver back to the device level">
           <Icon src={ChevronDoubleUp} size="18"></Icon>
           <span class="label-text">Collapse all</span>
+        </button>
+      </li>
+      <li>
+        <button class="label gap-2" on:click={()=>legendModal.showModal()}
+                use:OverlayMenuService.tooltip data-tooltip="What the dots, rings and colours in the matrix mean">
+          <Icon src={QuestionMarkCircle} size="18"></Icon>
+          <span class="label-text">Legend</span>
         </button>
       </li>
       {#if bcp008On}
@@ -1989,7 +2006,7 @@
                         --></span><!--
                         --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                               on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                          --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
+                          --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}{#if flow.connectionNote}<span class="cp-detail-msg">{flow.connectionNote}</span>{/if}</span><!--
                         --></span><!--
                       --></td>
 
@@ -2077,6 +2094,82 @@
         </form>
       </div>
     </div>
+  </dialog>
+
+  <!-- Legend. The swatches are drawn with the matrix's own size and colour
+       variables (crosspoint.scss, .cp-legend-cell), so they stay in step. -->
+  <dialog bind:this={legendModal} class="modal">
+    <div class="modal-box cp-legend-box">
+      <form method="dialog">
+        <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+      </form>
+      <h3 class="font-bold text-lg">Legend</h3>
+      <p class="cp-legend-intro">Each cell joins a sender (column) to a receiver (row). Single flows have square dots, device cells round ones.</p>
+
+      <h4 class="cp-legend-head">Connection</h4>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="on"></span></span><span class="cp-legend-cell"><span class="dev on"></span></span></div>
+        <div><b>Connected.</b> The registry or the device itself names the sender.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="ring"></span></span><span class="cp-legend-cell"><span class="dev ring"></span></span></div>
+        <div><b>Connected, worked out.</b> The device names no sender; Crosspoint matched it by the multicast and port it receives. A device cell shows a ring when all its connections are worked out.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"></span><span class="cp-legend-cell"><span class="dev half"></span></span></div>
+        <div><b>Partly connected.</b> Device cells only: some of the flows run. A click connects the rest.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"></span><span class="cp-legend-cell"></span></div>
+        <div><b>Not connected.</b></div>
+      </div>
+
+      <h4 class="cp-legend-head">Status (BCP-008)</h4>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="on"></span></span><span class="cp-legend-cell"><span class="ring"></span></span></div>
+        <div><b>Green:</b> healthy.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="on warn"></span></span><span class="cp-legend-cell"><span class="ring warn"></span></span></div>
+        <div><b>Orange:</b> partially healthy.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="on err"></span></span><span class="cp-legend-cell"><span class="ring err"></span></span></div>
+        <div><b>Red:</b> unhealthy. On a device cell the worst connection decides.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="on none"></span></span><span class="cp-legend-cell"><span class="ring none"></span></span></div>
+        <div><b>Dark grey:</b> sender or receiver reports no BCP-008 status. Not a fault, just no statement.</div>
+      </div>
+
+      <h4 class="cp-legend-head">Taking</h4>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="prepared"></span></span></div>
+        <div><b>Dashed outline:</b> preview while hovering, or prepared and waiting for TAKE.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="working"></span></span></div>
+        <div><b>Grey:</b> command sent, the device has not confirmed yet.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="disc-prepared"></span></span></div>
+        <div><b>Faded, dashed outline:</b> still connected, disconnect prepared for TAKE.</div>
+      </div>
+      <div class="cp-legend-row">
+        <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="disc-working"></span></span></div>
+        <div><b>Faded, solid outline:</b> disconnect on its way.</div>
+      </div>
+
+      <h4 class="cp-legend-head">Hover on a receiver's type icon</h4>
+      <div class="cp-legend-hover"><code>Read from the device: the registry does not name the sender.</code><span>The device names the sender, the registry does not. Drawn filled.</span></div>
+      <div class="cp-legend-hover"><code>Matched by stream …: the device does not name its sender.</code><span>Matched by multicast, drawn as a ring.</span></div>
+      <div class="cp-legend-hover"><code>Receives …: no known sender sends this.</code><span>Something no known sender sends, e.g. a source without NMOS. No dot.</span></div>
+      <div class="cp-legend-hover"><code>Receives …: sent by N senders (…).</code><span>Several active senders send the same multicast. Not clear, no dot.</span></div>
+      <div class="cp-legend-hover"><code>Receives …: only inactive senders are set to it.</code><span>Only switched-off senders would match. No dot.</span></div>
+
+      <p class="cp-legend-note"><b>A ring is a real connection:</b> a click disconnects it, like a filled dot. Crosspoint never acts on a worked-out connection by itself.</p>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
   </dialog>
 
   <dialog bind:this={monitorModal} class="modal">

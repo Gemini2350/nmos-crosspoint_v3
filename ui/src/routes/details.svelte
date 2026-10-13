@@ -97,6 +97,7 @@
       // Info copied from the currently connected sender (if any)
       connectedSenderId:string;
       connectedSenderLabel:string;
+      connectionNote:string;
       format:string;
       bitrate:any;
       legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string, dup?:boolean, dupText?:string }>;
@@ -305,6 +306,7 @@
             codec: r.codec || "",
             connectedSenderId: r.connectedSenderId || "",
             connectedSenderLabel: r.connectedSenderLabel || "",
+            connectionNote: r.connectionNote || "",
             format: r.format || "",
             bitrate: r.bitrate,
             legs: Array.isArray(r.legs) ? r.legs : []
@@ -1248,7 +1250,8 @@
                             use:OverlayMenuService.tooltip
                             data-tooltip={(recv.type === "data" ? "ANC" : recv.type.toUpperCase())
                               + " " + (recv.active ? "active – click to disable" : "inactive – click to enable")
-                              + (recv.connectedSenderLabel ? "\nConnected sender: " + recv.connectedSenderLabel : "")}>
+                              + (recv.connectedSenderLabel ? "\nConnected sender: " + recv.connectedSenderLabel : "")
+                              + (recv.connectionNote ? "\n" + recv.connectionNote : "")}>
                         <Icon src={getFlowTypeIcon(recv.type)}></Icon>
                       </span>
                     </td>

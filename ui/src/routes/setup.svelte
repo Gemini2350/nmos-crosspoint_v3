@@ -1084,10 +1084,11 @@
         unicast. When a probe is connected the Audio Monitor uses it
         automatically instead of a local IGMP join, so this server needs
         no multicast access at all. It is the same image started in probe
-        mode:
+        mode — build it on the probe host, or copy it over with
+        <code>docker save nmos-crosspoint_v3:local | ssh &lt;probe host&gt; docker load</code>:
       </p>
       <div class="setup-probe-cmd">
-        <code>docker run -d --name nmos_crosspoint_v3_probe --restart unless-stopped --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" gemini2350/nmos-crosspoint_v3</code>
+        <code>docker run -d --name nmos_crosspoint_v3_probe --restart unless-stopped --network host -e MODE=probe -e CROSSPOINT_URL=ws://&lt;this server&gt; -e PROBE_TOKEN=&lt;token below&gt; -e PROBE_NAME="Studio A" nmos-crosspoint_v3:local</code>
       </div>
       <p class="setup-section-hint">
         The token is minted once and persisted in <code>settings.json</code>,
