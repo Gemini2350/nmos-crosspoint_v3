@@ -133,27 +133,14 @@
         svg { width: 20px; height: 20px; }
     }
 
-    // Category divider between groups of sections. Keeps the long page
-    // scannable: Connection / Switching / Monitoring / Addressing / Access.
-    .setup-group {
-        margin: 34px 0 0 0;
-        padding-bottom: 5px;
-        font-size: 0.74rem;
-        font-weight: 700;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: theme('colors.sky.500');
-        border-bottom: 1px solid theme('colors.base-300');
-    }
-    // The group heading's own line already separates its first section.
-    .setup-group + .setup-section { border-top: none; }
-
+    // One setting per section, each set off by a clear line; no category
+    // headings above them.
     .setup-section {
-        border-top: 1px solid theme('colors.base-300');
-        padding-top: 18px;
-        margin-top: 18px;
+        border-top: 2px solid theme('colors.base-content / 18%');
+        padding-top: 22px;
+        margin-top: 22px;
 
-        &:first-of-type { border-top: none; }
+        &:first-of-type { border-top: none; margin-top: 6px; }
 
         h3 {
             font-size: 1.05rem;
@@ -333,9 +320,9 @@
 
 
     // Lease Inventory
+    // Belongs to its setting (Multicast DHCP, DDNS): no line of its own.
     .lease-inventory {
         margin-top: 18px;
-        border-top: 1px solid theme('colors.base-300');
         padding-top: 10px;
 
         summary {
@@ -526,9 +513,9 @@
         gap: 8px;
         flex-wrap: wrap;
     }
+    // Belongs to Device Web UI Link Setup: no line of its own.
     .vendor-detected {
         margin-top: 18px;
-        border-top: 1px solid theme('colors.base-300');
         padding-top: 10px;
 
         summary {

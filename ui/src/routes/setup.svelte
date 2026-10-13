@@ -799,8 +799,6 @@
     {/if}
 
 
-    <h2 class="setup-group">Connection</h2>
-
     <section class="setup-section">
       <div class="setup-section-head">
         <h3>NMOS Registry</h3>
@@ -905,8 +903,6 @@
     </section>
 
 
-    <h2 class="setup-group">Switching</h2>
-
     <section class="setup-section">
       <div class="setup-section-head">
         <h3>Receiver Auto-Reconnect</h3>
@@ -939,8 +935,6 @@
       </div>
     </section>
 
-
-    <h2 class="setup-group">Monitoring</h2>
 
     <section class="setup-section">
       <div class="setup-section-head">
@@ -1027,8 +1021,6 @@
       </div>
     </section>
 
-
-    <h2 class="setup-group">Addressing &amp; Integration</h2>
 
     <section class="setup-section">
       <div class="setup-section-head">
@@ -1473,8 +1465,6 @@
       </details>
     </section>
 
-
-    <h2 class="setup-group">Access</h2>
 
     <section class="setup-section">
       <div class="setup-section-head">
