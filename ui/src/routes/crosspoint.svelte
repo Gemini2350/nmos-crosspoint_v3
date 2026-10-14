@@ -1628,11 +1628,20 @@
       }).finally(()=>{})
     }
 
-    // Receiver hover detail: the backend condenses the BCP-004-01
-    // constraint sets into a short string (capLimits). Empty = the device
+    // Receiver hover detail: the backend sums up the BCP-004-01 constraint
+    // sets, one line each (capLimits, "\n"-separated). Empty = the device
     // publishes no capability information.
-    function shortCaps(caps:any){
-      return (typeof caps === "string" && caps.length > 0) ? caps : "Limits: Unknown";
+    function capLines(caps:any):string[]{
+      return (typeof caps === "string" && caps.length > 0) ? caps.split("\n") : ["no capabilities published"];
+    }
+    // The pill opens right of the glyph and downwards; near the bottom of
+    // the matrix it opens upwards instead, so its last lines stay in view.
+    function placeDetail(e:MouseEvent){
+      const pill = (e.currentTarget as HTMLElement).querySelector(".cp-detail") as HTMLElement | null;
+      const box = (e.currentTarget as HTMLElement).closest(".cp-container")?.getBoundingClientRect();
+      if(!pill || !box){ return; }
+      pill.classList.remove("cp-detail-up");
+      pill.classList.toggle("cp-detail-up", pill.getBoundingClientRect().bottom > box.bottom - 4);
     }
 
     // Feature toggle from the crosspoint state: when BCP-008 monitoring is
@@ -2040,8 +2049,9 @@
                         </span><!--
                         --></span><!--
                         --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "") + monitorRing(flow)}
+                              on:mouseenter={placeDetail}
                               on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if transportFamily(flow.capabilities?.transport) === "mxl"}<span class="cp-mxl-tag">MXL</span>{/if}{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                          --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
+                          --><span class="cp-detail cp-detail-caps"><span class="cp-detail-head">Accepts</span>{#each capLines(flow.capLimits) as line}<span class="cp-detail-main">{line}</span>{/each}{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                         --></span><!--
                                               --></td>
 

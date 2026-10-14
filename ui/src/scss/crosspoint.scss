@@ -617,13 +617,38 @@ $cp-border: 1px solid transparent;
                 text-overflow:ellipsis;
                 white-space:nowrap;
                 border-radius: $cp-round;
-                right:26px;
+                // Right of the glyph, into the matrix: opening to the left it
+                // ran over the name column and past the matrix's left edge,
+                // and lost its start there.
+                left:26px;
                 top:0px;
                 padding:2px 6px;
                 background-color: theme('colors.neutral-800');
                 color:theme('colors.white');
                 font-size:13px;
                 font-weight: 400;
+                z-index: 20;
+                box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+
+                // Near the bottom of the matrix (placeDetail) it opens upwards.
+                &.cp-detail-up { top: auto; bottom: 0px; }
+            }
+            // Receiver: what it accepts, one constraint set per line; a line
+            // too long for the pill wraps, indented, instead of being cut.
+            .cp-detail-caps {
+                max-width: 440px;
+                padding: 4px 8px;
+                .cp-detail-main {
+                    white-space: normal;
+                    padding-left: 12px;
+                    text-indent: -12px;
+                }
+                .cp-detail-head {
+                    font-size: 10.5px;
+                    letter-spacing: 0.05em;
+                    text-transform: uppercase;
+                    opacity: 0.6;
+                }
             }
 
             &:hover {

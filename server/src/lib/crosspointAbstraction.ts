@@ -1731,6 +1731,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         return sub;
     }
 
+    // One line per BCP-004-01 constraint set ("\n"-separated), so the hover
+    // pill can show each accepted format on its own line instead of one
+    // cut-off run. More than MAX_CAP_LINES sets end in a "+n more" line.
+    private static MAX_CAP_LINES = 10;
     private buildReceiverCapsSummary(nmosId:string): string {
         try{
             let recv:any = this.nmosState?.receivers?.[nmosId];
@@ -1778,14 +1782,17 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 }
             }
 
-            let out = parts.join(" | ");
+            if(parts.length > CrosspointAbstraction.MAX_CAP_LINES){
+                let more = parts.length - (CrosspointAbstraction.MAX_CAP_LINES - 1);
+                parts = parts.slice(0, CrosspointAbstraction.MAX_CAP_LINES - 1).concat(["+" + more + " more"]);
+            }
+            let out = parts.join("\n");
             if(!out){
                 // No constraint sets — fall back to the plain media_types list.
                 if(Array.isArray(caps.media_types) && caps.media_types.length > 0){
                     out = caps.media_types.map(CrosspointAbstraction.mediaTypeShort).join("/");
                 }
             }
-            if(out.length > 120) out = out.substring(0, 117) + "…";
             return out;
         }catch(e){ return ""; }
     }
