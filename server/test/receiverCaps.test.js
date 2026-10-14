@@ -49,3 +49,61 @@ test("rationals compare by cross-multiplication, ranges are inclusive", () => {
     assert.equal(rc.parameterConstraintSatisfied({ minimum: 1920 }, 1920), true);
     assert.equal(rc.parameterConstraintSatisfied({ enum: [3840] }, 1920), false);
 });
+
+// ----- hover text (capsSummary) -----
+const T = "urn:x-nmos:cap:transport:";
+const L = "urn:x-nmos:cap:meta:label";
+
+test("device labels are shortened, or dropped when they add nothing", () => {
+    const shows = { ptime: true, channels: true };
+    assert.equal(rc.shortCapLabel("Hardware maximum and minimum resolution", shows), "");
+    assert.equal(rc.shortCapLabel("packet time: 1 ms; num channels: 2", shows), "");
+    assert.equal(rc.shortCapLabel("Packet time of 0.125 milliseconds with 8 channels", shows), "");
+    // the line lacks one of them: keep the label, shortened
+    assert.equal(rc.shortCapLabel("packet time: 1 ms; num channels: 2", { ptime: true, channels: false }), "ptime: 1 ms; channels: 2");
+    assert.equal(rc.shortCapLabel("Packet time of 1 millisecond with 4 channels", { ptime: false, channels: true }), "ptime 1 ms with 4 channels");
+    assert.equal(rc.shortCapLabel("Custom resolutions", shows), "Custom resolutions");
+    assert.equal(rc.shortCapLabel("1080i", shows), "1080i");
+    assert.equal(rc.shortCapLabel(undefined, shows), "");
+});
+
+test("ptime tells apart sets that differ in nothing else", () => {
+    const set = (pt) => ({ [C + "sample_rate"]: { enum: [{ numerator: 48000 }] }, [C + "sample_depth"]: { enum: [16, 24] },
+        [C + "channel_count"]: { minimum: 1, maximum: 64 }, [T + "packet_time"]: { enum: [pt] } });
+    assert.equal(rc.capsSummary({ constraint_sets: [set(0.125), set(1)] }),
+        "48k · 16/24bit · 1–64ch · ptime 0.125ms\n48k · 16/24bit · 1–64ch · ptime 1ms");
+});
+
+test("a Q-SYS style label goes, an equal range reads as one value", () => {
+    const caps = { constraint_sets: [{ [C + "channel_count"]: { maximum: 2, minimum: 2 }, [C + "sample_depth"]: { enum: [16, 24] },
+        [C + "sample_rate"]: { enum: [{ denominator: 1, numerator: 48000 }] }, [L]: "packet time: 1 ms; num channels: 2", [T + "packet_time"]: { enum: [1] } }] };
+    assert.equal(rc.capsSummary(caps), "48k · 16/24bit · 2ch · ptime 1ms");
+});
+
+test("sampling and depth show where the sets differ in them; sets that still read the same appear once", () => {
+    const set = (cs, cd, extra) => Object.assign({ [C + "media_type"]: { enum: ["video/raw"] }, [C + "frame_width"]: { minimum: 1280, maximum: 5120 },
+        [C + "frame_height"]: { minimum: 720, maximum: 2880 }, [C + "color_sampling"]: { enum: cs }, [C + "component_depth"]: { enum: cd },
+        [L]: "Hardware maximum and minimum resolution" }, extra || {});
+    const caps = { constraint_sets: [set(["RGB", "YCbCr-4:4:4"], [8, 10]), set(["YCbCr-4:2:2"], [10]),
+        set(["YCbCr-4:2:2"], [10], { [T + "hkep"]: { enum: [true] } })] };
+    assert.equal(rc.capsSummary(caps),
+        "raw video · 1280–5120×720–2880 · RGB/4:4:4 · 8/10bit\nraw video · 1280–5120×720–2880 · 4:2:2 · 10bit");
+});
+
+test("disabled sets are skipped, many sets end in +n more, no sets fall back to media_types", () => {
+    const one = (w) => ({ [C + "media_type"]: { enum: ["video/raw"] }, [C + "frame_width"]: { enum: [w] } });
+    const many = { constraint_sets: Array.from({ length: 14 }, (_, i) => one(100 + i)) };
+    const lines = rc.capsSummary(many).split("\n");
+    assert.equal(lines.length, rc.MAX_CAP_LINES);
+    assert.equal(lines[lines.length - 1], "+5 more");
+    assert.equal(rc.capsSummary({ constraint_sets: [Object.assign(one(1), { "urn:x-nmos:cap:meta:enabled": false }), one(2)] }), "raw video · 2px");
+    assert.equal(rc.capsSummary({ media_types: ["audio/L24", "video/raw"] }), "L24/raw video");
+    assert.equal(rc.capsSummary(null), "");
+});
+
+test("sampling and depth all sets share stay out; i and i read once", () => {
+    const set = (h, il) => ({ [C + "frame_width"]: { enum: [1920] }, [C + "frame_height"]: { enum: [h] }, [C + "interlace_mode"]: { enum: il },
+        [C + "color_sampling"]: { enum: ["YCbCr-4:2:2"] }, [C + "component_depth"]: { enum: [10] } });
+    assert.equal(rc.capsSummary({ constraint_sets: [set(1080, ["interlaced_tff", "interlaced_bff"]), set(1080, ["progressive"])] }),
+        "1920×1080 · i\n1920×1080 · p");
+});

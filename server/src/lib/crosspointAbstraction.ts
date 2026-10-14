@@ -7,7 +7,7 @@ import { NmosRegistryConnector } from "./nmosConnector";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { DdnsService } from "./ddnsService";
 import { Bcp008Monitor } from "./bcp008Monitor";
-import { flowCapAttrs, capSignature, acceptedSignatures } from "./receiverCaps";
+import { flowCapAttrs, capSignature, acceptedSignatures, capsSummary } from "./receiverCaps";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -1676,124 +1676,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         }catch(e){ return undefined; }
     }
 
-    // ----- BCP-004-01 receiver capabilities → short human string -----
-    //
-    // Turns receiver.caps.constraint_sets into something that fits the
-    // matrix hover detail, e.g.
-    //   "L24/L16 · 48k · ≤16ch"  or  "raw · ≤1920×1080 · ≤p60"
-    // Multiple enabled sets are joined with " | ". Falls back to the basic
-    // caps.media_types list when no constraint sets are published.
-
-    private capParamShort(cons:any, mapVal?: (v:any)=>string): string {
-        if(!cons || typeof cons !== "object") return "";
-        const mv = mapVal || ((v:any)=>(""+v));
-        try{
-            if(Array.isArray(cons.enum) && cons.enum.length > 0){
-                return cons.enum.map(mv).join("/");
-            }
-            let hasMin = cons.minimum !== undefined && cons.minimum !== null;
-            let hasMax = cons.maximum !== undefined && cons.maximum !== null;
-            if(hasMin && hasMax) return mv(cons.minimum) + "–" + mv(cons.maximum);
-            if(hasMax) return "≤" + mv(cons.maximum);
-            if(hasMin) return "≥" + mv(cons.minimum);
-        }catch(e){}
-        return "";
-    }
-
-    private static ratShort(v:any): string {
-        // BCP-004 rationals: {numerator, denominator?}. 48000 → "48k",
-        // frame rates stay plain ("50", "59.94").
-        try{
-            if(v && typeof v === "object" && typeof v.numerator === "number"){
-                let d = (typeof v.denominator === "number" && v.denominator > 0) ? v.denominator : 1;
-                let n = v.numerator / d;
-                if(n >= 1000 && n % 1000 === 0) return (n/1000) + "k";
-                return (Math.round(n * 100) / 100) + "";
-            }
-        }catch(e){}
-        return "" + v;
-    }
-
-    private static mediaTypeShort(mt:any): string {
-        // "audio/L24" → "L24", "video/jxsv" → "jxsv". The subtype alone is
-        // enough everywhere EXCEPT uncompressed video: a receiver that only
-        // says "raw" tells you nothing — "raw video" does. Same for the
-        // uncompressed audio and ancillary equivalents.
-        let s = "" + mt;
-        let i = s.indexOf("/");
-        let sub = i >= 0 ? s.substring(i+1) : s;
-        if(sub === "raw"){
-            let top = i >= 0 ? s.substring(0, i) : "";
-            if(top === "video") return "raw video";
-            if(top === "audio") return "raw audio";
-            return "raw";
-        }
-        return sub;
-    }
-
-    // One line per BCP-004-01 constraint set ("\n"-separated), so the hover
-    // pill can show each accepted format on its own line instead of one
-    // cut-off run. More than MAX_CAP_LINES sets end in a "+n more" line.
-    private static MAX_CAP_LINES = 10;
+    // BCP-004-01 receiver capabilities as hover text (receiverCaps.capsSummary):
+    // one line per constraint set, "\n"-separated.
     private buildReceiverCapsSummary(nmosId:string): string {
         try{
-            let recv:any = this.nmosState?.receivers?.[nmosId];
-            let caps:any = recv?.caps;
-            if(!caps) return "";
-
-            const CAP = "urn:x-nmos:cap:format:";
-            let sets:any[] = Array.isArray(caps.constraint_sets) ? caps.constraint_sets : [];
-            let parts:string[] = [];
-
-            for(let set of sets){
-                if(!set || typeof set !== "object") continue;
-                if(set["urn:x-nmos:cap:meta:enabled"] === false) continue;
-
-                let p:string[] = [];
-                let mt = this.capParamShort(set[CAP+"media_type"], CrosspointAbstraction.mediaTypeShort);
-                if(mt) p.push(mt);
-
-                // Audio
-                let rate = this.capParamShort(set[CAP+"sample_rate"], CrosspointAbstraction.ratShort);
-                if(rate) p.push(rate);
-                let depth = this.capParamShort(set[CAP+"sample_depth"]);
-                if(depth) p.push(depth + "bit");
-                let ch = this.capParamShort(set[CAP+"channel_count"]);
-                if(ch) p.push(ch + "ch");
-
-                // Video
-                let w = this.capParamShort(set[CAP+"frame_width"]);
-                let h = this.capParamShort(set[CAP+"frame_height"]);
-                if(w && h) p.push(w + "×" + h);
-                else if(w) p.push(w + "px");
-                let fr = this.capParamShort(set[CAP+"grain_rate"], CrosspointAbstraction.ratShort);
-                if(fr) p.push(fr + "fps");
-                let il = this.capParamShort(set[CAP+"interlace_mode"], (v:any)=>{
-                    let s = ""+v;
-                    if(s === "progressive") return "p";
-                    if(s.startsWith("interlaced")) return "i";
-                    return s;
-                });
-                if(il) p.push(il);
-
-                if(p.length > 0){
-                    let label = set["urn:x-nmos:cap:meta:label"];
-                    parts.push((typeof label === "string" && label ? label + ": " : "") + p.join(" · "));
-                }
-            }
-
-            if(parts.length > CrosspointAbstraction.MAX_CAP_LINES){
-                let more = parts.length - (CrosspointAbstraction.MAX_CAP_LINES - 1);
-                parts = parts.slice(0, CrosspointAbstraction.MAX_CAP_LINES - 1).concat(["+" + more + " more"]);
-            }
-            let out = parts.join("\n");
-            if(!out){
-                // No constraint sets — fall back to the plain media_types list.
-                if(Array.isArray(caps.media_types) && caps.media_types.length > 0){
-                    out = caps.media_types.map(CrosspointAbstraction.mediaTypeShort).join("/");
-                }
-            }
-            return out;
+            return capsSummary(this.nmosState?.receivers?.[nmosId]?.caps);
         }catch(e){ return ""; }
     }
 

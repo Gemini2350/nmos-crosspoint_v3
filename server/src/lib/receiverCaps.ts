@@ -113,3 +113,147 @@ export function parameterConstraintSatisfied(c: any, value: any): boolean {
     if (c.maximum !== undefined && !(cmp(value, c.maximum) <= 0)) return false;
     return true;
 }
+
+// ----- Receiver capabilities as text, for the matrix hover pill -----
+
+/** Most lines capsSummary returns; more sets end in a "+n more" line. */
+export const MAX_CAP_LINES = 10;
+
+/** One Parameter Constraint as text: "a/b" for an enum, "a–b" ("a" when both
+ *  ends are equal), "≤b", "≥a". */
+export function capParamShort(cons: any, mapVal?: (v: any) => string): string {
+    if (!cons || typeof cons !== "object") return "";
+    const mv = mapVal || ((v: any) => "" + v);
+    try {
+        // Values that read the same once shortened show once ("i", not "i/i").
+        if (Array.isArray(cons.enum) && cons.enum.length > 0) return [...new Set(cons.enum.map(mv))].join("/");
+        const hasMin = cons.minimum !== undefined && cons.minimum !== null;
+        const hasMax = cons.maximum !== undefined && cons.maximum !== null;
+        if (hasMin && hasMax) {
+            return cons.minimum === cons.maximum ? mv(cons.minimum) : mv(cons.minimum) + "–" + mv(cons.maximum);
+        }
+        if (hasMax) return "≤" + mv(cons.maximum);
+        if (hasMin) return "≥" + mv(cons.minimum);
+    } catch (e) {}
+    return "";
+}
+
+/** BCP-004 rational: 48000 → "48k", frame rates stay plain ("50", "59.94"). */
+export function ratShort(v: any): string {
+    if (v && typeof v === "object" && typeof v.numerator === "number") {
+        const d = (typeof v.denominator === "number" && v.denominator > 0) ? v.denominator : 1;
+        const n = v.numerator / d;
+        if (n >= 1000 && n % 1000 === 0) return (n / 1000) + "k";
+        return (Math.round(n * 100) / 100) + "";
+    }
+    return "" + v;
+}
+
+/**
+ * "audio/L24" → "L24", "video/jxsv" → "jxsv". The subtype alone is enough
+ * everywhere except uncompressed media: "raw" says nothing, "raw video" does.
+ */
+export function mediaTypeShort(mt: any): string {
+    const s = "" + mt;
+    const i = s.indexOf("/");
+    const sub = i >= 0 ? s.substring(i + 1) : s;
+    if (sub === "raw") {
+        const top = i >= 0 ? s.substring(0, i) : "";
+        if (top === "video") return "raw video";
+        if (top === "audio") return "raw audio";
+        return "raw";
+    }
+    return sub;
+}
+
+/**
+ * A constraint set's own label (urn:x-nmos:cap:meta:label), shortened, or ""
+ * when it adds nothing to the line:
+ *  - "Hardware maximum and minimum …" only announces the ranges the line
+ *    shows anyway;
+ *  - "packet time" becomes "ptime", "num channels" "channels",
+ *    "millisecond(s)" "ms";
+ *  - a label that then only states ptime and channel count is dropped when
+ *    the line itself shows both (`shows`).
+ */
+export function shortCapLabel(label: any, shows: { ptime: boolean, channels: boolean } = { ptime: false, channels: false }): string {
+    if (typeof label !== "string") return "";
+    let s = label.trim();
+    if (s === "" || /^hardware maximum and minimum\b/i.test(s)) return "";
+    s = s.replace(/packet\s*time(\s+of)?/gi, "ptime")
+         .replace(/num(ber\s+of)?\s*channels/gi, "channels")
+         .replace(/\bmilliseconds?\b/gi, "ms");
+    const onlyPtimeAndChannels = s.replace(/\b(ptime|channels?|ms|with|and)\b/gi, "").replace(/[\d.,:;\s]/g, "") === "";
+    if (onlyPtimeAndChannels && shows.ptime && shows.channels) return "";
+    return s;
+}
+
+/**
+ * A receiver's caps as hover text: one line per enabled constraint set,
+ * "\n"-separated, the set's label in front when it says something, e.g.
+ *   "L24 · 48k · 16/24bit · 1–64ch · ptime 0.125ms"
+ *   "1080i: raw video · 1920×1080 · 25fps · i"
+ *   "raw video · 1280–5120×720–2880 · 4:2:2 · 10bit" (sampling and depth
+ *   only where the receiver's sets differ in them)
+ * Sets that read the same (they differ in something not shown) appear once.
+ * Falls back to caps.media_types when no constraint sets are published.
+ */
+export function capsSummary(caps: any): string {
+    if (!caps) return "";
+    const T = "urn:x-nmos:cap:transport:";
+    const sets: any[] = Array.isArray(caps.constraint_sets) ? caps.constraint_sets : [];
+    const rows: { label: string, head: string[], look: string[], tail: string[] }[] = [];
+    for (const set of sets) {
+        if (!set || typeof set !== "object") continue;
+        if (set["urn:x-nmos:cap:meta:enabled"] === false) continue;
+        const p: string[] = [];
+        const mt = capParamShort(set[C + "media_type"], mediaTypeShort);
+        if (mt) p.push(mt);
+        // Audio
+        const rate = capParamShort(set[C + "sample_rate"], ratShort);
+        if (rate) p.push(rate);
+        const depth = capParamShort(set[C + "sample_depth"]);
+        if (depth) p.push(depth + "bit");
+        const ch = capParamShort(set[C + "channel_count"]);
+        if (ch) p.push(ch + "ch");
+        // Video
+        const w = capParamShort(set[C + "frame_width"]);
+        const h = capParamShort(set[C + "frame_height"]);
+        if (w && h) p.push(w + "×" + h);
+        else if (w) p.push(w + "px");
+        const fr = capParamShort(set[C + "grain_rate"], ratShort);
+        if (fr) p.push(fr + "fps");
+        const il = capParamShort(set[C + "interlace_mode"], (v: any) => {
+            const s = "" + v;
+            if (s === "progressive") return "p";
+            if (s.startsWith("interlaced")) return "i";
+            return s;
+        });
+        if (il) p.push(il);
+        // Sampling and depth ("4:2:2 · 10bit"): shown below only where the
+        // sets of this receiver differ in them.
+        const look: string[] = [];
+        const cs = capParamShort(set[C + "color_sampling"], (v: any) => ("" + v).replace(/^YCbCr-/, ""));
+        if (cs) look.push(cs);
+        const cd = capParamShort(set[C + "component_depth"]);
+        if (cd) look.push(cd + "bit");
+        // Transport: always shown — a 1 ms receiver cannot take a 125 µs
+        // stream, and two sets often differ in nothing else.
+        const tail: string[] = [];
+        const pt = capParamShort(set[T + "packet_time"]);
+        if (pt) tail.push("ptime " + pt + "ms");
+        if (p.length + look.length + tail.length === 0) continue;
+        rows.push({ label: shortCapLabel(set["urn:x-nmos:cap:meta:label"], { ptime: !!pt, channels: !!ch }), head: p, look, tail });
+    }
+    const looksDiffer = new Set(rows.map(r => r.look.join(" · "))).size > 1;
+    let lines = rows.map(r => (r.label ? r.label + ": " : "") + r.head.concat(looksDiffer ? r.look : [], r.tail).join(" · "));
+    lines = lines.filter((l, i) => lines.indexOf(l) === i);
+    if (lines.length > MAX_CAP_LINES) {
+        const more = lines.length - (MAX_CAP_LINES - 1);
+        lines = lines.slice(0, MAX_CAP_LINES - 1).concat(["+" + more + " more"]);
+    }
+    if (lines.length === 0 && Array.isArray(caps.media_types) && caps.media_types.length > 0) {
+        return caps.media_types.map(mediaTypeShort).join("/");
+    }
+    return lines.join("\n");
+}
