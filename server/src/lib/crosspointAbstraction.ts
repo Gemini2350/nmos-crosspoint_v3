@@ -8,6 +8,7 @@ import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { DdnsService } from "./ddnsService";
 import { Bcp008Monitor } from "./bcp008Monitor";
 import { flowCapAttrs, capSignature, acceptedSignatures, capsSummary } from "./receiverCaps";
+import { clashingOwners } from "./senderAlias";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -1463,8 +1464,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // for duplicate detection. Primary and secondary legs are independent
         // failover paths, so the same group on leg 1 and leg 2 is fine —
         // only two active senders on the SAME leg index clash.
-        let activeLegIps: { [legIndex:number]: { [ip:string]: Array<{id:string,label:string}> } } = {};
-        let activeLegRefs: Array<{ leg:CrosspointFlowLeg, flowId:string }> = [];
+        let activeLegIps: { [legIndex:number]: { [ip:string]: Array<{id:string,label:string,nmosId:string}> } } = {};
+        let activeLegRefs: Array<{ leg:CrosspointFlowLeg, flowId:string, nmosId:string }> = [];
         let senderInfoById: { [id:string]: { legs:CrosspointFlowLeg[], mxl:any, codec:string, format:string, bitrate:CrosspointFlowBitrate, label:string } } = {};
         // Distinct flow signatures of all MXL senders → their attributes.
         // Receivers' caps are evaluated once per signature, not per sender.
@@ -1508,8 +1509,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                             if(!l.dstIp) continue;
                             if(!activeLegIps[l.index]) activeLegIps[l.index] = {};
                             if(!activeLegIps[l.index][l.dstIp]) activeLegIps[l.index][l.dstIp] = [];
-                            activeLegIps[l.index][l.dstIp].push({ id: s.id, label: dLabel + " / " + (s.alias || s.name) });
-                            activeLegRefs.push({ leg: l, flowId: s.id });
+                            activeLegIps[l.index][l.dstIp].push({ id: s.id, label: dLabel + " / " + (s.alias || s.name), nmosId });
+                            activeLegRefs.push({ leg: l, flowId: s.id, nmosId });
                         }
                     }
 
@@ -1529,12 +1530,16 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // else transmits to this group") so the UI needs no owner lookup.
         // Legs are rebuilt from the NMOS state on every enrich, so stale
         // flags cannot survive a conflict being resolved.
+        // A sender passed through a gateway unchanged (an NMOS Federation copy without
+        // NAT) shares its original's group by design: that pair is one stream, not a
+        // clash (senderAlias.ts). Only owners that are a different stream count.
+        const conn = NmosRegistryConnector.instance;
         for(let ref of activeLegRefs){
             let owners = activeLegIps[ref.leg.index]?.[ref.leg.dstIp] || [];
-            if(owners.length > 1){
+            let clashing = clashingOwners(ref.flowId, ref.nmosId, owners, (a, b) => !!conn?.sameStreamSenders(a, b));
+            if(clashing.length > 0){
                 ref.leg.dup = true;
-                let others = owners.filter(o => o.id !== ref.flowId).map(o => o.label);
-                ref.leg.dupText = others.length ? others.join(", ") : "another active sender";
+                ref.leg.dupText = clashing.map(o => o.label).join(", ");
             }
         }
 

@@ -1849,6 +1849,15 @@ export class NmosRegistryConnector {
      * failover is allowed to use the same multicast). Cross-leg comparison
      * is also allowed — only leg 0 of one sender vs leg 0 of another etc.
      */
+    /**
+     * Whether two senders (NMOS ids) are the same stream passed through a gateway —
+     * an NMOS Federation copy without NAT and its original (senderAlias.ts). Such a
+     * pair shares a multicast by design and is no conflict.
+     */
+    sameStreamSenders(aId:string, bId:string): boolean {
+        return sameStream(this.nmosState.senders[aId], this.nmosState.senders[bId]);
+    }
+
     findMulticastConflict(senderId:string): { id:string, label:string, leg:number, multicast:string } | null {
         try{
             let activeData:any = (this.nmosState as any).senderActiveData?.[senderId];

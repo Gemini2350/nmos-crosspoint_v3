@@ -25,3 +25,16 @@ export function sameStream(a: any, b: any): boolean {
     const mine = new Set<string>([a.id, ...aliasIds(a)].filter(Boolean));
     return [b.id, ...aliasIds(b)].some((id) => !!id && mine.has(id));
 }
+
+/**
+ * The other active senders on the same group that are a DIFFERENT stream — what the
+ * DUP badge reports. `same(a, b)` tells whether two NMOS sender ids are one stream.
+ */
+export function clashingOwners<T extends { id: string; nmosId: string }>(
+    flowId: string,
+    nmosId: string,
+    owners: T[],
+    same: (a: string, b: string) => boolean,
+): T[] {
+    return owners.filter((o) => o.id !== flowId && !(nmosId && o.nmosId && same(nmosId, o.nmosId)));
+}
