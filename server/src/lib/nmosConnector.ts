@@ -23,6 +23,7 @@ import * as sdpTransform from 'sdp-transform';
 import { CrosspointAbstraction, CrosspointConnectionSenderInfo } from "./crosspointAbstraction";
 import { MxlEndpoint, SR_CTRL_TYPES, TRANSPORT_MXL, selectControlHrefs, transportKind, joinHref, mxlEndpointFromActive, resolvedMxlEndpoint, buildMxlReceiverPatch, buildMxlDisconnectPatch, buildRtpTransportParams, buildSenderEnablePatch, usesMulticastLease, hasRtpDestination, tryNextControl } from "./nmosConnectionPatch";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
+import { sameStream } from "./senderAlias";
 import { LeaseRetryGate } from "./leaseRetry";
 import { DdnsService } from "./ddnsService";
 import { receiverActiveRead, transportFamily, mxlReceiverReads } from "./transport";
@@ -1865,12 +1866,15 @@ export class NmosRegistryConnector {
                 return null;
             }
             // Iterate every OTHER sender that is currently active.
+            const self = this.nmosState.senders[senderId];
             for(let otherId in this.nmosState.senders){
                 if(otherId === senderId){ continue; }
                 let other = this.nmosState.senders[otherId];
                 if(!other || !other.subscription || !other.subscription.active){
                     continue;
                 }
+                // The same stream passed through a gateway is not a conflict (senderAlias.ts).
+                if(sameStream(self, other)){ continue; }
                 let otherActive:any = (this.nmosState as any).senderActiveData?.[otherId];
                 if(!otherActive || !Array.isArray(otherActive.transport_params)){
                     continue;

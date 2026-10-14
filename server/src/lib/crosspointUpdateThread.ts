@@ -3,6 +3,7 @@ import { ComplexCompare, ShortenNames } from "./functions";
 import { TRANSPORT_MXL } from "./nmosConnectionPatch";
 import { transportFamily, senderIsRedundant, receiverIsRedundant, connectedSenderId } from "./transport";
 import { moveDeviceNum } from "./deviceOrder";
+import { sameStream } from "./senderAlias";
 
 import { BitrateCalculator } from "./bitrateHelper/BitrateCalculator"
 import { parseSettings } from "./parseSettings";
@@ -1422,6 +1423,13 @@ class CrosspointUpdateThread{
 
 
                     if(p.destination_ip != ""){
+                        // The same stream passed through a gateway (an NMOS Federation copy
+                        // without NAT) shares its original's multicast by design — not a
+                        // duplicate to report or re-address (senderAlias.ts).
+                        const owner = activeMulticast[p.destination_ip];
+                        if(owner && sameStream(this.nmosState.senders?.[String(owner).slice(5)], this.nmosState.senders?.[senderId])){
+                            return;
+                        }
                         if(activeMulticast.hasOwnProperty(p.destination_ip)){
                             // Duplicate....
                             if(duplicateMulticast.hasOwnProperty(p.destination_ip)){
