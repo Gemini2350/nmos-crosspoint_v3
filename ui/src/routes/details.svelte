@@ -923,12 +923,26 @@
         if(navigator.clipboard && typeof navigator.clipboard.writeText === "function"){
           navigator.clipboard.writeText(sdpModalContent)
             .then(()=>{ flashCopied(); })
-            .catch(()=>{ ok = legacyCopy(sdpModalContent); if(ok) flashCopied(); });
+            .catch(()=>{ copyFallback(); });
           return;
         }
       }catch(e){}
-      ok = legacyCopy(sdpModalContent);
-      if(ok) flashCopied();
+      copyFallback();
+    }
+    // Neither way worked: select the SDP in the dialog, so Ctrl/Cmd+C does it.
+    function copyFallback(){
+      if(legacyCopy(sdpModalContent)){ flashCopied(); return; }
+      try{
+        const pre = sdpModal?.querySelector(".det-sdp-content");
+        const sel = window.getSelection();
+        if(pre && sel){
+          const range = document.createRange();
+          range.selectNodeContents(pre);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      }catch(e){}
+      ServerConnector.addFeedback({ level:"warning", message:"The browser did not allow copying here. The SDP is selected: press Ctrl+C (Cmd+C on a Mac), or use Download." });
     }
     /** Save the SDP as a file. Same content as Copy, but a receiver that is
      *  configured by file (or a colleague on the phone) needs it as a .sdp,
@@ -952,22 +966,33 @@
       }
     }
 
+    // The helper textarea goes INTO the open dialog: a modal <dialog> makes
+    // everything outside it inert, so a textarea on <body> could not be
+    // focused or selected — execCommand still said true and copied nothing.
+    // Success is only claimed when the whole text really was selected.
     function legacyCopy(text:string):boolean{
+      let ta:HTMLTextAreaElement | null = null;
+      const back = document.activeElement as HTMLElement | null;
       try{
-        let ta = document.createElement("textarea");
+        const host = (back && back.closest("dialog[open]")) || document.querySelector("dialog[open]") || document.body;
+        ta = document.createElement("textarea");
         ta.value = text;
         // Keep it off-screen but still selectable.
         ta.style.position = "fixed";
         ta.style.top = "-1000px";
         ta.style.left = "-1000px";
         ta.setAttribute("readonly", "");
-        document.body.appendChild(ta);
+        host.appendChild(ta);
+        ta.focus();
         ta.select();
         ta.setSelectionRange(0, text.length);
-        let ok = document.execCommand("copy");
-        document.body.removeChild(ta);
-        return ok;
+        if(document.activeElement !== ta || ta.selectionStart !== 0 || ta.selectionEnd !== text.length){ return false; }
+        return document.execCommand("copy");
       }catch(e){ return false; }
+      finally{
+        if(ta && ta.parentNode){ ta.parentNode.removeChild(ta); }
+        try{ back?.focus(); }catch(e){}
+      }
     }
     let sdpCopiedTimer:any = null;
     function flashCopied(){
