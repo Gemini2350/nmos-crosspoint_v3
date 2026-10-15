@@ -4,6 +4,7 @@ import { TRANSPORT_MXL } from "./nmosConnectionPatch";
 import { transportFamily, senderIsRedundant, receiverIsRedundant, connectedSenderId } from "./transport";
 import { moveDeviceNum } from "./deviceOrder";
 import { sameStream } from "./senderAlias";
+import { flowGrainRate } from "./receiverCaps";
 
 import { BitrateCalculator } from "./bitrateHelper/BitrateCalculator"
 import { parseSettings } from "./parseSettings";
@@ -1119,6 +1120,7 @@ class CrosspointUpdateThread{
             let source = this.nmosState.sources[flow.source_id];
             let denom = 1;
             let f:any = null
+            let rate:{ numerator:number, denominator:number } | null = null;
             switch (flow.media_type) {
 
             
@@ -1174,19 +1176,19 @@ class CrosspointUpdateThread{
                 case 'video':
                 case 'video/raw':
                 case 'urn:x-nmos:format:video':
-                    if(flow.grain_rate.denominator){
-                        denom = flow.grain_rate.denominator;
-                      }
+                    // Rate from the Flow or its Source; none = no estimate.
+                    rate = flowGrainRate(flow, source);
+                    if(!rate){ break; }
                       f = {
                         encoding:"raw",
                         width:flow.frame_width  ,
                         height:flow.frame_height,
                         fps:Math.round(
-                            (flow.grain_rate.numerator / flow.grain_rate.denominator) * 100
+                            (rate.numerator / rate.denominator) * 100
                           ) /
                             100,
                         interlaced:(flow.interlace_mode != 'progressive'),
-                        depth:flow.components[0].bit_depth,
+                        depth:(Array.isArray(flow.components) && flow.components[0]?.bit_depth) || 10,
                         sampling:"YCbCr422",
                         gapped: true,
                         gpm:true,
@@ -1202,19 +1204,19 @@ class CrosspointUpdateThread{
                   break;
 
                 case 'video/jxsv':
-                    if(flow.grain_rate.denominator){
-                        denom = flow.grain_rate.denominator;
-                      }
+                    // Rate from the Flow or its Source; none = no estimate.
+                    rate = flowGrainRate(flow, source);
+                    if(!rate){ break; }
                       f = {
                         encoding:"raw",
                         width:flow.frame_width  ,
                         height:flow.frame_height,
                         fps:Math.round(
-                            (flow.grain_rate.numerator / flow.grain_rate.denominator) * 100
+                            (rate.numerator / rate.denominator) * 100
                           ) /
                             100,
                         interlaced:(flow.interlace_mode != 'progressive'),
-                        depth:flow.components[0].bit_depth,
+                        depth:(Array.isArray(flow.components) && flow.components[0]?.bit_depth) || 10,
                         sampling:"YCbCr422",
                         gapped: true,
                         gpm:true,
@@ -1291,19 +1293,20 @@ class CrosspointUpdateThread{
               break;
             }
             case 'video':
-            case 'urn:x-nmos:format:video':
-              
-              if(flow.grain_rate.denominator){
-                denom = flow.grain_rate.denominator;
-              }
+            case 'urn:x-nmos:format:video': {
+              // The rate may come from the Source (flowGrainRate), and a coded
+              // flow (JPEG XS …) has no components at all — neither may throw,
+              // or the whole string is lost and the matrix says "Unknown format".
+              let rate = flowGrainRate(flow, source);
+              let comps:any[] = Array.isArray(flow.components) ? flow.components : [];
               if(flow.transfer_characteristic){
                 transfer = flow.transfer_characteristic;
               }
-              if(flow.components[0].name && flow.components[1].name && flow.components[2].name ){
-                rgb = flow.components[0].name + flow.components[1].name + flow.components[2].name;
+              if(comps.length >= 3 && comps[0]?.name && comps[1]?.name && comps[2]?.name){
+                rgb = comps[0].name + comps[1].name + comps[2].name;
               }
-              if(flow.components[0].bit_depth ){
-                depth = flow.components[0].bit_depth ;
+              if(comps[0]?.bit_depth){
+                depth = comps[0].bit_depth;
               }
               let interlace =
                 flow.interlace_mode == 'progressive'
@@ -1317,14 +1320,12 @@ class CrosspointUpdateThread{
                 'x'+
                 flow.frame_height +
                 interlace +
-                Math.round(
-                  (flow.grain_rate.numerator / flow.grain_rate.denominator) * 100
-                ) /
-                  100;
+                (rate ? Math.round((rate.numerator / rate.denominator) * 100) / 100 : '');
               info += ' ' + flow.colorspace + ' ' + transfer;
-                info += ' ' + rgb;
-                info += ' ' + depth + 'Bit';    
+              if(rgb){ info += ' ' + rgb; }
+              if(depth){ info += ' ' + depth + 'Bit'; }
               break;
+            }
             case 'urn:x-nmos:format:data':
               if (flow.media_type == 'video/smpte291') {
                 info += 'smpte291';

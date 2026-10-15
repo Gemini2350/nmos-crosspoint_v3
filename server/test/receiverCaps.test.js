@@ -107,3 +107,24 @@ test("sampling and depth all sets share stay out; i and i read once", () => {
     assert.equal(rc.capsSummary({ constraint_sets: [set(1080, ["interlaced_tff", "interlaced_bff"]), set(1080, ["progressive"])] }),
         "1920×1080 · i\n1920×1080 · p");
 });
+
+// ----- grain rate (IS-04: optional on the Flow, then the Source's) -----
+
+test("the grain rate is the Flow's, else its Source's", () => {
+    assert.deepEqual(rc.flowGrainRate({ grain_rate: { numerator: 50, denominator: 1 } }, { grain_rate: { numerator: 25 } }), { numerator: 50, denominator: 1 });
+    // an AJA flow without grain_rate, the Source has 25/1
+    assert.deepEqual(rc.flowGrainRate({}, { grain_rate: { numerator: 25, denominator: 1 } }), { numerator: 25, denominator: 1 });
+    assert.deepEqual(rc.flowGrainRate({ grain_rate: { numerator: 30000, denominator: 1001 } }, null), { numerator: 30000, denominator: 1001 });
+    assert.deepEqual(rc.flowGrainRate({ grain_rate: { numerator: 25 } }, null), { numerator: 25, denominator: 1 });
+    assert.equal(rc.flowGrainRate({}, {}), null);
+    assert.equal(rc.flowGrainRate({ grain_rate: { numerator: 0 } }, null), null);
+    assert.equal(rc.flowGrainRate(null, null), null);
+});
+
+test("a receiver's grain_rate constraint is checked against the Source's rate when the Flow has none", () => {
+    const flow = { media_type: "video/raw", frame_width: 1920, frame_height: 1080, interlace_mode: "progressive" };
+    const attrs = rc.flowCapAttrs(flow, { grain_rate: { numerator: 25, denominator: 1 } });
+    assert.deepEqual(attrs[C + "grain_rate"], { numerator: 25, denominator: 1 });
+    const only50 = { constraint_sets: [{ [C + "grain_rate"]: { enum: [{ numerator: 50, denominator: 1 }] } }] };
+    assert.equal(rc.constraintSetSatisfied(only50.constraint_sets[0], attrs), false);
+});

@@ -15,12 +15,28 @@ const C = "urn:x-nmos:cap:format:";
  * absent: a constraint whose target is unknown cannot be evaluated and is
  * ignored (BCP-004-01, Behaviour: Controllers).
  */
+/**
+ * The Flow's grain rate, else its Source's: IS-04 makes the Flow's optional —
+ * the Source's is the rate of the Flows derived from it, which a Flow "may
+ * override". Normalised to { numerator, denominator } (denominator defaults
+ * to 1). Null when neither gives a usable one.
+ */
+export function flowGrainRate(flow: any, source: any): { numerator: number, denominator: number } | null {
+    for (const r of [flow?.grain_rate, source?.grain_rate]) {
+        if (r && typeof r.numerator === "number" && r.numerator > 0) {
+            const d = (typeof r.denominator === "number" && r.denominator > 0) ? r.denominator : 1;
+            return { numerator: r.numerator, denominator: d };
+        }
+    }
+    return null;
+}
+
 export function flowCapAttrs(flow: any, source: any): { [cap: string]: any } {
     const a: { [cap: string]: any } = {};
     if (!flow) return a;
     const set = (k: string, v: any) => { if (v !== undefined && v !== null && v !== "") { a[C + k] = v; } };
     set("media_type", flow.media_type);
-    set("grain_rate", flow.grain_rate);
+    set("grain_rate", flowGrainRate(flow, source));
     set("frame_width", flow.frame_width);
     set("frame_height", flow.frame_height);
     set("interlace_mode", flow.interlace_mode);
