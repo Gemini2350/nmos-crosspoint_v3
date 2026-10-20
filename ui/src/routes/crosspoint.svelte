@@ -119,7 +119,18 @@
         if(dev.nodeAlias){ g.alias = dev.nodeAlias; }
         g.devices.push(dev);
       });
-      groups.forEach((g)=>{ g.grouped = g.devices.length > 1; });
+      // Inside a node the devices go by name, numbers counted as numbers
+      // ("Horizon 7" before "Horizon 8", "Horizon 10" after "Horizon 9").
+      // The server hands them over in the order it first saw them, which
+      // reads as random as soon as a group was added or renamed later.
+      // Nodes themselves keep that order: the matrix layout stays put when
+      // a new device turns up.
+      groups.forEach((g)=>{
+        g.grouped = g.devices.length > 1;
+        if(g.grouped){
+          g.devices.sort((a:any, b:any)=>deviceDisplayLabelShort(a).localeCompare(deviceDisplayLabelShort(b), undefined, { numeric:true, sensitivity:"base" }));
+        }
+      });
       return groups;
     }
     function flattenGroups(groups:CpNodeGroup[]):any[]{
