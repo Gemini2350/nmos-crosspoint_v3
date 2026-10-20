@@ -825,7 +825,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     reject({src:src,dst:dst,status:"failed", detail:{message: msg, log:""}});
                     return;
                 }
-                let autoActivate = !!(this.settings && this.settings.autoActivateInactiveSender);
+                // For clicks only: senderInfo.active is IS-04 alone, and an
+                // automatic take got here with the sender on or unknown.
+                let autoActivate = !!(this.settings && this.settings.autoActivateInactiveSender) && !opts.automatic;
                 if(autoActivate && src && src.id.startsWith("nmos_") && senderInfo && senderInfo.active === false){
                     let nmosId = src.id.slice(5);
                     // Checked on fresh device state and, when clear, claimed:
@@ -897,7 +899,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 if(dst.id.startsWith("nmos_")){
                     try{
                         let nmosId = dst.id.slice(5);
-                        let log = await NmosRegistryConnector.instance.makeConnection(nmosId,senderInfo);
+                        let log = await NmosRegistryConnector.instance.makeConnection(nmosId,senderInfo, { automatic: !!opts.automatic });
                         if(senderInfo.senderId == "disconnect"){
                             resolve({src:src,dst:dst,status:"ok_dis", detail:{message:"Success",log:""+log}});
                         }else{
@@ -978,9 +980,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
      * it and that are on. A connection read from the device or matched by
      * stream is left as it is (see reconnectReceiversOfSender), a receiver
      * that is off stays off, and the take never switches a sender on.
-     * Returns the NMOS ids taken and skipped; the caller logs them.
+     * `only`: just these receivers (NMOS ids) — one that comes back after
+     * its sender's re-take. Returns the NMOS ids taken and skipped; the
+     * caller logs them.
      */
-    public retakeReceiversOfReturnedSender(senderId:string):{ started:string[], skipped:Array<{id:string, reason:string}> }{
+    public retakeReceiversOfReturnedSender(senderId:string, only?:string[]):{ started:string[], skipped:Array<{id:string, reason:string}> }{
         let nmos_senderId = "nmos_" + senderId;
         let started:string[] = [];
         let skipped:Array<{id:string, reason:string}> = [];
@@ -994,7 +998,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             }
             for(let type of Object.keys(dev.receivers)){
                 for(let flow of dev.receivers[type]){
-                    if(flow.connectedFlow == nmos_senderId && flow.id.startsWith("nmos_")){ dsts.push(flow); }
+                    if(flow.connectedFlow == nmos_senderId && flow.id.startsWith("nmos_") &&
+                       (!only || only.includes(flow.id.slice(5)))){ dsts.push(flow); }
                 }
             }
         }
@@ -1005,10 +1010,18 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 skipped.push({ id, reason: dst.connectedVia === "device" ? "shown from what the device reports" : "matched by stream" });
                 continue;
             }
+            // Someone is switching it right now: theirs is the newer word.
+            if(this.receiverTakes.has(dst.id)){
+                skipped.push({ id, reason: "a take on it is running" });
+                continue;
+            }
             started.push(id);
             this.executeConnection(src, dst, { automatic:true }).catch((e:any)=>{
-                SyncLog.log("warning", "crosspoint", "Re-take of receiver " + dst.id + " after sender " + src.id + " came back failed: " +
-                    (e?.detail?.message || e?.status || "unknown"));
+                let msg = "" + (e?.detail?.message || e?.status || "unknown");
+                // Refused on purpose (sender off, receiver changed meanwhile):
+                // already logged as such, not a failure.
+                if(/not re-taken|does not switch it on/.test(msg)) return;
+                SyncLog.log("warning", "crosspoint", "Re-take of receiver " + dst.id + " after sender " + src.id + " came back failed: " + msg);
             });
         }
         return { started, skipped };

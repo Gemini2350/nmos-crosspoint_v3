@@ -983,11 +983,14 @@
         publishes now. Some receivers keep their settings across a sender
         restart but never take the new stream until they are switched again.
         Waits until the sender is active and its SDP has settled (10&nbsp;s),
-        and, on a device with BCP-008, until it reports itself healthy (up to
-        60&nbsp;s more). Only receivers whose registry entry names the sender:
-        no other sender, a receiver that is off stays off, and an inactive
-        sender is not switched on. The log names the receivers and what
-        changed in the SDP. On by default.
+        and, on a device with BCP-008, until it reports itself (partially)
+        healthy (up to 60&nbsp;s more). A receiver that was gone itself at
+        that moment is taken when it is back. Only receivers whose registry
+        entry names the sender: no other sender, a receiver that is off or
+        being switched stays as it is, and an inactive sender is not switched
+        on. A sender that comes back exactly as it went (same IS-04 version
+        and SDP) only lost its registration: nothing is re-taken. The log
+        names the receivers and what changed in the SDP. On by default.
       </p>
 
       <div class="setup-form">
