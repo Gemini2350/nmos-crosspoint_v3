@@ -365,8 +365,9 @@
         });
       });
 
-      // sort by combined label
-      newList.sort((a,b)=>(a.label||"").localeCompare(b.label||""));
+      // sort by combined label, numbers counted as numbers ("Horizon 10"
+      // after "Horizon 9") — the same order the matrix uses inside a node
+      newList.sort((a,b)=>(a.label||"").localeCompare(b.label||"", undefined, { numeric:true, sensitivity:"base" }));
 
       // Group devices by their NMOS node. Groups keep the position of their
       // first device in the sorted list; only nodes with 2+ devices get the
