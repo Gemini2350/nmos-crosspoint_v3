@@ -763,17 +763,19 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     // as OFF ended up with the receiver connected.
     private receiverTakes: Map<string, Promise<any>> = new Map();
 
-    executeConnection(src:CrosspointFlow,dst:CrosspointFlow){
-        if(!dst){ return this.executeConnectionNow(src, dst); }
+    /** `automatic`: a take nobody clicked. It never switches a sender on
+     *  (Auto-Activate is for clicks), it refuses instead. */
+    executeConnection(src:CrosspointFlow,dst:CrosspointFlow, opts:{automatic?:boolean} = {}){
+        if(!dst){ return this.executeConnectionNow(src, dst, opts); }
         let previous = this.receiverTakes.get(dst.id) || Promise.resolve();
-        let run = previous.catch(()=>{}).then(() => this.executeConnectionNow(src, dst));
+        let run = previous.catch(()=>{}).then(() => this.executeConnectionNow(src, dst, opts));
         let tail = run.catch(()=>{});
         this.receiverTakes.set(dst.id, tail);
         tail.then(() => { if(this.receiverTakes.get(dst.id) === tail){ this.receiverTakes.delete(dst.id); } });
         return run;
     }
 
-    private executeConnectionNow(src:CrosspointFlow,dst:CrosspointFlow){
+    private executeConnectionNow(src:CrosspointFlow,dst:CrosspointFlow, opts:{automatic?:boolean} = {}){
         return new Promise(async(resolve, reject) => {
             if(dst){
                 let senderInfo:CrosspointConnectionSenderInfo|null = null;
@@ -817,6 +819,12 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 // want a stray click on the Crosspoint matrix to push a signal
                 // on the wire. First make sure its multicast isn't already
                 // claimed by another active sender on the same leg.
+                if(opts.automatic && src && src.id.startsWith("nmos_") && NmosRegistryConnector.instance.senderIsOn(src.id.slice(5)) === false){
+                    let msg = "Sender " + src.id + " is not active — an automatic take does not switch it on.";
+                    SyncLog.log("info", "connect_crosspoint", "Not taking receiver " + dst.id + ": " + msg);
+                    reject({src:src,dst:dst,status:"failed", detail:{message: msg, log:""}});
+                    return;
+                }
                 let autoActivate = !!(this.settings && this.settings.autoActivateInactiveSender);
                 if(autoActivate && src && src.id.startsWith("nmos_") && senderInfo && senderInfo.active === false){
                     let nmosId = src.id.slice(5);
@@ -958,6 +966,52 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 }
             }
         }
+    }
+
+    /**
+     * A sender that was gone from the registry is back and transmits
+     * (nmosConnector checkSenderReturn). Every receiver still set to it gets
+     * it again, with the SDP it publishes now: some receivers do not take a
+     * restarted stream until they are activated once more.
+     *
+     * Same sender, nothing else: only receivers whose REGISTRY entry names
+     * it and that are on. A connection read from the device or matched by
+     * stream is left as it is (see reconnectReceiversOfSender), a receiver
+     * that is off stays off, and the take never switches a sender on.
+     * Returns the NMOS ids taken and skipped; the caller logs them.
+     */
+    public retakeReceiversOfReturnedSender(senderId:string):{ started:string[], skipped:Array<{id:string, reason:string}> }{
+        let nmos_senderId = "nmos_" + senderId;
+        let started:string[] = [];
+        let skipped:Array<{id:string, reason:string}> = [];
+        let src:CrosspointFlow = null;
+        let dsts:CrosspointFlow[] = [];
+        for(let dev of this.crosspointState.devices){
+            for(let type of Object.keys(dev.senders)){
+                for(let flow of dev.senders[type]){
+                    if(flow.id == nmos_senderId){ src = flow; }
+                }
+            }
+            for(let type of Object.keys(dev.receivers)){
+                for(let flow of dev.receivers[type]){
+                    if(flow.connectedFlow == nmos_senderId && flow.id.startsWith("nmos_")){ dsts.push(flow); }
+                }
+            }
+        }
+        if(!src) return { started, skipped };
+        for(let dst of dsts){
+            let id = dst.id.slice(5);
+            if(dst.connectedVia && dst.connectedVia !== "registry"){
+                skipped.push({ id, reason: dst.connectedVia === "device" ? "shown from what the device reports" : "matched by stream" });
+                continue;
+            }
+            started.push(id);
+            this.executeConnection(src, dst, { automatic:true }).catch((e:any)=>{
+                SyncLog.log("warning", "crosspoint", "Re-take of receiver " + dst.id + " after sender " + src.id + " came back failed: " +
+                    (e?.detail?.message || e?.status || "unknown"));
+            });
+        }
+        return { started, skipped };
     }
 
     /**

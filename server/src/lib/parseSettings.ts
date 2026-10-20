@@ -139,6 +139,14 @@ export function parseSettings(settings:any){
         delete settings.reconnectReceiversOnMulticastChange;
     }
 
+    // When a sender that was gone from the registry comes back, take every
+    // receiver still set to it once more with its new SDP (nmosConnector
+    // checkSenderReturn). ON by default: some receivers keep their settings
+    // across a sender restart but never take the new stream.
+    if(typeof settings.retakeReceiversOnSenderReturn !== "boolean"){
+        settings.retakeReceiversOnSenderReturn = true;
+    }
+
 
     // When the Crosspoint UI requests a connection whose source sender is
     // currently inactive (master_enable=false), should we automatically

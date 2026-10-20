@@ -1385,10 +1385,15 @@
     // lists); a cell render is then a single Map lookup.
     let cellClassFlow: Map<string,string> = new Map();
     let cellClassDevice: Map<string,string> = new Map();
+    // Receivers set to a running sender that report Inactive over BCP-008:
+    // the settings are there, the stream is not taken. Their dot is orange,
+    // their hover says so.
+    let receiverIdle: Set<string> = new Set();
 
     function rebuildCellIndex(){
       cellClassFlow = new Map();
       cellClassDevice = new Map();
+      const idle: Set<string> = new Set();
 
       // flowId → {flow, dev} for both directions.
       const senderByFlowId: Map<string,{flow:any,dev:any}> = new Map();
@@ -1418,7 +1423,12 @@
         if(!cf) continue;
         const sE = senderByFlowId.get(cf);
         if(!sE) continue;   // connected sender filtered out of the matrix
-        const h = Math.max(flowHealth(sE.flow), flowHealth(rE.flow));
+        // A receiver that says Inactive while it is set to a sender that
+        // runs does not receive — the device's own rollup calls that fine,
+        // so it would read green. Seen after a sender restart.
+        const rIdle = bcp008On && !!sE.flow.active && rE.flow.monitor?.status === 0;
+        if(rIdle){ idle.add(rid); }
+        const h = Math.max(flowHealth(sE.flow), flowHealth(rE.flow), rIdle ? 2 : 0);
         // Nobody is watching this one: sender, receiver or both offer no
         // BCP-008 monitor. Light blue then — it is not a fault, it is a blind
         // spot, and a real fault still outranks it.
@@ -1498,6 +1508,7 @@
           if(sE && rE){ cellClassDevice.set(sE.dev.id + "|" + rE.dev.id, "prepared"); }
         }
       }
+      receiverIdle = idle;
     }
 
     function getConnectClass(srcDev:any,src:any,dstDev:any, dst:any){
@@ -2017,7 +2028,7 @@
                         --></span><!--
                         --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                               on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                          --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}{#if flow.connectionNote}<span class="cp-detail-msg">{flow.connectionNote}</span>{/if}</span><!--
+                          --><span class="cp-detail"><span class="cp-detail-main">{shortCaps(flow.capLimits)}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}{#if flow.connectionNote}<span class="cp-detail-msg">{flow.connectionNote}</span>{/if}{#if receiverIdle.has(flow.id)}<span class="cp-detail-msg">Set to a running sender, but reports Inactive: it does not take the stream. Routing it again usually helps.</span>{/if}</span><!--
                         --></span><!--
                       --></td>
 
@@ -2142,7 +2153,7 @@
       </div>
       <div class="cp-legend-row">
         <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="on warn"></span></span><span class="cp-legend-cell"><span class="ring warn"></span></span></div>
-        <div><b>Orange:</b> partially healthy.</div>
+        <div><b>Orange:</b> partially healthy — or a receiver set to a running sender that reports Inactive.</div>
       </div>
       <div class="cp-legend-row">
         <div class="cp-legend-sw"><span class="cp-legend-cell"><span class="on err"></span></span><span class="cp-legend-cell"><span class="ring err"></span></span></div>

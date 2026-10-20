@@ -46,6 +46,7 @@
       virtualNode: VirtualNodeCfg;
       multicastRange: string;
       autoMulticast: { enabled: boolean, reconnectReceiversOnSenderChange?: boolean };
+      retakeReceiversOnSenderReturn: boolean;
       autoActivateInactiveSender: boolean;
       primaryLegOnly: boolean;
       audioMonitor: { enabled: boolean };
@@ -66,6 +67,7 @@
       virtualNode: { enabled: false },
       multicastRange: "",
       autoMulticast: { enabled: false, reconnectReceiversOnSenderChange: false },
+      retakeReceiversOnSenderReturn: true,
       autoActivateInactiveSender: false,
       primaryLegOnly: false,
       audioMonitor: { enabled: false },
@@ -85,6 +87,7 @@
     let formVirtualNodeEnabled:boolean = false;
     let formAutoMulticastEnabled:boolean = false;
     let formReconnectReceivers:boolean = false;
+    let formRetakeOnSenderReturn:boolean = true;
     let formAutoActivateSender:boolean = false;
     let formPrimaryLegOnly:boolean = false;
     let formAudioMonitorEnabled:boolean = false;
@@ -205,6 +208,7 @@
               obj.autoMulticast.reconnectReceiversOnSenderChange ??
               obj.autoMulticast.reconnectReceiversOnMulticastChange
             ));
+            formRetakeOnSenderReturn = obj.retakeReceiversOnSenderReturn !== false;
             formAutoActivateSender   = !!obj.autoActivateInactiveSender;
             formPrimaryLegOnly       = !!obj.primaryLegOnly;
             formAudioMonitorEnabled  = !!(obj.audioMonitor && obj.audioMonitor.enabled);
@@ -302,6 +306,7 @@
         (serverState.autoMulticast as any).reconnectReceiversOnSenderChange ??
         (serverState.autoMulticast as any).reconnectReceiversOnMulticastChange
       ));
+      formRetakeOnSenderReturn = serverState.retakeReceiversOnSenderReturn !== false;
       formAutoActivateSender   = !!serverState.autoActivateInactiveSender;
       formPrimaryLegOnly       = !!serverState.primaryLegOnly;
       formAudioMonitorEnabled  = !!(serverState.audioMonitor && serverState.audioMonitor.enabled);
@@ -382,6 +387,7 @@
           enabled: formAutoMulticastEnabled,
           reconnectReceiversOnSenderChange: formReconnectReceivers
         },
+        retakeReceiversOnSenderReturn: formRetakeOnSenderReturn,
         autoActivateInactiveSender: formAutoActivateSender,
         primaryLegOnly: formPrimaryLegOnly,
         audioMonitor: { enabled: formAudioMonitorEnabled },
@@ -968,6 +974,26 @@
         <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
           <span class="label-text">Auto-reconnect receivers on sender SDP change</span>
           <input type="checkbox" class="toggle" bind:checked={formReconnectReceivers} on:change={markDirty} />
+        </label>
+      </div>
+
+      <p class="setup-section-hint">
+        When a sender that was gone from the registry comes back (a restart),
+        take every receiver that is still set to it once more, with the SDP it
+        publishes now. Some receivers keep their settings across a sender
+        restart but never take the new stream until they are switched again.
+        Waits until the sender is active and its SDP has settled (10&nbsp;s),
+        and, on a device with BCP-008, until it reports itself healthy (up to
+        60&nbsp;s more). Only receivers whose registry entry names the sender:
+        no other sender, a receiver that is off stays off, and an inactive
+        sender is not switched on. The log names the receivers and what
+        changed in the SDP. On by default.
+      </p>
+
+      <div class="setup-form">
+        <label class="label cursor-pointer gap-3" style="justify-content:flex-start;">
+          <span class="label-text">Re-take receivers when their sender comes back</span>
+          <input type="checkbox" class="toggle" bind:checked={formRetakeOnSenderReturn} on:change={markDirty} />
         </label>
       </div>
     </section>

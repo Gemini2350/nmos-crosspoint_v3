@@ -400,6 +400,7 @@ function getSetupConfigState() {
         // so the UI gets exactly what's persisted.
         reconnectReceiversOnSenderChange: !!settings.reconnectReceiversOnSenderChange
     };
+    let retakeReceiversOnSenderReturn = settings.retakeReceiversOnSenderReturn !== false;
     let autoActivateInactiveSender = !!settings.autoActivateInactiveSender;
     let primaryLegOnly = !!settings.primaryLegOnly;
     let multicastStats = (MulticastLeaseManager.instance
@@ -485,6 +486,7 @@ function getSetupConfigState() {
         bcp008: bcp008Cfg,
         multicastRange,
         autoMulticast,
+        retakeReceiversOnSenderReturn,
         autoActivateInactiveSender,
         primaryLegOnly,
         multicastStats,
@@ -697,6 +699,9 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                     }else if(typeof postData.autoMulticast.reconnectReceiversOnMulticastChange === "boolean"){
                         next.autoMulticast.reconnectReceiversOnSenderChange = postData.autoMulticast.reconnectReceiversOnMulticastChange;
                     }
+                }
+                if(typeof postData.retakeReceiversOnSenderReturn === "boolean"){
+                    next.retakeReceiversOnSenderReturn = postData.retakeReceiversOnSenderReturn;
                 }
                 if(typeof postData.autoActivateInactiveSender === "boolean"){
                     next.autoActivateInactiveSender = postData.autoActivateInactiveSender;
@@ -924,6 +929,9 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             let autoMulticastWasEnabled = !!(settings.autoMulticast && settings.autoMulticast.enabled);
             settings.autoMulticast = { enabled: !!next.autoMulticast.enabled };
             settings.reconnectReceiversOnSenderChange = !!next.autoMulticast.reconnectReceiversOnSenderChange;
+            // Read when a returned sender is ready, so it applies to the
+            // next one that comes back.
+            settings.retakeReceiversOnSenderReturn = !!next.retakeReceiversOnSenderReturn;
             settings.autoActivateInactiveSender = !!next.autoActivateInactiveSender;
             // Read by makeConnection on every take — applies from the next
             // one on, existing connections stay as they are.
