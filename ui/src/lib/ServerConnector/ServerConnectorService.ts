@@ -128,13 +128,19 @@ class _ServerConnector {
     user = "__noAuth";
     pass:string|null = "";
     lastUsername:string|null = "";
+    // Label of the single sign-on button; "" when the server offers none.
+    oidcLabel = "";
+    // This connection is signed in by a single sign-on session.
+    oidcSession = false;
 
     public resetAuthTimer (){
       if(this.authTimer){
         clearTimeout(this.authTimer);
       }
       this.authTimer = setTimeout(()=>{
-        this.doLogout()
+        // A single sign-on session ends on the server.
+        if(this.oidcSession) return;
+        this.localLogout()
         console.error("closing logout")
         this.authTimer = null;
       }, this.authTimeout );
@@ -146,12 +152,12 @@ class _ServerConnector {
       setInterval(()=>{
         
         try{
-          if(this.serverRejectedOnce){
+          if(this.serverRejectedOnce && !this.oidcSession){
             let pass:any = localStorage.getItem("nmoscrosspoint_pass");
             if(pass){
               pass = JSON.parse(pass);
               if(pass.logout){
-                this.doLogout();
+                this.localLogout();
                 return;
               }else if(this.pass == "" && pass.time > (new Date().getTime() - this.closedAuthTimeout)){
                 this.pass = pass.pass;
@@ -163,7 +169,7 @@ class _ServerConnector {
           }
         }catch(e){
           this.pass = "";
-          this.doLogout();
+          this.localLogout();
           return;
         }
 
@@ -319,6 +325,10 @@ class _ServerConnector {
 
             this.reconnectTime = 1;
             this.authDone = false;
+            // A single sign-on session may have ended while the socket was
+            // down; the server says so again if not.
+            if(this.oidcSession) this.user = "__noAuth";
+            this.oidcSession = false;
             setTimeout(() => {
               // A subscription sent before the connection is authenticated is
               // answered with permissionDenied — the server has no way to know
@@ -413,6 +423,8 @@ class _ServerConnector {
             break;
           case 'authseed':
             this.authSeed = message.seed;
+            this.oidcLabel = message.oidc?.label || "";
+            if(this.authDone) break;   // signed in by a single sign-on session
             this.authRequest.next({request:false, username:message.user,denied:false, authDone:false});
             if(this.pass != ""){
               this.sendAuth();
@@ -420,6 +432,7 @@ class _ServerConnector {
             break;
           case 'auth':
             this.user = message.user;
+            this.oidcSession = message.oidc === true;
             this.authDone = true;
             this.authRequest.next({request:false, username:message.user,denied:false, authDone:true});
             this.resendSync();
@@ -459,7 +472,17 @@ class _ServerConnector {
         //this.worker.postMessage(JSON.stringify({__setPass:this.pass}));
         this.sendAuth();
       }
+      public oidcSignIn(){
+        window.location.href = "/auth/oidc/login?return=" + encodeURIComponent(window.location.pathname + window.location.search);
+      }
       public doLogout(){
+        this.localLogout();
+        // The session cookie would sign the next connection straight back in.
+        if(this.oidcLabel){
+          window.location.href = "/auth/oidc/logout";
+        }
+      }
+      private localLogout(){
         this.user = "__noAuth"
         this.pass = "";
         localStorage.setItem("nmoscrosspoint_pass",JSON.stringify({pass:this.pass,logout:true,time:new Date().getTime()}));
