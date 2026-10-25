@@ -35,6 +35,7 @@ import { Bcp008Monitor } from "./lib/bcp008Monitor";
 import { ProbeGateway } from "./lib/probeGateway";
 import { NmosNodeApi } from "./lib/NmosNode/NmosNodeApi";
 import { NmosNodeRegistration } from "./lib/NmosNode/NmosNodeRegistration";
+import { OidcSignIn, parseOidcConfig } from "./lib/oidc";
 
 
 
@@ -131,14 +132,6 @@ settings.server.port = serverPort;
 // heartbeat) happens further down once the registry connector exists.
 const nmosNodeApi = new NmosNodeApi(settings);
 
-WebsocketSyncServer.init(serverAddress, serverPort, (app:any) => {
-    // Mount /x-nmos/... routes BEFORE the SPA-fallback so the registry and
-    // any controller can query our virtual Node directly. Doing this in the
-    // init callback guarantees the routes are registered between the static
-    // middleware and the `/*` index.html fallback.
-    nmosNodeApi.mount(app);
-});
-let server = WebsocketSyncServer.getInstance();
 let users:any = null;
 try {
     let rawFile = fs.readFileSync("./config/users.json");
@@ -146,8 +139,31 @@ try {
 } catch (e) {
     SyncLog.log("error", "Server", "Error while reading file: ./config/users.json", e);
 }
+const oidcConfig = parseOidcConfig(users?.oidc);
+const oidc = oidcConfig ? new OidcSignIn(oidcConfig) : null;
+
+WebsocketSyncServer.init(serverAddress, serverPort, (app:any) => {
+    // Mount /x-nmos/... routes BEFORE the SPA-fallback so the registry and
+    // any controller can query our virtual Node directly. Doing this in the
+    // init callback guarantees the routes are registered between the static
+    // middleware and the `/*` index.html fallback.
+    nmosNodeApi.mount(app);
+    if(oidc) oidc.mount(app);
+});
+let server = WebsocketSyncServer.getInstance();
 if(users){
     server.relaodAuthData(users);
+}
+if(oidc){
+    server.identify = (request:any) => oidc.identify(request);
+    server.oidcLogin = { label: oidc.config.label };
+    // A sync connection lives no longer than its session.
+    oidc.onLogout = (id) => server.closeClients((c) => c.sessionId === id);
+    setInterval(() => {
+        oidc.prune();
+        server.closeClients((c) => c.sessionId !== "" && !oidc.isActive(c.sessionId));
+    }, 60 * 1000);
+    SyncLog.log("info", "OIDC", "Sign-in with " + oidcConfig.issuer + " as client " + oidcConfig.clientId);
 }
 
 

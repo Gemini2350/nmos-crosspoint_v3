@@ -100,6 +100,12 @@ function doLogin(){
 
         </div>
 
+        {#if ServerConnector.oidcLabel}
+            <div class="pt-4">
+                <button class="btn btn-block" on:click={()=>{ServerConnector.oidcSignIn()}}>Sign in with {ServerConnector.oidcLabel}</button>
+            </div>
+        {/if}
+
         <div class="modal-action">
             <form method="dialog">
                 <button class="btn" on:click={()=>{doLogin()}}>Login</button>
