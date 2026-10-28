@@ -4,7 +4,7 @@ import { TRANSPORT_MXL } from "./nmosConnectionPatch";
 import { transportFamily, senderIsRedundant, receiverIsRedundant, connectedSenderId } from "./transport";
 import { moveDeviceNum } from "./deviceOrder";
 import { sameStream } from "./senderAlias";
-import { flowGrainRate } from "./receiverCaps";
+import { flowGrainRate, flowInterlaceMode, scanLetter } from "./receiverCaps";
 
 import { BitrateCalculator } from "./bitrateHelper/BitrateCalculator"
 import { parseSettings } from "./parseSettings";
@@ -1187,7 +1187,7 @@ class CrosspointUpdateThread{
                             (rate.numerator / rate.denominator) * 100
                           ) /
                             100,
-                        interlaced:(flow.interlace_mode != 'progressive'),
+                        interlaced:(flowInterlaceMode(flow) != 'progressive'),
                         depth:(Array.isArray(flow.components) && flow.components[0]?.bit_depth) || 10,
                         sampling:"YCbCr422",
                         gapped: true,
@@ -1215,7 +1215,7 @@ class CrosspointUpdateThread{
                             (rate.numerator / rate.denominator) * 100
                           ) /
                             100,
-                        interlaced:(flow.interlace_mode != 'progressive'),
+                        interlaced:(flowInterlaceMode(flow) != 'progressive'),
                         depth:(Array.isArray(flow.components) && flow.components[0]?.bit_depth) || 10,
                         sampling:"YCbCr422",
                         gapped: true,
@@ -1308,12 +1308,8 @@ class CrosspointUpdateThread{
               if(comps[0]?.bit_depth){
                 depth = comps[0].bit_depth;
               }
-              let interlace =
-                flow.interlace_mode == 'progressive'
-                  ? 'p'
-                  : flow.interlace_mode == 'interlaced_psf'
-                  ? 'psf'
-                  : 'i';
+              // Absent is progressive, the IS-04 default.
+              let interlace = scanLetter(flow);
               info +=
                 '' +
                 flow.frame_width +
