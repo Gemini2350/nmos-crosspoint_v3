@@ -13,7 +13,8 @@ const C = "urn:x-nmos:cap:format:";
  * The Flow attributes Parameter Constraints test against, keyed by the
  * constraint's URN from the Capabilities register. Absent attributes stay
  * absent: a constraint whose target is unknown cannot be evaluated and is
- * ignored (BCP-004-01, Behaviour: Controllers).
+ * ignored (BCP-004-01, Behaviour: Controllers). A video Flow's interlace_mode
+ * is the exception: IS-04 gives it a default, so it is never unknown.
  */
 /**
  * The Flow's grain rate, else its Source's: IS-04 makes the Flow's optional —
@@ -31,6 +32,31 @@ export function flowGrainRate(flow: any, source: any): { numerator: number, deno
     return null;
 }
 
+/** The format values the format string and bitrate switches read as video:
+ *  the IS-04 URN and the legacy spellings some Nodes still publish. */
+const VIDEO_FORMATS = ["urn:x-nmos:format:video", "video", "video/raw"];
+
+/**
+ * The Flow's interlace_mode, "progressive" where a video Flow omits it: IS-04
+ * flow_video gives the attribute that default. Undefined for a Flow that is
+ * not video, which has no scan.
+ */
+export function flowInterlaceMode(flow: any): string | undefined {
+    if (!flow) return undefined;
+    if (typeof flow.interlace_mode === "string" && flow.interlace_mode !== "") return flow.interlace_mode;
+    const video = VIDEO_FORMATS.includes(flow.format) ||
+        (flow.format === undefined && typeof flow.frame_width === "number");
+    return video ? "progressive" : undefined;
+}
+
+/** The scan of a format string, "1920x1080p50": p, psf or i. */
+export function scanLetter(flow: any): string {
+    const m = flowInterlaceMode(flow);
+    if (m === "progressive") return "p";
+    if (m === "interlaced_psf") return "psf";
+    return "i";
+}
+
 export function flowCapAttrs(flow: any, source: any): { [cap: string]: any } {
     const a: { [cap: string]: any } = {};
     if (!flow) return a;
@@ -39,7 +65,7 @@ export function flowCapAttrs(flow: any, source: any): { [cap: string]: any } {
     set("grain_rate", flowGrainRate(flow, source));
     set("frame_width", flow.frame_width);
     set("frame_height", flow.frame_height);
-    set("interlace_mode", flow.interlace_mode);
+    set("interlace_mode", flowInterlaceMode(flow));
     set("colorspace", flow.colorspace);
     set("transfer_characteristic", flow.transfer_characteristic);
     set("sample_rate", flow.sample_rate);

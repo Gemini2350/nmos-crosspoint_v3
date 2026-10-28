@@ -128,3 +128,32 @@ test("a receiver's grain_rate constraint is checked against the Source's rate wh
     const only50 = { constraint_sets: [{ [C + "grain_rate"]: { enum: [{ numerator: 50, denominator: 1 }] } }] };
     assert.equal(rc.constraintSetSatisfied(only50.constraint_sets[0], attrs), false);
 });
+
+test("a video Flow without interlace_mode is progressive, the IS-04 default", () => {
+    const flow = { format: "urn:x-nmos:format:video", media_type: "video/v210", frame_width: 1920, frame_height: 1080,
+        grain_rate: { numerator: 50, denominator: 1 } };
+    // A receiver that takes progressive only accepts it, and refuses the interlaced one.
+    const progressiveOnly = { [C + "interlace_mode"]: { enum: ["progressive"] } };
+    const tff = { ...flow, interlace_mode: "interlaced_tff" };
+    assert.equal(rc.constraintSetSatisfied(progressiveOnly, rc.flowCapAttrs(tff, null)), false);
+    assert.equal(rc.flowCapAttrs(flow, null)[C + "interlace_mode"], "progressive");
+    assert.equal(rc.constraintSetSatisfied(progressiveOnly, rc.flowCapAttrs(flow, null)), true);
+    // The matrix shows it as p, not i.
+    assert.equal(rc.flowInterlaceMode(flow), "progressive");
+    assert.equal(rc.scanLetter(flow), "p");
+});
+
+test("a stated interlace_mode is kept, and only video has one", () => {
+    const flow = { media_type: "video/raw", frame_width: 1920, frame_height: 1080 };
+    assert.equal(rc.scanLetter({ ...flow, interlace_mode: "progressive" }), "p");
+    assert.equal(rc.scanLetter({ ...flow, interlace_mode: "interlaced_tff" }), "i");
+    assert.equal(rc.scanLetter({ ...flow, interlace_mode: "interlaced_bff" }), "i");
+    assert.equal(rc.scanLetter({ ...flow, interlace_mode: "interlaced_psf" }), "psf");
+    assert.equal(rc.flowInterlaceMode({ format: "urn:x-nmos:format:audio", media_type: "audio/L24" }), undefined);
+    assert.equal(rc.flowInterlaceMode({ format: "urn:x-nmos:format:data", media_type: "video/smpte291" }), undefined);
+    assert.equal(C + "interlace_mode" in rc.flowCapAttrs({ media_type: "audio/L24" }, null), false);
+    assert.equal(rc.flowInterlaceMode(null), undefined);
+    // The legacy format spellings the format string and bitrate read as video.
+    assert.equal(rc.flowInterlaceMode({ format: "video", frame_width: 1920 }), "progressive");
+    assert.equal(rc.flowInterlaceMode({ format: "video/raw", frame_width: 1920 }), "progressive");
+});
