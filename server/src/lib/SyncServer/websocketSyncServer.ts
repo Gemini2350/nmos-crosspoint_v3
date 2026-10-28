@@ -5,8 +5,14 @@
 
 import * as cluster from "cluster";
 import * as WebSocket from "ws";
+import * as http from "http";
 
 var path = require("path");
+
+// Request headers up to this size are served, larger ones get 431. A browser
+// sends every cookie set for the parent domain with each request, which can
+// pass Node's 16 KiB default.
+const MAX_HEADER_BYTES = 64 * 1024;
 
 const express = require("express");
 
@@ -60,6 +66,8 @@ export class WebsocketSyncServer {
     private static instance: WebsocketSyncServer;
 
     private server: any;
+    /** The HTTP server the app and the WebSocket upgrades are served by. */
+    public httpServer: http.Server;
 
     public static getInstance(): WebsocketSyncServer {
         if (!WebsocketSyncServer.instance) {
@@ -225,9 +233,7 @@ export class WebsocketSyncServer {
             res.sendFile(path.resolve("./") + "/public/index.html");
         });
 
-        const ls = this.server.listen(port, address, (e) => {
-            SyncLog.log("error", "Server", "Failed to start on: "+address+":"+port, e )
-        },() => {
+        const ls = this.httpServer = http.createServer({ maxHeaderSize: MAX_HEADER_BYTES }, this.server).listen(port, address, () => {
             SyncLog.log("info", "Server", "Listening to: "+address+":"+port )
         });
 
