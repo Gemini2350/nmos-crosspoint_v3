@@ -8,14 +8,20 @@
  * A sender goes into the smallest pool whose limit covers its bitrate per leg
  * (the limit included): 1.5 → "≤ 2", 2 → "≤ 2", 7 → "≤ 10", 3000 → default.
  * Pools never overlap each other or the default pool, so an address belongs
- * to exactly one of them.
+ * to exactly one of them. Every pool may carry a name ("Audio", "Video",
+ * settings.multicastDefaultPoolName for the default pool); where a pool is
+ * shown, the name stands for it and the limit is the fallback.
  */
 
-export type PoolDef = { maxMbps: number, range: string };
+/** Longest pool name kept. */
+export const MAX_POOL_NAME = 40;
+
+export type PoolDef = { maxMbps: number, range: string, name?: string };
 
 export type Pool = {
     key: string;          // "default", or the limit as text ("2", "10")
     label: string;        // "≤ 2 Mbit/s", "∞"
+    name: string;         // the operator's name, "" when none
     maxMbps: number;      // Infinity for the default pool
     cidr: string;
     start: number;        // first address, as uint32
@@ -54,26 +60,46 @@ export function poolLabel(maxMbps: number): string {
     return Number.isFinite(maxMbps) ? "≤ " + maxMbps + " Mbit/s" : "∞";
 }
 
+/** A pool's name cut to size, "" when none. */
+export function poolName(name: any): string {
+    return typeof name === "string" ? name.trim().slice(0, MAX_POOL_NAME) : "";
+}
+
+/** How a pool reads where it is shown: its name, else its limit. */
+export function poolTitle(p: { name?: string, label: string } | null | undefined): string {
+    return p ? (p.name || p.label) : "";
+}
+
 /** The pools in use: the limited ones by limit, the default pool last. Rows
  *  that do not parse are left out (validatePools reports them). */
-export function buildPools(defaultCidr: any, defs: any): Pool[] {
+export function buildPools(defaultCidr: any, defs: any, defaultName: any = ""): Pool[] {
     const pools: Pool[] = [];
     for (const d of Array.isArray(defs) ? defs : []) {
         const r = parseCidr(d?.range);
         const max = Number(d?.maxMbps);
         if (!r || !(max > 0) || !Number.isFinite(max)) continue;
-        pools.push({ key: String(max), label: poolLabel(max), maxMbps: max, cidr: String(d.range).trim(), ...r });
+        pools.push({ key: String(max), label: poolLabel(max), name: poolName(d.name), maxMbps: max, cidr: String(d.range).trim(), ...r });
     }
     pools.sort((a, b) => a.maxMbps - b.maxMbps);
     const r = parseCidr(defaultCidr);
-    if (r) pools.push({ key: "default", label: poolLabel(Infinity), maxMbps: Infinity, cidr: String(defaultCidr).trim(), ...r });
+    if (r) pools.push({ key: "default", label: poolLabel(Infinity), name: poolName(defaultName), maxMbps: Infinity, cidr: String(defaultCidr).trim(), ...r });
     return pools;
 }
 
 /** What is wrong with a pool configuration, as messages for the operator;
- *  empty when it is fine. */
-export function validatePools(defaultCidr: any, defs: any): string[] {
+ *  empty when it is fine. Names, where given, must differ (case aside). */
+export function validatePools(defaultCidr: any, defs: any, defaultName: any = ""): string[] {
     const errors: string[] = [];
+    const names = new Map<string, { shown: string, count: number }>();
+    for (const n of [poolName(defaultName), ...(Array.isArray(defs) ? defs : []).map((p: any) => poolName(p?.name))]) {
+        if (!n) continue;
+        const e = names.get(n.toLowerCase()) || { shown: n, count: 0 };
+        e.count++;
+        names.set(n.toLowerCase(), e);
+    }
+    for (const e of names.values()) {
+        if (e.count > 1) errors.push("Two pools are named \"" + e.shown + "\".");
+    }
     const all: { name: string, cidr: string, r: { start: number, end: number } }[] = [];
     const isMulticast = (r: { start: number, end: number }) => r.start >= 0xE0000000 && r.end <= 0xEFFFFFFF;
     const seen = new Set<number>();
@@ -135,8 +161,11 @@ export function normalisePoolDefs(defs: any): PoolDef[] {
     for (const d of Array.isArray(defs) ? defs : []) {
         const range = typeof d?.range === "string" ? d.range.trim() : "";
         const raw = d?.maxMbps;
-        if (range === "" && (raw === "" || raw === null || raw === undefined)) continue;
-        out.push({ maxMbps: Number(typeof raw === "string" ? raw.replace(",", ".").trim() : raw), range });
+        const name = poolName(d?.name);
+        if (range === "" && name === "" && (raw === "" || raw === null || raw === undefined)) continue;
+        const def: PoolDef = { maxMbps: Number(typeof raw === "string" ? raw.replace(",", ".").trim() : raw), range };
+        if (name) def.name = name;
+        out.push(def);
     }
     return out.sort((a, b) => a.maxMbps - b.maxMbps);
 }

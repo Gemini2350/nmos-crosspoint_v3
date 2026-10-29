@@ -1,4 +1,4 @@
-import { normalisePoolDefs } from "./multicastPools";
+import { normalisePoolDefs, poolName } from "./multicastPools";
 
 export function parseSettings(settings:any){
 
@@ -52,6 +52,7 @@ export function parseSettings(settings:any){
     // (multicastPools.ts). Only brought into shape here; the lease manager
     // checks them and falls back to the default pool alone if they are bad.
     settings.multicastPools = normalisePoolDefs(settings.multicastPools);
+    settings.multicastDefaultPoolName = poolName(settings.multicastDefaultPoolName);
 
 
     if(!settings.hasOwnProperty("firstDynamicNumber")){

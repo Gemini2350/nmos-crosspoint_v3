@@ -29,7 +29,7 @@ import { CrosspointAbstraction } from "./lib/crosspointAbstraction";
 import { SyncObject } from "./lib/SyncServer/syncObject";
 import { parseSettings } from "./lib/parseSettings";
 import { MulticastLeaseManager } from "./lib/multicastLeaseManager";
-import { normalisePoolDefs, validatePools } from "./lib/multicastPools";
+import { normalisePoolDefs, validatePools, poolName } from "./lib/multicastPools";
 import { DdnsService } from "./lib/ddnsService";
 import { AudioMonitorService } from "./lib/audioMonitor";
 import { Bcp008Monitor } from "./lib/bcp008Monitor";
@@ -412,6 +412,7 @@ function getSetupConfigState() {
     }catch(e){}
     let multicastRange:string = (typeof settings.multicastRange === "string") ? settings.multicastRange : "";
     let multicastPools = Array.isArray(settings.multicastPools) ? settings.multicastPools : [];
+    let multicastDefaultPoolName = (typeof settings.multicastDefaultPoolName === "string") ? settings.multicastDefaultPoolName : "";
     let autoMulticast = {
         enabled: !!(settings.autoMulticast && settings.autoMulticast.enabled),
         // `!== false` default no longer fits — `false` is now the default,
@@ -491,6 +492,7 @@ function getSetupConfigState() {
         bcp008: bcp008Cfg,
         multicastRange,
         multicastPools,
+        multicastDefaultPoolName,
         autoMulticast,
         autoActivateInactiveSender,
         multicastStats,
@@ -687,9 +689,12 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 }
                 // Pools by bandwidth: checked together with the default pool
                 // (no overlaps, one pool per limit) before anything is applied.
+                if(typeof postData.multicastDefaultPoolName === "string"){
+                    next.multicastDefaultPoolName = poolName(postData.multicastDefaultPoolName);
+                }
                 if(Array.isArray(postData.multicastPools)){
                     let defs = normalisePoolDefs(postData.multicastPools);
-                    let errs = validatePools(next.multicastRange, defs);
+                    let errs = validatePools(next.multicastRange, defs, next.multicastDefaultPoolName);
                     if(errs.length > 0){
                         reject({message: "Multicast DHCP: " + errs.join(" ")});
                         return;
@@ -915,6 +920,9 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 settings.multicastRange = next.multicastRange;
             }
             let multicastPoolsChanged = false;
+            if(typeof next.multicastDefaultPoolName === "string"){
+                settings.multicastDefaultPoolName = next.multicastDefaultPoolName;
+            }
             if(Array.isArray(next.multicastPools)){
                 if(JSON.stringify(next.multicastPools) !== JSON.stringify(settings.multicastPools || [])){
                     multicastPoolsChanged = true;

@@ -40,7 +40,7 @@
       nodeId?: string;
     }
     // One pool in the lease stats; key "default" or the limit as text.
-    interface PoolStat { key:string, label:string, maxMbps:number|null, cidr:string, used:number, total:number }
+    interface PoolStat { key:string, label:string, name?:string, maxMbps:number|null, cidr:string, used:number, total:number }
     interface SetupConfig {
       registry: { ip:string, port:number };
       acceptableGmid: string;
@@ -49,7 +49,8 @@
       virtualNode: VirtualNodeCfg;
       multicastRange: string;
       // Pools by bandwidth on top of the default pool (multicastRange).
-      multicastPools?: Array<{ maxMbps:number, range:string }>;
+      multicastPools?: Array<{ maxMbps:number, range:string, name?:string }>;
+      multicastDefaultPoolName?: string;
       autoMulticast: { enabled: boolean, reconnectReceiversOnSenderChange?: boolean };
       autoActivateInactiveSender: boolean;
       audioMonitor: { enabled: boolean };
@@ -95,16 +96,18 @@
     let formDnssdDomain:string = "";
     let formMulticastRange:string = "";
     // Pools by bandwidth, as edited: the limit stays text while typing.
-    let formMulticastPools: Array<{ id:string, maxMbps:string, range:string }> = [];
-    function poolRowsFrom(pools:any):Array<{ id:string, maxMbps:string, range:string }>{
+    let formMulticastPools: Array<{ id:string, maxMbps:string, range:string, name:string }> = [];
+    let formMulticastDefaultPoolName:string = "";
+    function poolRowsFrom(pools:any):Array<{ id:string, maxMbps:string, range:string, name:string }>{
       return (Array.isArray(pools) ? pools : []).map((p:any, i:number) => ({
         id: "pool-" + i + "-" + Math.random().toString(36).slice(2, 7),
         maxMbps: (typeof p.maxMbps === "number") ? String(p.maxMbps) : "",
-        range: p.range || ""
+        range: p.range || "",
+        name: p.name || ""
       }));
     }
     function addPool(){
-      formMulticastPools = [...formMulticastPools, { id: "pool-" + Math.random().toString(36).slice(2, 9), maxMbps: "", range: "" }];
+      formMulticastPools = [...formMulticastPools, { id: "pool-" + Math.random().toString(36).slice(2, 9), maxMbps: "", range: "", name: "" }];
       markDirty();
     }
     function removePool(id:string){
@@ -114,8 +117,12 @@
     // The form's pools as the server stores them: numbers, sorted, empty rows gone.
     function poolPayload(){
       return formMulticastPools
-        .filter(p => (p.maxMbps || "").trim() !== "" || (p.range || "").trim() !== "")
-        .map(p => ({ maxMbps: Number((p.maxMbps || "").replace(",", ".").trim()), range: (p.range || "").trim() }))
+        .filter(p => (p.maxMbps || "").trim() !== "" || (p.range || "").trim() !== "" || (p.name || "").trim() !== "")
+        .map(p => {
+          const out:any = { maxMbps: Number((p.maxMbps || "").replace(",", ".").trim()), range: (p.range || "").trim() };
+          if((p.name || "").trim()){ out.name = p.name.trim(); }
+          return out;
+        })
         .sort((a, b) => a.maxMbps - b.maxMbps);
     }
     // "used / total" of the pool a row shows, "–" while the row differs
@@ -225,6 +232,7 @@
             formDnssdDomain          = (obj.registryDiscovery && typeof obj.registryDiscovery.domain === "string") ? obj.registryDiscovery.domain : "";
             formMulticastRange       = (typeof obj.multicastRange === "string") ? obj.multicastRange : "";
             formMulticastPools       = poolRowsFrom(obj.multicastPools);
+            formMulticastDefaultPoolName = (typeof obj.multicastDefaultPoolName === "string") ? obj.multicastDefaultPoolName : "";
             // Pre-fill the credentials form with the first configured user
             // so the operator doesn't have to type their own username.
             if(obj.auth && Array.isArray(obj.auth.users) && obj.auth.users.length > 0){
@@ -320,6 +328,7 @@
       formDnssdDomain          = ((serverState as any).registryDiscovery && typeof (serverState as any).registryDiscovery.domain === "string") ? (serverState as any).registryDiscovery.domain : "";
       formMulticastRange       = serverState.multicastRange || "";
       formMulticastPools       = poolRowsFrom(serverState.multicastPools);
+      formMulticastDefaultPoolName = serverState.multicastDefaultPoolName || "";
       if(serverState.ddns){
         formDdnsEnabled      = !!serverState.ddns.enabled;
         formDdnsServer       = serverState.ddns.server || "";
@@ -363,7 +372,12 @@
       // ranges are checked by the server, which refuses the save then.
       let poolsOut = poolPayload();
       let limitsSeen:number[] = [];
+      let namesSeen:string[] = formMulticastDefaultPoolName.trim() ? [formMulticastDefaultPoolName.trim().toLowerCase()] : [];
       for(let p of poolsOut){
+        if(p.name){
+          if(namesSeen.includes(p.name.toLowerCase())){ saveError = "Multicast DHCP: two pools are named \"" + p.name + "\"."; return; }
+          namesSeen.push(p.name.toLowerCase());
+        }
         if(!(p.maxMbps > 0) || !isFinite(p.maxMbps)){ saveError = "Multicast DHCP: every pool needs a limit in Mbit/s above 0."; return; }
         if(limitsSeen.includes(p.maxMbps)){ saveError = "Multicast DHCP: two pools have the limit " + p.maxMbps + " Mbit/s."; return; }
         limitsSeen.push(p.maxMbps);
@@ -399,6 +413,7 @@
         virtualNode: { enabled: formVirtualNodeEnabled },
         multicastRange: formMulticastRange.trim(),
         multicastPools: poolsOut,
+        multicastDefaultPoolName: formMulticastDefaultPoolName.trim(),
         autoMulticast: {
           enabled: formAutoMulticastEnabled,
           reconnectReceiversOnSenderChange: formReconnectReceivers
@@ -434,8 +449,10 @@
       let enabledNow   = !wasEnabled && nowEnabled;
       //   c) Auto-Allocation is on and the pools by bandwidth changed: keep
       //      every lease where it is, or re-sort everyone by bitrate.
+      // Names do not move addresses: only limits and ranges count here.
       let poolsBefore  = JSON.stringify((serverState.multicastPools || []).map(p => ({ maxMbps: p.maxMbps, range: p.range })));
-      let poolsChanged = nowEnabled && wasEnabled && poolsBefore !== JSON.stringify(poolsOut);
+      let poolsAfter   = JSON.stringify(poolsOut.map((p:any) => ({ maxMbps: p.maxMbps, range: p.range })));
+      let poolsChanged = nowEnabled && wasEnabled && poolsBefore !== poolsAfter;
 
       if(enabledNow || rangeChanged || poolsChanged){
         pendingPayload = payload;
@@ -575,7 +592,8 @@
       createdAt: string;
       bitrate: any;
       liveStatus: "active" | "inactive" | "missing";
-      pool: string;        // pool the lease lies in ("" = outside every pool)
+      pool: string;        // pool the lease lies in, by name or limit ("" = outside every pool)
+      poolLimit: string;   // its limit ("≤ 2 Mbit/s", "∞"), shown on hover
       wantPool: string;    // pool its bitrate calls for
       misplaced: boolean;  // the two differ: "Renew from Pool" moves it
     }
@@ -607,6 +625,7 @@
           bitrate: l.bitrate,
           liveStatus: l.liveStatus || "missing",
           pool: l.pool || "",
+          poolLimit: l.poolLimit || "",
           wantPool: l.wantPool || "",
           misplaced: !!(l.wantPoolKey && l.poolKey !== l.wantPoolKey)
         });
@@ -1111,11 +1130,15 @@
           <div class="vendor-table-wrap">
             <table class="vendor-table pool-table">
               <thead>
-                <tr><th>Bitrate per leg</th><th>Range</th><th>Pairs used</th><th></th></tr>
+                <tr><th>Name</th><th>Bitrate per leg</th><th>Range</th><th>Pairs used</th><th></th></tr>
               </thead>
               <tbody>
                 {#each formMulticastPools as p (p.id)}
                   <tr>
+                    <td>
+                      <input type="text" class="input input-bordered input-sm pool-name-input" maxlength="40"
+                             placeholder="e.g. Audio" aria-label="Pool name" bind:value={p.name} on:input={markDirty} />
+                    </td>
                     <td>
                       <span class="pool-limit">up to
                         <input type="text" inputmode="decimal" class="input input-bordered input-sm pool-limit-input"
@@ -1136,6 +1159,10 @@
                   </tr>
                 {/each}
                 <tr class="pool-default">
+                  <td>
+                    <input type="text" class="input input-bordered input-sm pool-name-input" maxlength="40"
+                           placeholder="default" aria-label="Default pool name" bind:value={formMulticastDefaultPoolName} on:input={markDirty} />
+                  </td>
                   <td><span class="pool-inf">∞</span> <span class="pool-default-name">default</span></td>
                   <td>
                     <input type="text" class="input input-bordered input-sm vendor-mono pool-range-input"
@@ -1230,7 +1257,7 @@
                     {/if}
                   </td>
                   <td class="lease-pool">
-                    {#if r.pool}<span class="lease-pool-badge">{r.pool}</span>{:else}<span class="lease-pool-none" title="The lease lies in none of the pools (e.g. an address kept with Keep current IPs)">outside</span>{/if}
+                    {#if r.pool}<span class="lease-pool-badge" title={r.pool !== r.poolLimit ? r.poolLimit : ""}>{r.pool}</span>{:else}<span class="lease-pool-none" title="The lease lies in none of the pools (e.g. an address kept with Keep current IPs)">outside</span>{/if}
                     {#if r.misplaced}
                       <span class="lease-pool-want" title="Its bitrate calls for {r.wantPool}. Renew from Pool moves it there.">→ {r.wantPool}</span>
                     {/if}

@@ -30,7 +30,7 @@
  */
 
 import { SyncLog } from "./syncLog";
-import { Pool, buildPools, poolForBitrate, poolOfIp, pairCount, validatePools } from "./multicastPools";
+import { Pool, buildPools, poolForBitrate, poolOfIp, pairCount, validatePools, poolTitle } from "./multicastPools";
 
 const fs = require("fs");
 const path = require("path");
@@ -68,6 +68,7 @@ export interface LeaseStats {
 export interface PoolStats extends LeaseStats {
     key: string;
     label: string;
+    name: string;
     maxMbps: number | null;    // null for the default pool (JSON has no Infinity)
     cidr: string;
 }
@@ -140,16 +141,17 @@ export class MulticastLeaseManager {
      *  leaves the default pool alone, with one warning per configuration. */
     getPools(): Pool[] {
         const def = this.settings?.multicastRange, defs = this.settings?.multicastPools;
-        const sig = JSON.stringify([def, defs]);
+        const defName = this.settings?.multicastDefaultPoolName;
+        const sig = JSON.stringify([def, defs, defName]);
         if (sig !== this.poolsSig) {
             this.poolsSig = sig;
-            const errs = validatePools(def, defs);
+            const errs = validatePools(def, defs, defName);
             this.poolsBad = errs.length > 0 && Array.isArray(defs) && defs.length > 0;
             if (this.poolsBad) {
                 SyncLog.log("warn", "Multicast Lease", "Ignoring settings.multicastPools, only the default pool is used: " + errs.join(" "));
             }
         }
-        return buildPools(def, this.poolsBad ? [] : defs);
+        return buildPools(def, this.poolsBad ? [] : defs, defName);
     }
     private poolsSig = "";
     private poolsBad = false;
@@ -169,14 +171,14 @@ export class MulticastLeaseManager {
 
     /** Where a sender's lease lies and where its bitrate says it belongs —
      *  for the inventory ("→ ≤ 2 Mbit/s" when the two differ). */
-    poolInfo(senderId: string): { pool: string, poolKey: string, wantPool: string, wantPoolKey: string } | null {
+    poolInfo(senderId: string): { pool: string, poolLimit: string, poolKey: string, wantPool: string, wantPoolKey: string } | null {
         const lease = this.leases[senderId];
         if (!lease) return null;
         const pools = this.getPools();
         const at = poolOfIp(pools, lease.primaryIp);
         const want = poolForBitrate(pools, this.bitrateOf(senderId).mbps);
-        return { pool: at ? at.label : "", poolKey: at ? at.key : "",
-                 wantPool: want ? want.label : "", wantPoolKey: want ? want.key : "" };
+        return { pool: poolTitle(at), poolLimit: at ? at.label : "", poolKey: at ? at.key : "",
+                 wantPool: poolTitle(want), wantPoolKey: want ? want.key : "" };
     }
 
 
@@ -236,7 +238,7 @@ export class MulticastLeaseManager {
             const k = args.senderId + "|" + pool.key;
             if (!this.fullWarned.has(k)) {
                 this.fullWarned.add(k);
-                SyncLog.log("warn", "Multicast Lease", "Pool " + pool.label + " (" + pool.cidr + ") is full — sender " + args.senderId +
+                SyncLog.log("warn", "Multicast Lease", "Pool " + poolTitle(pool) + " (" + (pool.name ? pool.label + ", " : "") + pool.cidr + ") is full — sender " + args.senderId +
                     (mbps ? " (" + (Math.round(mbps * 100) / 100) + " Mbit/s)" : "") + " gets no address and keeps the one it has.");
             }
             return null;
@@ -260,7 +262,7 @@ export class MulticastLeaseManager {
         this.persist();
         this.notifyChange();
         SyncLog.log("info", "Multicast Lease", "Allocated " + pair.primary + " / " + pair.secondary + " for sender " + args.senderId + " (" + category +
-            ", pool " + pool.label + (mbps ? ", " + (Math.round(mbps * 100) / 100) + " Mbit/s" : "") + ")");
+            ", pool " + poolTitle(pool) + (mbps ? ", " + (Math.round(mbps * 100) / 100) + " Mbit/s" : "") + ")");
         return lease;
     }
 
@@ -496,7 +498,7 @@ export class MulticastLeaseManager {
             if (p) usedBy[p.key] = (usedBy[p.key] || 0) + 1;
         }
         const poolStats: PoolStats[] = pools.map((p) => ({
-            key: p.key, label: p.label, maxMbps: Number.isFinite(p.maxMbps) ? p.maxMbps : null,
+            key: p.key, label: p.label, name: p.name, maxMbps: Number.isFinite(p.maxMbps) ? p.maxMbps : null,
             cidr: p.cidr, used: usedBy[p.key] || 0, total: pairCount(p),
         }));
         // `pool` (the default pool) stays for older UIs.

@@ -315,6 +315,9 @@
         .pool-limit { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
         .pool-limit-input { width: 5.5em; text-align: right; font-family: 'Roboto Mono', monospace; }
         .pool-range-input { width: 15em; max-width: 100%; }
+        // A name is no address: the page's own font, not the mono one
+        // .setup-field gives every input.
+        .pool-name-input { width: 13em; max-width: 100%; font-family: inherit; }
         .pool-used { white-space: nowrap; font-size: 0.8rem; color: theme('colors.slate.400'); }
         .pool-inf { font-size: 1.05rem; font-weight: 700; }
         .pool-default-name { opacity: 0.6; }

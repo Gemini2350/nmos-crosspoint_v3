@@ -65,3 +65,23 @@ test("stored definitions: numbers, trimmed, sorted, empty rows dropped", () => {
     ]), [{ maxMbps: 1.5, range: "239.40.0.0/16" }, { maxMbps: 10, range: "239.41.0.0/24" }]);
     assert.deepEqual(mp.normalisePoolDefs(undefined), []);
 });
+
+test("pools carry their names; where a pool is shown, its name stands for it", () => {
+    const pools = mp.buildPools(DEFAULT, [{ maxMbps: 2, range: "239.40.0.0/16", name: " Audio " }, { maxMbps: 10, range: "239.41.0.0/24" }], "Video");
+    assert.deepEqual(pools.map((p) => p.name), ["Audio", "", "Video"]);
+    assert.deepEqual(pools.map((p) => mp.poolTitle(p)), ["Audio", "≤ 10 Mbit/s", "Video"]);
+    assert.equal(mp.poolTitle(null), "");
+    assert.equal(mp.poolName("x".repeat(60)).length, mp.MAX_POOL_NAME);
+});
+
+test("two pools may not share a name, case aside; no name is fine", () => {
+    assert.deepEqual(mp.validatePools(DEFAULT, [{ maxMbps: 2, range: "239.40.0.0/16", name: "Audio" }, { maxMbps: 10, range: "239.41.0.0/24" }], ""), []);
+    assert.match(mp.validatePools(DEFAULT, [{ maxMbps: 2, range: "239.40.0.0/16", name: "Audio" }, { maxMbps: 10, range: "239.41.0.0/24", name: "audio" }])[0],
+        /Two pools are named "Audio"/);
+    assert.match(mp.validatePools(DEFAULT, [{ maxMbps: 2, range: "239.40.0.0/16", name: "Video" }], "video")[0], /Two pools are named/);
+});
+
+test("stored definitions keep a name only when there is one", () => {
+    assert.deepEqual(mp.normalisePoolDefs([{ maxMbps: "2", range: "239.40.0.0/16", name: "  " }, { maxMbps: "10", range: "239.41.0.0/24", name: " Multi " }]),
+        [{ maxMbps: 2, range: "239.40.0.0/16" }, { maxMbps: 10, range: "239.41.0.0/24", name: "Multi" }]);
+});
