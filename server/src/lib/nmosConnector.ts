@@ -2743,6 +2743,12 @@ export class NmosRegistryConnector {
         return false;
     }
 
+    /** Retry the lease of a sender that waited for its bitrate (Multicast
+     *  DHCP pools by bandwidth); the server calls it on state changes. */
+    public retryLease(senderId:string){
+        try{ this.reconcileSenderWithLease(senderId); }catch(e){}
+    }
+
     private reconcileSenderWithLease(senderId:string, forceReconnect:boolean = false){
         let manager = MulticastLeaseManager.instance;
         if(!manager){ return; }

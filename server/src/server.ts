@@ -29,6 +29,7 @@ import { CrosspointAbstraction } from "./lib/crosspointAbstraction";
 import { SyncObject } from "./lib/SyncServer/syncObject";
 import { parseSettings } from "./lib/parseSettings";
 import { MulticastLeaseManager } from "./lib/multicastLeaseManager";
+import { normalisePoolDefs, validatePools } from "./lib/multicastPools";
 import { DdnsService } from "./lib/ddnsService";
 import { AudioMonitorService } from "./lib/audioMonitor";
 import { Bcp008Monitor } from "./lib/bcp008Monitor";
@@ -263,6 +264,11 @@ function buildBitrateIndex(): { [uuid: string]: any } {
 //                inventory shows the same value as the Details page.
 // The Setup-page UI used to derive both fields client-side; doing it on the
 // server keeps the multicastLeases sync object self-contained.
+// Bitrate per sender UUID from the crosspoint state, rebuilt on every state
+// update; the lease manager picks a sender's pool by it.
+let bitrateIndex: { [uuid: string]: any } = {};
+multicastLeaseManager.setBitrateProvider((senderId: string) => bitrateIndex[senderId]);
+
 function getMulticastLeaseSnapshot() {
     let raw = multicastLeaseManager.getAllLeases();
     let nmosSenders: any = null;
@@ -271,7 +277,7 @@ function getMulticastLeaseSnapshot() {
             nmosSenders = (NmosRegistryConnector.instance as any).nmosState?.senders;
         }
     } catch (e) {}
-    let bitrateByUuid = buildBitrateIndex();
+    let bitrateByUuid = bitrateIndex;
     let enriched: any = {};
     for (let id in raw) {
         let l = raw[id];
@@ -283,10 +289,12 @@ function getMulticastLeaseSnapshot() {
                 liveStatus = (s.subscription && s.subscription.active) ? "active" : "inactive";
             }
         } catch (e) {}
+        // pool = where the lease lies, wantPool = where the sender's
+        // bitrate says it belongs (Multicast DHCP pools by bandwidth).
         enriched[id] = Object.assign({}, l, {
             liveStatus,
             bitrate: bitrateByUuid[id]
-        });
+        }, multicastLeaseManager.poolInfo(id) || {});
     }
     return {
         leases: enriched,
@@ -325,6 +333,15 @@ multicastLeaseManager.setOnChange(() => {
 // a no-op unless something lease-visible actually changed.
 try {
     crosspoint.onStateUpdated = () => {
+        bitrateIndex = buildBitrateIndex();
+        // Leases that waited for a sender's bitrate (pools by bandwidth).
+        try {
+            for (const id of multicastLeaseManager.getSendersWaitingForBitrate()) {
+                if (bitrateIndex[id] !== undefined && NmosRegistryConnector.instance) {
+                    NmosRegistryConnector.instance.retryLease(id);
+                }
+            }
+        } catch (e) {}
         publishLeaseSnapshotIfChanged();
     };
 } catch (e) {}
@@ -394,6 +411,7 @@ function getSetupConfigState() {
         }
     }catch(e){}
     let multicastRange:string = (typeof settings.multicastRange === "string") ? settings.multicastRange : "";
+    let multicastPools = Array.isArray(settings.multicastPools) ? settings.multicastPools : [];
     let autoMulticast = {
         enabled: !!(settings.autoMulticast && settings.autoMulticast.enabled),
         // `!== false` default no longer fits — `false` is now the default,
@@ -472,6 +490,7 @@ function getSetupConfigState() {
         audioMonitor: audioMonitorCfg,
         bcp008: bcp008Cfg,
         multicastRange,
+        multicastPools,
         autoMulticast,
         autoActivateInactiveSender,
         multicastStats,
@@ -665,6 +684,17 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                     if(cidrRe.test(v)){
                         next.multicastRange = v;
                     }
+                }
+                // Pools by bandwidth: checked together with the default pool
+                // (no overlaps, one pool per limit) before anything is applied.
+                if(Array.isArray(postData.multicastPools)){
+                    let defs = normalisePoolDefs(postData.multicastPools);
+                    let errs = validatePools(next.multicastRange, defs);
+                    if(errs.length > 0){
+                        reject({message: "Multicast DHCP: " + errs.join(" ")});
+                        return;
+                    }
+                    next.multicastPools = defs;
                 }
                 if(postData.autoMulticast && typeof postData.autoMulticast === "object"){
                     if(typeof postData.autoMulticast.enabled === "boolean"){
@@ -884,6 +914,17 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 }
                 settings.multicastRange = next.multicastRange;
             }
+            let multicastPoolsChanged = false;
+            if(Array.isArray(next.multicastPools)){
+                if(JSON.stringify(next.multicastPools) !== JSON.stringify(settings.multicastPools || [])){
+                    multicastPoolsChanged = true;
+                }
+                settings.multicastPools = next.multicastPools;
+            }
+            if(multicastRangeChanged || multicastPoolsChanged){
+                // Forget the "pool full" warnings: the pools are new.
+                try{ multicastLeaseManager.setSettings(settings); }catch(e){}
+            }
             let autoMulticastWasEnabled = !!(settings.autoMulticast && settings.autoMulticast.enabled);
             settings.autoMulticast = { enabled: !!next.autoMulticast.enabled };
             settings.reconnectReceiversOnSenderChange = !!next.autoMulticast.reconnectReceiversOnSenderChange;
@@ -939,6 +980,12 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             let needSweep =
                 (!autoMulticastWasEnabled && settings.autoMulticast.enabled) ||
                 (settings.autoMulticast.enabled && multicastRangeChanged);
+            // Changed pools alone re-sort only on an explicit "Renew from
+            // Pool"; without a choice (an older UI) every lease stays.
+            let choice = postData && postData.autoMulticast ? postData.autoMulticast.adoptOnEnable : undefined;
+            if(!needSweep && settings.autoMulticast.enabled && multicastPoolsChanged && typeof choice === "boolean"){
+                needSweep = true;
+            }
             if(needSweep){
                 try{
                     if(NmosRegistryConnector.instance){

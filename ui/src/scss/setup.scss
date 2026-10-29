@@ -304,18 +304,20 @@
     }
 
 
-    // Multicast Auto-Allocation range editors
-    .setup-range-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        input { flex: 1 1 220px; }
-        .setup-range-stat {
-            font-size: 0.75rem;
-            color: theme('colors.slate.400');
-            font-family: 'Roboto Mono', monospace;
-            white-space: nowrap;
-        }
+    // Multicast DHCP: pools by bandwidth, the default pool in the last row.
+    .setup-pools {
+        flex: 1 1 100%;
+        .vendor-actions-row { margin-top: 6px; }
+    }
+    // .vendor-table.pool-table: outranks the later `.vendor-table .input-sm
+    // { width: 100% }`, which stretched the limit field across the column.
+    .vendor-table.pool-table {
+        .pool-limit { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+        .pool-limit-input { width: 5.5em; text-align: right; font-family: 'Roboto Mono', monospace; }
+        .pool-range-input { width: 15em; max-width: 100%; }
+        .pool-used { white-space: nowrap; font-size: 0.8rem; color: theme('colors.slate.400'); }
+        .pool-inf { font-size: 1.05rem; font-weight: 700; }
+        .pool-default-name { opacity: 0.6; }
     }
 
 
@@ -437,6 +439,19 @@
                 color: theme('colors.red.400');
             }
         }
+
+        // Pool of the lease; "→ …" in amber when its bitrate calls for another.
+        .lease-pool { white-space: nowrap; }
+        .lease-pool-badge {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 10px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            background-color: theme('colors.base-content / 10%');
+        }
+        .lease-pool-none { font-size: 0.75rem; opacity: 0.6; font-style: italic; }
+        .lease-pool-want { margin-left: 4px; font-size: 0.75rem; color: theme('colors.amber.500'); cursor: help; }
 
         .lease-cat-badge {
             display: inline-block;

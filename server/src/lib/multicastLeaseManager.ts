@@ -9,7 +9,15 @@
  *     switch to dual-leg doesn't get a different secondary.
  *   - Leases live forever until the device is explicitly deleted by the user.
  *
- * Categorisation (UI badge only — every category draws from the same pool):
+ * Pools by bandwidth (multicastPools.ts): settings.multicastRange is the
+ * default pool; settings.multicastPools adds pools with an upper bitrate
+ * limit per leg. A sender gets its pair from the smallest pool whose limit
+ * covers its bitrate, else — and when the bitrate is unknown — from the
+ * default pool. A full pool hands out nothing (no spill into another pool),
+ * and a lease stays where it is when pools or bitrates change; "Renew from
+ * Pool" re-sorts.
+ *
+ * Categorisation (UI badge only — pools go by bitrate, not by category):
  *   - video → media_type starts with "video/"
  *   - audio → media_type starts with "audio/"
  *   - other → not auto-allocated (no range, no lease)
@@ -22,6 +30,7 @@
  */
 
 import { SyncLog } from "./syncLog";
+import { Pool, buildPools, poolForBitrate, poolOfIp, pairCount, validatePools } from "./multicastPools";
 
 const fs = require("fs");
 const path = require("path");
@@ -55,6 +64,22 @@ export interface LeaseStats {
     total: number;
 }
 
+/** One pool in getStats(): used = leases whose Leg 1 address lies in it. */
+export interface PoolStats extends LeaseStats {
+    key: string;
+    label: string;
+    maxMbps: number | null;    // null for the default pool (JSON has no Infinity)
+    cidr: string;
+}
+
+/** A sender's bitrate as the crosspoint computed it (Mbit/s per leg). */
+export type SenderBitrate = { v: number, hint: string } | undefined;
+
+// How long a fresh lease waits for a sender's bitrate when limited pools
+// exist (the crosspoint state may not hold the sender yet); after that it
+// goes into the default pool like a sender of unknown bitrate.
+const BITRATE_WAIT_MS = 60_000;
+
 const STATE_PATH = "./state/multicastLeases.json";
 
 export class MulticastLeaseManager {
@@ -69,8 +94,17 @@ export class MulticastLeaseManager {
     // this to detect collisions cleanly, regardless of category overlap.
     private ipToSender: Map<string, string> = new Map();
 
-    // Round-robin cursor for the single shared pool (uint32, odd-aligned).
-    private cursor: number = 0;
+    // Round-robin cursor per pool key (uint32, odd-aligned).
+    private cursors: Map<string, number> = new Map();
+
+    // The crosspoint's bitrate per sender (server.ts wires it up). undefined
+    // = the sender is not in the crosspoint state yet.
+    private bitrateProvider: ((senderId: string) => SenderBitrate) | null = null;
+    // Senders whose lease waits for their bitrate: id → first try (ms).
+    private waitingForBitrate: Map<string, number> = new Map();
+    // "<sender>|<pool>" already warned about a full pool — once, not on
+    // every reconcile.
+    private fullWarned: Set<string> = new Set();
 
     private onChange: (() => void) | null = null;
 
@@ -88,6 +122,7 @@ export class MulticastLeaseManager {
 
     setOnChange(cb: (() => void) | null) { this.onChange = cb; }
     setExternalIpsProvider(cb: ((excludeSenderId: string) => Set<string>) | null) { this.externalIpsProvider = cb; }
+    setBitrateProvider(cb: ((senderId: string) => SenderBitrate) | null) { this.bitrateProvider = cb; }
     private notifyChange() {
         if (this.onChange) {
             try { this.onChange(); } catch { /* swallow */ }
@@ -98,7 +133,51 @@ export class MulticastLeaseManager {
         return !!(this.settings && this.settings.autoMulticast && this.settings.autoMulticast.enabled);
     }
 
-    setSettings(settings: any) { this.settings = settings; }
+    setSettings(settings: any) { this.settings = settings; this.fullWarned.clear(); }
+
+    /** The pools in use, limited ones by limit, the default pool last. A
+     *  configuration that does not validate (hand-edited settings.json)
+     *  leaves the default pool alone, with one warning per configuration. */
+    getPools(): Pool[] {
+        const def = this.settings?.multicastRange, defs = this.settings?.multicastPools;
+        const sig = JSON.stringify([def, defs]);
+        if (sig !== this.poolsSig) {
+            this.poolsSig = sig;
+            const errs = validatePools(def, defs);
+            this.poolsBad = errs.length > 0 && Array.isArray(defs) && defs.length > 0;
+            if (this.poolsBad) {
+                SyncLog.log("warn", "Multicast Lease", "Ignoring settings.multicastPools, only the default pool is used: " + errs.join(" "));
+            }
+        }
+        return buildPools(def, this.poolsBad ? [] : defs);
+    }
+    private poolsSig = "";
+    private poolsBad = false;
+
+    /** Senders whose lease is waiting for their bitrate; the server retries
+     *  them when the crosspoint state changes. */
+    getSendersWaitingForBitrate(): string[] { return Array.from(this.waitingForBitrate.keys()); }
+
+    /** Bitrate per leg in Mbit/s, null when unknown. */
+    private bitrateOf(senderId: string): { mbps: number | null, known: boolean } {
+        let b: SenderBitrate = undefined;
+        try { b = this.bitrateProvider ? this.bitrateProvider(senderId) : undefined; } catch (e) {}
+        if (b === undefined) return { mbps: null, known: false };
+        const v = Number(b.v);
+        return { mbps: (b.hint !== "unknown" && v > 0) ? v : null, known: true };
+    }
+
+    /** Where a sender's lease lies and where its bitrate says it belongs —
+     *  for the inventory ("→ ≤ 2 Mbit/s" when the two differ). */
+    poolInfo(senderId: string): { pool: string, poolKey: string, wantPool: string, wantPoolKey: string } | null {
+        const lease = this.leases[senderId];
+        if (!lease) return null;
+        const pools = this.getPools();
+        const at = poolOfIp(pools, lease.primaryIp);
+        const want = poolForBitrate(pools, this.bitrateOf(senderId).mbps);
+        return { pool: at ? at.label : "", poolKey: at ? at.key : "",
+                 wantPool: want ? want.label : "", wantPoolKey: want ? want.key : "" };
+    }
 
 
     // ----- Public API -----
@@ -137,11 +216,32 @@ export class MulticastLeaseManager {
             return null;
         }
 
-        const pair = this.allocatePair(category, args.senderId);
+        const pools = this.getPools();
+        let { mbps, known } = this.bitrateOf(args.senderId);
+        if (!known && pools.length > 1) {
+            // Limited pools exist and the bitrate is not computed yet: wait
+            // for it rather than parking the sender in the default pool for
+            // good. The server retries on the next crosspoint state change.
+            const now = Date.now();
+            const since = this.waitingForBitrate.get(args.senderId) ?? now;
+            this.waitingForBitrate.set(args.senderId, since);
+            if (now - since < BITRATE_WAIT_MS) return null;
+        }
+        this.waitingForBitrate.delete(args.senderId);
+        const pool = poolForBitrate(pools, mbps);
+        if (!pool) return null;
+
+        const pair = this.allocatePair(pool, args.senderId);
         if (!pair) {
-            SyncLog.log("warn", "Multicast Lease", "Pool exhausted in category " + category + " — cannot allocate for " + args.senderId);
+            const k = args.senderId + "|" + pool.key;
+            if (!this.fullWarned.has(k)) {
+                this.fullWarned.add(k);
+                SyncLog.log("warn", "Multicast Lease", "Pool " + pool.label + " (" + pool.cidr + ") is full — sender " + args.senderId +
+                    (mbps ? " (" + (Math.round(mbps * 100) / 100) + " Mbit/s)" : "") + " gets no address and keeps the one it has.");
+            }
             return null;
         }
+        for (const k of Array.from(this.fullWarned)) { if (k.startsWith(args.senderId + "|")) this.fullWarned.delete(k); }
 
         const lease: MulticastLease = {
             createdAt: new Date().toISOString(),
@@ -159,7 +259,8 @@ export class MulticastLeaseManager {
 
         this.persist();
         this.notifyChange();
-        SyncLog.log("info", "Multicast Lease", "Allocated " + pair.primary + " / " + pair.secondary + " for sender " + args.senderId + " (" + category + ")");
+        SyncLog.log("info", "Multicast Lease", "Allocated " + pair.primary + " / " + pair.secondary + " for sender " + args.senderId + " (" + category +
+            ", pool " + pool.label + (mbps ? ", " + (Math.round(mbps * 100) / 100) + " Mbit/s" : "") + ")");
         return lease;
     }
 
@@ -387,10 +488,20 @@ export class MulticastLeaseManager {
      * occupies exactly one pair). The per-category counts (audio / video)
      * are surfaced for the inventory filter UI.
      */
-    getStats(): { pool: LeaseStats } & { [cat in MulticastCategory]?: LeaseStats } {
-        const range = this.getPoolRange();
-        let total = 0;
-        if (range) total = Math.floor((range.end - range.start + 1) / 2);
+    getStats(): { pool: LeaseStats, pools: PoolStats[] } & { [cat in MulticastCategory]?: LeaseStats } {
+        const pools = this.getPools();
+        const usedBy: { [key: string]: number } = {};
+        for (const id in this.leases) {
+            const p = poolOfIp(pools, this.leases[id]?.primaryIp);
+            if (p) usedBy[p.key] = (usedBy[p.key] || 0) + 1;
+        }
+        const poolStats: PoolStats[] = pools.map((p) => ({
+            key: p.key, label: p.label, maxMbps: Number.isFinite(p.maxMbps) ? p.maxMbps : null,
+            cidr: p.cidr, used: usedBy[p.key] || 0, total: pairCount(p),
+        }));
+        // `pool` (the default pool) stays for older UIs.
+        const def = poolStats.find((p) => p.key === "default");
+        const total = def ? def.total : 0;
         const used = Object.keys(this.leases).length;
 
         const perCat: { [cat in MulticastCategory]: number } = { audio: 0, video: 0 };
@@ -399,7 +510,8 @@ export class MulticastLeaseManager {
             if (l && (l.category in perCat)) perCat[l.category]++;
         }
         return {
-            pool:  { used, total },
+            pool:  { used: def ? def.used : used, total },
+            pools: poolStats,
             audio: { used: perCat.audio, total },
             video: { used: perCat.video, total },
         };
@@ -601,40 +713,19 @@ export class MulticastLeaseManager {
     }
 
     /**
-     * Single shared pool. `category` on a lease is only used for the
-     * inventory UI badge; allocation always pulls from this same range.
-     */
-    private getPoolRange(): { start: number; end: number } | null {
-        try {
-            const cidr = this.settings?.multicastRange;
-            if (typeof cidr !== "string" || !cidr) return null;
-            return this.parseCidr(cidr);
-        } catch { return null; }
-    }
-    // Legacy alias for backwards-compat with callers that still pass a
-    // category. Always returns the single pool range now.
-    private getRangeFor(_category: MulticastCategory): { start: number; end: number } | null {
-        return this.getPoolRange();
-    }
-
-    /**
-     * Find a free odd/even pair in the configured range. Both addresses must
-     * be unclaimed globally — guards against overlapping CIDR ranges between
-     * categories. Additionally consults the external-IPs provider (live
-     * `senderActiveData` snapshot) so we never hand out an address already
-     * being transmitted by any other NMOS sender.
+     * Find a free odd/even pair in `pool`. Both addresses must be unclaimed
+     * globally, and neither may be on the wire already: the external-IPs
+     * provider (live `senderActiveData` snapshot) keeps the allocator off an
+     * address any other NMOS sender transmits to.
      *
      * Returns null if the pool is exhausted.
      */
-    private allocatePair(_category: MulticastCategory, forSenderId: string): { primary: string; secondary: string } | null {
-        const range = this.getPoolRange();
-        if (!range) return null;
+    private allocatePair(pool: Pool, forSenderId: string): { primary: string; secondary: string } | null {
+        let firstOdd = (pool.start | 1) >>> 0;
+        if (firstOdd < pool.start) firstOdd = (firstOdd + 2) >>> 0;
 
-        let firstOdd = (range.start | 1) >>> 0;
-        if (firstOdd < range.start) firstOdd = (firstOdd + 2) >>> 0;
-
-        let cursor = this.cursor;
-        if (!cursor || cursor < firstOdd || cursor > range.end) {
+        let cursor = this.cursors.get(pool.key) || 0;
+        if (!cursor || cursor < firstOdd || cursor > pool.end) {
             cursor = firstOdd;
         }
         // Ensure cursor is odd
@@ -649,11 +740,11 @@ export class MulticastLeaseManager {
             }
         }catch(e){}
 
-        const pairCount = Math.floor((range.end - range.start + 1) / 2);
+        const pairs = pairCount(pool);
         let scanned = 0;
         let ip = cursor;
-        while (scanned < pairCount) {
-            if (ip + 1 > range.end) {
+        while (scanned < pairs) {
+            if (ip + 1 > pool.end) {
                 ip = firstOdd;
             }
             const primStr = this.uint32ToIp(ip);
@@ -662,7 +753,7 @@ export class MulticastLeaseManager {
                 this.ipToSender.has(primStr) || this.ipToSender.has(secStr) ||
                 externalIps.has(primStr)     || externalIps.has(secStr);
             if (!taken) {
-                this.cursor = (ip + 2) >>> 0;
+                this.cursors.set(pool.key, (ip + 2) >>> 0);
                 return { primary: primStr, secondary: secStr };
             }
             ip = (ip + 2) >>> 0;
@@ -674,15 +765,6 @@ export class MulticastLeaseManager {
 
     // ----- Internal: IP helpers -----
 
-    private parseCidr(cidr: string): { start: number; end: number } {
-        const [ipStr, bitsStr] = cidr.split("/");
-        const bits = parseInt(bitsStr, 10);
-        const base = this.ipToUint32(ipStr);
-        const mask = bits === 0 ? 0 : ((0xFFFFFFFF << (32 - bits)) >>> 0);
-        const start = (base & mask) >>> 0;
-        const end = (start | ((~mask) >>> 0)) >>> 0;
-        return { start, end };
-    }
     private ipToUint32(ip: string): number {
         const parts = (ip || "").split(".").map(p => parseInt(p, 10));
         if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) return 0;

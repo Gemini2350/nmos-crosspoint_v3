@@ -1,3 +1,5 @@
+import { normalisePoolDefs } from "./multicastPools";
+
 export function parseSettings(settings:any){
 
 
@@ -44,6 +46,12 @@ export function parseSettings(settings:any){
     }else{
         settings.multicastRange = settings.multicastRange.trim();
     }
+
+
+    // multicastPools — pools by bandwidth on top of the default pool above
+    // (multicastPools.ts). Only brought into shape here; the lease manager
+    // checks them and falls back to the default pool alone if they are bad.
+    settings.multicastPools = normalisePoolDefs(settings.multicastPools);
 
 
     if(!settings.hasOwnProperty("firstDynamicNumber")){
