@@ -23,7 +23,7 @@
 # --------------------------------------------------------------------------
 
 # ============================== UI builder ===============================
-FROM --platform=$BUILDPLATFORM node:20 AS ui-builder
+FROM --platform=$BUILDPLATFORM node:24 AS ui-builder
 WORKDIR /build/ui
 
 # Dependency install — cached unless package*.json changes.
@@ -38,7 +38,7 @@ RUN npm run build
 
 
 # ============================ Server builder =============================
-FROM --platform=$BUILDPLATFORM node:20 AS server-builder
+FROM --platform=$BUILDPLATFORM node:24 AS server-builder
 WORKDIR /build/server
 
 # Only tsc runs here — no native modules are compiled in this stage, so it
@@ -53,7 +53,7 @@ RUN npm run build
 # ============================ Production deps ============================
 # Runs under the TARGET platform: @discordjs/opus ships a native binding, so
 # these modules must match the architecture of the final image.
-FROM node:20 AS prod-deps
+FROM node:24 AS prod-deps
 WORKDIR /build/server
 
 RUN apt-get update \
@@ -68,8 +68,17 @@ RUN npm ci --omit=dev --no-audit --no-fund --prefer-offline \
 
 
 # ============================== Runtime ==================================
-FROM node:20-slim AS runtime
+FROM node:24-slim AS runtime
 WORKDIR /nmos-crosspoint/server
+
+# Node 24 LTS, and never one without the Brotli decoder fix
+# (CVE-2026-111497, "Node2Shell", fixed in 24.22.1): axios accepts and
+# inflates Brotli on every response from a registry or device. Node 20,
+# used before, is end of life and gets no fix. Fails the build if the
+# base image ever resolves to an older 24.x.
+RUN node -e "const [a,b,c]=process.versions.node.split('.').map(Number); \
+  if (a < 24 || (a === 24 && (b < 22 || (b === 22 && c < 1)))) { \
+    console.error('Node ' + process.version + ': need 24.22.1 or newer (CVE-2026-111497)'); process.exit(1); }"
 
 # Runtime needs libopus so @discordjs/opus's native binding can load.
 RUN apt-get update \
@@ -77,7 +86,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # node_modules come from the prod-deps stage — same architecture and the
-# same glibc as this node:20-slim image, so no rebuild is needed here.
+# same glibc as this node:24-slim image, so no rebuild is needed here.
 COPY server/package*.json ./
 COPY --from=prod-deps /build/server/node_modules ./node_modules
 
