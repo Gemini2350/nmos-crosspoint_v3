@@ -5,6 +5,7 @@
 
 import * as WebSocket from "ws";
 import { annotationHref, annotationPath, buildLabelPatch, annotationErrorText, AnnotationKind } from "./annotation";
+import { SettleTimer } from "./settleTimer";
 import * as dns from "dns";
 import axios from "axios";
 import { SyncObject } from "./SyncServer/syncObject";
@@ -867,7 +868,11 @@ export class NmosRegistryConnector {
         }
     }
 
-    updateNewNmosItemTimer:any|null = null;
+    // A new resource rarely comes alone, so the rebuild waits for the rest of
+    // the registration. Only a new resource waits: a change to a known one, say
+    // a receiver that just switched, is not held back by another device
+    // registering.
+    private newItemSettle = new SettleTimer(() => this.updateCrosspoint(), 1000, 3000);
     private updateState(message: any, version:string, registryUrl:string = "") {
         //console.log("updates from registry: " + message.type)
         let newItem = false;
@@ -892,11 +897,9 @@ export class NmosRegistryConnector {
                                 NmosRegistryConnector.modifierCallbackList[type].forEach((f)=>{
                                     postData = f(g.path, postData);
                                 })
-                                if(this.nmosState[type].hasOwnProperty(g.path)){
-                                    //Update
-                                }else{
+                                const isNew = !this.nmosState[type].hasOwnProperty(g.path);
+                                if(isNew){
                                     newItem = true;
-                                    changes = true;
                                 }
 
                                 postData["_sourceVersion"] = version;
@@ -906,7 +909,7 @@ export class NmosRegistryConnector {
                                     f(g.path, postData);
                                 })
 
-                                if(!newItem){
+                                if(!isNew){
                                     let diff = jsonpatch.compare(this.nmosState[type][g.path], postData);
                                     if(diff.length == 0){
                                         // nothing
@@ -922,7 +925,7 @@ export class NmosRegistryConnector {
                                     
                                 }
 
-                                if(changes && type == "devices"){
+                                if((changes || isNew) && type == "devices"){
                                     this.loadChannelMaping(postData);
                                 }
 
@@ -980,22 +983,10 @@ export class NmosRegistryConnector {
         //fs.writeFileSync("./state/devnmosstate/devnmosstate.json", JSON.stringify(this.nmosState));
         this.scheduleSyncNmos();
         if(newItem){
-            if(this.updateNewNmosItemTimer){
-                clearTimeout(this.updateNewNmosItemTimer);
-            }
-            this.updateNewNmosItemTimer = setTimeout(() => {
-                this.updateNewNmosItemTimer = null;
-                this.updateCrosspoint();
-            }, 1000);
-            
-        }else{
-            if(changes){
-                if(this.updateNewNmosItemTimer){
-
-                }else{
-                    this.updateCrosspoint();
-                }
-            }
+            this.newItemSettle.touch();
+        }
+        if(changes){
+            this.updateCrosspoint();
         }
 
         
