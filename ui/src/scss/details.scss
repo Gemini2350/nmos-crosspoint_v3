@@ -19,8 +19,8 @@ $det-color-data:  theme('colors.blue.500');
     .det-card {
         background-color: theme('colors.base-200');
         border: 1px solid theme('colors.base-300');
-        border-radius: 10px;
-        margin-bottom: 10px;
+        border-radius: 8px;
+        margin-bottom: 6px;
         overflow: visible;
 
         &.det-card-offline {
@@ -36,36 +36,36 @@ $det-color-data:  theme('colors.blue.500');
 
     .det-node-group {
         border: 1px solid theme('colors.base-300');
-        border-radius: 12px;
-        margin-bottom: 10px;
-        padding: 0 8px 2px 8px;
+        border-radius: 10px;
+        margin-bottom: 6px;
+        padding: 0 6px 1px 6px;
         overflow: visible;
 
         .det-card {
-            margin-bottom: 8px;
-            &:last-child { margin-bottom: 8px; }
+            margin-bottom: 5px;
+            &:last-child { margin-bottom: 6px; }
         }
     }
 
     .det-node-head {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 9px 6px;
+        gap: 8px;
+        padding: 5px 6px;
         cursor: pointer;
         // Sticks above the device-card headers while scrolling the group.
         position: sticky;
         top: 0;
         z-index: 5;
         background-color: theme('colors.base-100');
-        border-radius: 12px 12px 0 0;
+        border-radius: 10px 10px 0 0;
 
         &:hover .det-node-name { color: theme('colors.slate.100'); }
     }
 
     .det-node-name {
         font-weight: 700;
-        font-size: 0.95rem;
+        font-size: 0.9rem;
         color: theme('colors.slate.300');
         white-space: nowrap;
         overflow: hidden;
@@ -75,14 +75,14 @@ $det-color-data:  theme('colors.blue.500');
     .det-card-head {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 10px 14px;
+        gap: 8px;
+        padding: 5px 12px;
         cursor: pointer;
         position: sticky;
         top: 0;
         z-index: 4;
         background-color: theme('colors.base-200');
-        border-radius: 10px;
+        border-radius: 8px;
 
         &:hover {
             background-color: theme('colors.base-300');
@@ -91,7 +91,7 @@ $det-color-data:  theme('colors.blue.500');
     // Inside a node group the node header is sticky at top:0 — the device
     // card headers stick right below it instead of colliding.
     .det-card-in-group .det-card-head {
-        top: 38px;
+        top: 31px;
     }
 
     .det-chevron {
@@ -111,7 +111,7 @@ $det-color-data:  theme('colors.blue.500');
 
     .det-card-title {
         font-weight: 600;
-        font-size: 0.95rem;
+        font-size: 0.9rem;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -218,9 +218,9 @@ $det-color-data:  theme('colors.blue.500');
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        width: 22px;
-        height: 22px;
-        flex: 0 0 22px;
+        width: 20px;
+        height: 20px;
+        flex: 0 0 20px;
         border-radius: 4px;
         color: theme('colors.slate.300');
         cursor: pointer;
@@ -265,8 +265,8 @@ $det-color-data:  theme('colors.blue.500');
 
     // ----- Section labels ("Senders · 4") -----
     .det-sec {
-        padding: 8px 14px 4px 16px;
-        font-size: 0.68rem;
+        padding: 4px 14px 2px 16px;
+        font-size: 0.64rem;
         font-weight: 700;
         letter-spacing: 0.1em;
         text-transform: uppercase;
@@ -280,10 +280,10 @@ $det-color-data:  theme('colors.blue.500');
         table-layout: fixed;
         width: 100%;
         border-collapse: collapse;
-        font-size: 0.85rem;
+        font-size: 0.82rem;
 
         td {
-            padding: 5px 8px;
+            padding: 2px 8px;
             vertical-align: top;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -309,7 +309,7 @@ $det-color-data:  theme('colors.blue.500');
         display: flex;
         align-items: center;
         gap: 5px;
-        min-height: 28px;
+        min-height: 22px;
         .det-flow-name-text {
             overflow: hidden;
             text-overflow: ellipsis;
@@ -334,7 +334,7 @@ $det-color-data:  theme('colors.blue.500');
     // Merged media column ("24 Bit LPCM · 48kHz·2ch · 2.4 Mbit/s")
     .det-cell-media {
         color: theme('colors.slate.300');
-        line-height: 28px;
+        line-height: 22px;
         white-space: nowrap;
     }
     // Flex line inside the media cell: the format text is the only part
@@ -376,9 +376,9 @@ $det-color-data:  theme('colors.blue.500');
         display: flex;
         align-items: center;
         gap: 6px;
-        padding: 1px 6px 1px 0;
+        padding: 0 6px 0 0;
         border-radius: 4px;
-        min-height: 24px;
+        min-height: 22px;
 
         .det-leg-label {
             color: theme('colors.slate.400');
@@ -444,11 +444,11 @@ $det-color-data:  theme('colors.blue.500');
         outline: 1px solid theme('colors.red.600');
     }
     // Receiver legs have no edit pencil in front of the multicast — pad by
-    // the pencil's footprint (22px button + 6px gap) so sender and receiver
+    // the pencil's footprint (20px button + 6px gap) so sender and receiver
     // multicast addresses line up on the same vertical edge.
     .det-leg-readonly {
         color: inherit;
-        padding-left: 28px;
+        padding-left: 26px;
     }
 
     // MXL (BCP-007-03) in the legs column: a domain and a flow id instead
@@ -459,7 +459,7 @@ $det-color-data:  theme('colors.blue.500');
         display: flex;
         align-items: center;
         gap: 6px;
-        padding-left: 28px;
+        padding-left: 26px;
     }
     .det-mxl-tag {
         font-size: 10px;
@@ -490,16 +490,16 @@ $det-color-data:  theme('colors.blue.500');
     tr.det-flow .cp-type {
         display: inline-block;
         position: relative;
-        padding: 4px;
-        height: 28px;
-        width: 28px;
-        border-radius: 6px;
+        padding: 3px;
+        height: 22px;
+        width: 22px;
+        border-radius: 5px;
         vertical-align: middle;
         background-color: theme('colors.neutral-600');
 
         svg {
-            width: 18px;
-            height: 18px;
+            width: 16px;
+            height: 16px;
             color: theme('colors.neutral-400');
         }
 
@@ -528,9 +528,9 @@ $det-color-data:  theme('colors.blue.500');
     // ----- Forget buttons -----
     .det-device-forget {
         margin-left: 8px;
-        min-height: 28px;
-        height: 28px;
-        padding: 0 10px;
+        min-height: 22px;
+        height: 22px;
+        padding: 0 8px;
         font-size: 0.78rem;
         font-weight: 600;
         border: 1px solid theme('colors.red.700');
