@@ -55,16 +55,13 @@ class _ServerConnector {
       feedback.id = id;
       this.overlayFeedbackList.push(feedback);
       this.overlayFeedback.next(this.overlayFeedbackList);
-      setTimeout(()=>{
-        this.overlayFeedbackList = this.overlayFeedbackList.filter((l)=>{
-          if(l.id == id){
-            return false;
-          }
-          return true;
-        });
-        this.overlayFeedback.next(this.overlayFeedbackList);
-      }, feedback.time)
+      setTimeout(()=>{ this.dismissFeedback(id); }, feedback.time)
 
+    }
+
+    public dismissFeedback(id:number){
+      this.overlayFeedbackList = this.overlayFeedbackList.filter((l)=>l.id != id);
+      this.overlayFeedback.next(this.overlayFeedbackList);
     }
 
     public startLoad(){

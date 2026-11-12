@@ -288,7 +288,14 @@ label svg { width:20px;}
             flex-direction:column;
             align-items: start;
             gap:8px;
-            
+            position: relative;
+            padding-right: 40px;
+
+            .alert-close {
+                position: absolute;
+                top: 8px;
+                right: 8px;
+            }
 
             .alert-title {
                 font-weight: 600;

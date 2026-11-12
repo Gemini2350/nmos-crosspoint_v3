@@ -51,11 +51,13 @@ onMount(async()=>{
     })
 });
 
+// A click on a message runs its action (the connection feedback opens the
+// log), otherwise it closes the message. The ✕ always closes it.
 function click(feedback:any){
     if(feedback.click){
         feedback.click();
     }else{
-        feedback.hidden = true;
+        ServerConnector.dismissFeedback(feedback.id);
     }
 }
 
@@ -115,10 +117,12 @@ function doLogin(){
     {#each feedbackList as feedback}
         {#if !feedback.hidden }
             <div class="alert alert-{feedback.level}" on:click={()=>{click(feedback);}}>
+                <button class="alert-close btn btn-xs btn-circle btn-ghost" aria-label="Close"
+                        on:click|stopPropagation={()=>ServerConnector.dismissFeedback(feedback.id)}>✕</button>
                 <span class="alert-title">{feedback.message}</span>
 
                 {#if feedback.data.type == "connection"}
-                    <span class="alert-text text-success">Flows connectd: {feedback.data.result.success}</span>
+                    <span class="alert-text text-success">Flows connected: {feedback.data.result.success}</span>
                     {#if feedback.data.result.disconnect }
                         <span class="alert-text text-info">Flows disconnected: {feedback.data.result.disconnect}</span>
                     {/if}
