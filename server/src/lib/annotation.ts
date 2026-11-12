@@ -6,6 +6,8 @@
  * so every Controller sees the new name via the registry — nothing is polled.
  */
 
+import { deviceErrorText } from "./deviceError";
+
 export const ANNOTATION_SERVICE = "urn:x-nmos:service:annotation/";
 
 /** Annotation API base href of an IS-04 Node, newest version first; "" when
@@ -44,8 +46,7 @@ export function buildLabelPatch(label: string | null): { label: string | null } 
 
 /** IS-13 asks clients to report the response's `error` field to the user. */
 export function annotationErrorText(status: number | undefined, body: any, fallback: string): string {
-    const e = body && typeof body === "object" ? (body.error || "") : "";
-    const d = body && typeof body === "object" && body.debug ? " (" + body.debug + ")" : "";
-    if (e) return "Device answered " + (status || "") + ": " + e + d;
+    const text = deviceErrorText(body);
+    if (text) return "Device answered " + (status || "") + ": " + text;
     return fallback;
 }

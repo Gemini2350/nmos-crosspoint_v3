@@ -6,6 +6,7 @@
 import * as WebSocket from "ws";
 import { annotationHref, annotationPath, buildLabelPatch, annotationErrorText, AnnotationKind } from "./annotation";
 import { SettleTimer } from "./settleTimer";
+import { failedBecause } from "./deviceError";
 import * as dns from "dns";
 import axios from "axios";
 import { SyncObject } from "./SyncServer/syncObject";
@@ -2175,13 +2176,10 @@ export class NmosRegistryConnector {
                         // NEXT
                         let id = SyncLog.log("info", "nmos_connect", "Patch on "+patchHref+" unreachable ("+e.code+"), trying next.");
                     }else{
-                        // TODO....
-                        if(e.code == "ERR_BAD_REQUEST"){
-                            let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data,});
-                            throw Object.assign(new LoggedError("Patch failed: "+e.response?.data?.error + " / " +e.response?.data?.debug , id), {status:e.response?.status});
-                        }
-                        let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
-                        throw Object.assign(new LoggedError("Receiver returned Error: "+e.code, id), {status:e.response?.status});
+                        // The device's own text, for a 500 as much as for a 400.
+                        const why = failedBecause(e.response?.status, e.response?.data, e.code);
+                        let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" "+why,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
+                        throw Object.assign(new LoggedError("Receiver "+why, id), {status:e.response?.status});
                     }
                 }else{
                     throw new LoggedError("Patch Failed: "+e.message);
@@ -2254,12 +2252,7 @@ export class NmosRegistryConnector {
                             // NEXT
                             SyncLog.log("info", "nmos", "Patch on "+senderId+" unreachable ("+e.code+"), trying next.");
                         }else{
-                            // TODO....
-                            if(e.code == "ERR_BAD_REQUEST"){
-                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data,});
-                            }else{
-                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
-                            }
+                            SyncLog.log("error", "nmos", "Sender "+senderId+" "+failedBecause(e.response?.status, e.response?.data, e.code),{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
                             return;
                         }
                     }else{
@@ -2329,7 +2322,7 @@ export class NmosRegistryConnector {
                             if(e.code != "ERR_BAD_REQUEST"){
                                 logBody.message = e.message;
                             }
-                            SyncLog.log("error", "nmos", "Receiver " + receiverId + " returned Error: " + e.code, logBody);
+                            SyncLog.log("error", "nmos", "Receiver " + receiverId + " " + failedBecause(e.response?.status, e.response?.data, e.code), logBody);
                             return;
                         }
                     }else{
@@ -2665,12 +2658,7 @@ export class NmosRegistryConnector {
                             // NEXT
                             SyncLog.log("info", "nmos", "Patch on "+senderId+" unreachable ("+e.code+"), trying next.");
                         }else{
-                            // TODO....
-                            if(e.code == "ERR_BAD_REQUEST"){
-                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data,});
-                            }else{
-                                SyncLog.log("error", "nmos", "Sender "+senderId+" returned Error: "+e.code,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
-                            }
+                            SyncLog.log("error", "nmos", "Sender "+senderId+" "+failedBecause(e.response?.status, e.response?.data, e.code),{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
                             return false;
                         }
                     }else{

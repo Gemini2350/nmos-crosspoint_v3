@@ -287,21 +287,36 @@ label svg { width:20px;}
             display:flex;
             flex-direction:column;
             align-items: start;
-            gap:8px;
+            gap:2px;
             position: relative;
-            padding-right: 40px;
+            padding: 8px 34px 8px 12px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            max-width: 440px;
+            white-space: normal;
 
             .alert-close {
                 position: absolute;
-                top: 8px;
-                right: 8px;
+                top: 5px;
+                right: 5px;
+            }
+            // flex, so the line breaks between the spans add no space
+            .alert-counts { display: flex; }
+            .alert-counts > span + span::before {
+                content: "·";
+                margin: 0 6px;
+                color: theme('colors.base-content');
+                opacity: 0.5;
             }
 
             .alert-title {
                 font-weight: 600;
             }
             .alert-detail {
-                font-size: 14px;
+                display: flex;
+                flex-direction: column;
+                font-size: 0.8rem;
+                opacity: 0.85;
             }
         }
     }

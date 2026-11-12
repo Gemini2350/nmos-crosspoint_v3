@@ -119,21 +119,21 @@ function doLogin(){
             <div class="alert alert-{feedback.level}" on:click={()=>{click(feedback);}}>
                 <button class="alert-close btn btn-xs btn-circle btn-ghost" aria-label="Close"
                         on:click|stopPropagation={()=>ServerConnector.dismissFeedback(feedback.id)}>✕</button>
-                <span class="alert-title">{feedback.message}</span>
-
-                {#if feedback.data.type == "connection"}
-                    <span class="alert-text text-success">Flows connected: {feedback.data.result.success}</span>
-                    {#if feedback.data.result.disconnect }
-                        <span class="alert-text text-info">Flows disconnected: {feedback.data.result.disconnect}</span>
-                    {/if}
-                    {#if feedback.data.result.failed }
-                        <span class="alert-text text-error">Flows failed: {feedback.data.result.failed}</span>
+                {#if feedback.data.type == "connection" && (feedback.data.result.success || feedback.data.result.disconnect || feedback.data.result.failed)}
+                    <!-- One line of counts ("1 connected · 1 failed"), then
+                         the devices' own reasons, one per line. -->
+                    <span class="alert-title alert-counts">
+                        {#if feedback.data.result.success}<span class="text-success">{feedback.data.result.success} connected</span>{/if}
+                        {#if feedback.data.result.disconnect}<span class="text-info">{feedback.data.result.disconnect} disconnected</span>{/if}
+                        {#if feedback.data.result.failed}<span class="text-error">{feedback.data.result.failed} failed</span>{/if}
+                    </span>
+                    {#if feedback.data.result.failed}
                         <span class="alert-detail">
-                            {#each feedback.data.result.reasons as r}
-                            {r} 
-                            {/each}
+                            {#each feedback.data.result.reasons as r}<span>{r}</span>{/each}
                         </span>
                     {/if}
+                {:else}
+                    <span class="alert-title">{feedback.message}</span>
                 {/if}
             </div>
         {/if}
