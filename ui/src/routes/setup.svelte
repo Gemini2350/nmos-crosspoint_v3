@@ -1180,7 +1180,7 @@
         </div>
       </div>
 
-      <div class="setup-form" style="margin-top:14px; align-items:center;">
+      <div class="setup-form setup-form-buttons">
         <button class="btn btn-sm" on:click={exportLeases}>Export Leases</button>
         <button class="btn btn-sm" on:click={pickImportFile}>Import Leases…</button>
         <input type="file" accept="application/json,.json" style="display:none;" bind:this={importFileInput} on:change={onImportFile} />
@@ -1312,7 +1312,7 @@
       </div>
 
       {#if !formVirtualNodeEnabled && formVirtualSenders.length > 0}
-        <div class="alert alert-warning setup-alert" style="margin-bottom:12px;">
+        <div class="alert alert-warning setup-alert">
           <Icon src={ExclamationTriangle} />
           <span>
             Virtual Node disabled &mdash; the senders listed below stay in <code>settings.json</code>
@@ -1345,7 +1345,7 @@
                      placeholder="Sender name (e.g. PlayoutA)"
                      bind:value={v.name} on:input={markDirty} />
             </label>
-            <label class="setup-field" style="margin-top:8px;">
+            <label class="setup-field" style="margin-top:6px;">
               <span class="setup-label">SDP</span>
               <textarea class="textarea textarea-bordered vendor-mono virtual-sender-sdp"
                         rows="8" placeholder="Paste a full SDP here…&#10;v=0&#10;o=- 0 0 IN IP4 …&#10;s=…&#10;m=audio 5004 RTP/AVP 96&#10;c=IN IP4 239.x.x.x/32&#10;a=rtpmap:96 L24/48000/2"
@@ -1355,10 +1355,10 @@
         </details>
       {/each}
       {#if formVirtualSenders.length === 0}
-        <p class="vendor-empty" style="margin:8px 0 12px 0;">No virtual senders defined.</p>
+        <p class="vendor-empty">No virtual senders defined.</p>
       {/if}
 
-      <div class="vendor-actions-row" style="margin-top:8px;">
+      <div class="vendor-actions-row">
         <button class="btn btn-sm" on:click={addVirtualSender}>
           <Icon src={Plus} /> Add virtual sender
         </button>
@@ -1533,7 +1533,7 @@
       </div>
 
       <div class="setup-form">
-        <label class="setup-field setup-field-narrow">
+        <label class="setup-field setup-field-select">
           <span class="setup-label">Authentication</span>
           <select class="select select-bordered" bind:value={formDdnsKeyAlgorithm} on:change={markDirty}>
             <option value="hmac-sha256">hmac-sha256</option>
@@ -1646,8 +1646,8 @@
         </label>
       </div>
 
-      <div class="setup-form" style="margin-top:14px; align-items:center;">
-        <button class="btn btn-primary" on:click={saveCredentials} disabled={credSaving}>
+      <div class="setup-form setup-form-buttons">
+        <button class="btn btn-primary btn-sm" on:click={saveCredentials} disabled={credSaving}>
           {#if credSaving}Saving…{:else}Update credentials{/if}
         </button>
         {#if credSuccess}
