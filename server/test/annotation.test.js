@@ -16,6 +16,18 @@ test("the Annotation API is found in the Node's services, newest version first",
     assert.equal(a.annotationHref(null), "");
 });
 
+test("every Annotation API href of the newest version, in the Node's order", () => {
+    const node = { services: [
+        { type: "urn:x-nmos:service:annotation/v1.0", href: "http://10.0.0.5/x-nmos/annotation/v1.0/" },
+        { type: "urn:x-nmos:service:annotation/v1.1", href: "http://10.0.0.5/x-nmos/annotation/v1.1" },
+        { type: "urn:x-nmos:service:annotation/v1.1", href: "http://192.168.1.5/x-nmos/annotation/v1.1/" },
+    ] };
+    assert.deepEqual(a.annotationHrefs(node), ["http://10.0.0.5/x-nmos/annotation/v1.1/", "http://192.168.1.5/x-nmos/annotation/v1.1/"]);
+    assert.equal(a.annotationHref(node), "http://10.0.0.5/x-nmos/annotation/v1.1/");
+    assert.deepEqual(a.annotationHrefs({ services: [] }), []);
+    assert.deepEqual(a.annotationHrefs(undefined), []);
+});
+
 test("paths follow the Annotation API", () => {
     assert.equal(a.annotationPath("node", "x"), "node/self");
     assert.equal(a.annotationPath("device", "d1"), "node/devices/d1");

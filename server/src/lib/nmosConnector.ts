@@ -4,7 +4,8 @@
 */
 
 import * as WebSocket from "ws";
-import { annotationHref, annotationPath, buildLabelPatch, annotationErrorText, AnnotationKind } from "./annotation";
+import { annotationHref, annotationHrefs, annotationPath, buildLabelPatch, annotationErrorText, AnnotationKind } from "./annotation";
+import { EndpointMemory, tryEndpoints, deviceRequest, allUnreachable } from "./deviceEndpoints";
 import { SettleTimer } from "./settleTimer";
 import { failedBecause } from "./deviceError";
 import * as dns from "dns";
@@ -23,7 +24,7 @@ import * as jsonpatch from 'fast-json-patch';
 
 import * as sdpTransform from 'sdp-transform';
 import { CrosspointAbstraction, CrosspointConnectionSenderInfo } from "./crosspointAbstraction";
-import { MxlEndpoint, SR_CTRL_TYPES, TRANSPORT_MXL, selectControlHrefs, transportKind, joinHref, mxlEndpointFromActive, resolvedMxlEndpoint, buildMxlReceiverPatch, buildMxlDisconnectPatch, buildRtpTransportParams, buildSenderEnablePatch, usesMulticastLease, hasRtpDestination, tryNextControl } from "./nmosConnectionPatch";
+import { MxlEndpoint, SR_CTRL_TYPES, TRANSPORT_MXL, selectControlHrefs, transportKind, joinHref, mxlEndpointFromActive, resolvedMxlEndpoint, buildMxlReceiverPatch, buildMxlDisconnectPatch, buildRtpTransportParams, buildSenderEnablePatch, usesMulticastLease, hasRtpDestination } from "./nmosConnectionPatch";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { sameStream } from "./senderAlias";
 import { LeaseRetryGate } from "./leaseRetry";
@@ -874,6 +875,27 @@ export class NmosRegistryConnector {
     // a receiver that just switched, is not held back by another device
     // registering.
     private newItemSettle = new SettleTimer(() => this.updateCrosspoint(), 1000, 3000);
+
+    // Per device and API, the href that answered last (see deviceEndpoints).
+    private endpoints = new EndpointMemory();
+
+    /**
+     * Runs `request` on the hrefs a device advertises for one API (IS-05,
+     * IS-08, IS-13), the one that answered last first, and moves on to the
+     * next only while an href cannot be reached. Logs once when one is skipped.
+     */
+    private viaDevice<T>(api:string, ownerId:string, hrefs:string[], request:(href:string)=>Promise<T>): Promise<T> {
+        return tryEndpoints(this.endpoints, api + " " + ownerId, hrefs, request, (message)=>{
+            const st:any = this.nmosState;
+            const name = st?.devices?.[ownerId]?.label || st?.nodes?.[ownerId]?.label || ownerId;
+            SyncLog.log("info", "NMOS", api + " of " + name + ": " + message);
+        });
+    }
+
+    /** The IS-05 hrefs of a device, newest version only. */
+    private is05Hrefs(device:any): string[] {
+        return selectControlHrefs(device?.controls).map((h)=>h.href);
+    }
     private updateState(message: any, version:string, registryUrl:string = "") {
         //console.log("updates from registry: " + message.type)
         let newItem = false;
@@ -1032,12 +1054,20 @@ export class NmosRegistryConnector {
 
     async loadChannelMaping(postData:any){
         let cmLoaded = false;
-        for(let c of postData.controls){
-            // TODO: other versions
-            if(c.type=="urn:x-nmos:control:cm-ctrl/v1.0"){
+        // TODO: other versions
+        let cmHrefs:string[] = (Array.isArray(postData?.controls) ? postData.controls : [])
+            .filter((c:any)=>c && c.type == "urn:x-nmos:control:cm-ctrl/v1.0" && typeof c.href === "string")
+            .map((c:any)=>c.href);
+        if(cmHrefs.length > 0){
+            {
                 try{
-                    let io = await axios.get(c.href + "/io");
-                    let map = await axios.get(c.href + "/map/active");
+                    // Every href is the same Channel Mapping API: the first
+                    // that answers is read.
+                    let { io, map } = await this.viaDevice("IS-08", postData.id, cmHrefs, async (href)=>{
+                        let io = await axios.get(joinHref(href, "io"), deviceRequest(10000));
+                        let map = await axios.get(joinHref(href, "map/active"), deviceRequest(10000));
+                        return { io, map };
+                    });
 
                     for(let k in io.data.outputs){
 
@@ -1231,7 +1261,7 @@ export class NmosRegistryConnector {
                 // add or update element
                 if (typeof g.post == "object") {
 
-                    let active_href = [];
+                    let hrefs:string[] = [];
                     let senderId = "";
                     let sender = null;
                     let device = null;
@@ -1241,42 +1271,21 @@ export class NmosRegistryConnector {
                         senderId = g.path;
                         sender = g.post;
                         device = this.nmosState.devices[sender.device_id];
-
-                        // Accept BOTH supported IS-05 control versions.
-                        // Devices that advertise v1.1 only (e.g. QSC Core)
-                        // previously slipped through this filter, which left
-                        // their senderActiveData empty — and the Multicast
-                        // Lease Manager could never reconcile the address.
-                        // Order matters: v1.1 first, so newer devices that
-                        // advertise both don't get stuck on the older URL
-                        // (which may exist for compatibility but lack fields).
-                        let preferred = SR_CTRL_TYPES.map(t => t.type);
-                        for(let ctrlType of preferred){
-                            device.controls.forEach((c:any)=>{
-                                if(c.type === ctrlType){
-                                    let href = c.href;
-                                    if(href[href.length-1] !== "/"){
-                                        href += "/";
-                                    }
-                                    href += "single/senders/"+senderId+"/active/";
-                                    active_href.push(href);
-                                }
-                            });
-                            if(active_href.length > 0) break;
-                        }
-                        
-                        
+                        // The newest IS-05 version the device offers (v1.1
+                        // only, as QSC Core does, included), every href of it.
+                        hrefs = this.is05Hrefs(device);
                     }catch(e){}
 
-                    if(active_href.length == 0){
+                    if(hrefs.length == 0){
                         SyncLog.log("warn", "NMOS", "Can not get active configuration of sender, no controls available.")
                     }
 
                     let gotData = false;
                     let seq = this.senderActiveOrder.begin(senderId);
-                    for(let href of active_href){
+                    if(hrefs.length > 0){
                         try{
-                            let response = await axios.get(href);
+                            let response:any = await this.viaDevice("IS-05", sender.device_id, hrefs,
+                                (href)=>axios.get(joinHref(href, "single/senders/"+senderId+"/active/"), deviceRequest(10000)));
                             // An older read answering after a newer one would
                             // put back a flow the sender has left, and
                             // followMxlSender would point its receivers back
@@ -1288,9 +1297,8 @@ export class NmosRegistryConnector {
                             if(sender && sender.transport == TRANSPORT_MXL){
                                 this.followMxlSender(senderId, response.data, sender.flow_id ?? null);
                             }
-                            break;
-                        }catch(e){
-                            SyncLog.log("warn", "NMOS", "Can not get active configuration of sender:",{error: e.message, href : href});
+                        }catch(e:any){
+                            SyncLog.log("warn", "NMOS", "Can not get active configuration of sender:",{error: e?.message, hrefs: e?.tried || hrefs});
                         }
                     }
 
@@ -1437,26 +1445,28 @@ export class NmosRegistryConnector {
     private async readReceiverActiveNow(receiverId:string):Promise<any>{
         let seq = (this.receiverActiveSeq.get(receiverId) || 0) + 1;
         this.receiverActiveSeq.set(receiverId, seq);
-        let hrefs:{href:string, version:string}[] = [];
+        let hrefs:string[] = [];
+        let deviceId = "";
         try{
             let receiver:any = this.nmosState.receivers[receiverId];
-            hrefs = selectControlHrefs(this.nmosState.devices[receiver.device_id].controls);
+            deviceId = receiver.device_id;
+            hrefs = this.is05Hrefs(this.nmosState.devices[deviceId]);
         }catch(e){}
-        for(let href of hrefs){
-            try{
-                let response = await axios.get(joinHref(href.href, "single/receivers/" + receiverId + "/active"), {timeout:10000});
-                if(this.receiverActiveSeq.get(receiverId) === seq && receiverActiveRead(this.nmosState.receivers[receiverId])){
-                    if(receiverActiveChanged(this.nmosState.receiverActiveData[receiverId], response.data)){
-                        this.nmosState.receiverActiveData[receiverId] = response.data;
-                        this.updateCrosspoint();
-                    }
-                }
-                return response.data;
-            }catch(e:any){
-                if(!tryNextControl(e)){ return null; }
+        if(hrefs.length == 0){ return null; }
+        let response:any;
+        try{
+            response = await this.viaDevice("IS-05", deviceId, hrefs,
+                (href)=>axios.get(joinHref(href, "single/receivers/" + receiverId + "/active"), deviceRequest(10000)));
+        }catch(e){
+            return null;
+        }
+        if(this.receiverActiveSeq.get(receiverId) === seq && receiverActiveRead(this.nmosState.receivers[receiverId])){
+            if(receiverActiveChanged(this.nmosState.receiverActiveData[receiverId], response.data)){
+                this.nmosState.receiverActiveData[receiverId] = response.data;
+                this.updateCrosspoint();
             }
         }
-        return null;
+        return response.data;
     }
 
     // Pending receiver /active reads keyed by receiver id, coalesced like the
@@ -1509,16 +1519,20 @@ export class NmosRegistryConnector {
     async getReceiverActive(receiverId:string){
         let seq = (this.receiverActiveSeq.get(receiverId) || 0) + 1;
         this.receiverActiveSeq.set(receiverId, seq);
-        let hrefs:{href:string, version:string}[] = [];
+        let hrefs:string[] = [];
+        let deviceId = "";
         try{
             let receiver:any = this.nmosState.receivers[receiverId];
-            let device:any = this.nmosState.devices[receiver.device_id];
-            hrefs = selectControlHrefs(device.controls);
+            deviceId = receiver.device_id;
+            hrefs = this.is05Hrefs(this.nmosState.devices[deviceId]);
         }catch(e){}
         if(hrefs.length == 0){ return; }
-        for(let href of hrefs){
-            try{
-                let response = await axios.get(joinHref(href.href, "single/receivers/" + receiverId + "/active"), {timeout:10000});
+        let read = false;
+        try{
+            let response:any = await this.viaDevice("IS-05", deviceId, hrefs,
+                (href)=>axios.get(joinHref(href, "single/receivers/" + receiverId + "/active"), deviceRequest(10000)));
+            read = true;
+            {
                 if(this.receiverActiveSeq.get(receiverId) !== seq){ return; }
                 // Gone or connected by name in the meantime: drop, do not keep.
                 let changed = receiverActiveChanged(this.nmosState.receiverActiveData[receiverId], response.data);
@@ -1548,11 +1562,12 @@ export class NmosRegistryConnector {
                 // would cost a full crosspoint update per receiver.
                 if(changed){ this.updateCrosspoint(); }
                 return;
-            }catch(e:any){
-                if(!tryNextControl(e)){
-                    SyncLog.log("warn", "NMOS", "Can not get active configuration of receiver: " + receiverId, {error: e?.message, href: href.href});
-                    break;
-                }
+            }
+        }catch(e:any){
+            // A device unreachable on every href stays quiet here, as before:
+            // the periodic reads would repeat it. An error answer is logged.
+            if(read || !allUnreachable(e)){
+                SyncLog.log("warn", "NMOS", "Can not get active configuration of receiver: " + receiverId, {error: e?.message, hrefs: e?.tried || hrefs});
             }
         }
         // Nothing read: what was read before no longer counts.
@@ -1941,12 +1956,13 @@ export class NmosRegistryConnector {
             // sender resolved, which its IS-05 /active carries.
             if(sender.transport == TRANSPORT_MXL){
                 try{
-                    let hrefs = selectControlHrefs(device.controls);
+                    let hrefs = this.is05Hrefs(device);
                     if(hrefs.length == 0){
                         info.error = "MXL sender advertises no IS-05 control";
                         return info;
                     }
-                    let active = await axios.get(joinHref(hrefs[0].href, "single/senders/" + senderId + "/active"), {timeout:10000});
+                    let active:any = await this.viaDevice("IS-05", sender.device_id, hrefs,
+                        (href)=>axios.get(joinHref(href, "single/senders/" + senderId + "/active"), deviceRequest(10000)));
                     info.mxl = mxlEndpointFromActive(active.data);
                     info.mxlEnabled = active.data?.master_enable !== false;
                 }catch(e:any){
@@ -2079,9 +2095,10 @@ export class NmosRegistryConnector {
                 }
                 let constraints:any = null;
                 try{
-                    let hrefs = selectControlHrefs(device.controls);
+                    let hrefs = this.is05Hrefs(device);
                     if(hrefs.length > 0){
-                        constraints = (await axios.get(joinHref(hrefs[0].href, "single/receivers/" + receiverId + "/constraints"), {timeout:10000})).data;
+                        constraints = (await this.viaDevice("IS-05", receiver.device_id, hrefs,
+                            (href)=>axios.get(joinHref(href, "single/receivers/" + receiverId + "/constraints"), deviceRequest(10000)))).data;
                     }
                 }catch(e){
                     // No constraints to read: the device answers for the domain itself.
@@ -2149,46 +2166,30 @@ export class NmosRegistryConnector {
             //}
         //}
 
-        let controlHrefs = selectControlHrefs(device.controls);
-
-        let done = false;
-
-        // TODO Check control hrefs for first response....
-
-        for(let href of controlHrefs){
-            // TODO, version specific things
-            let fixSlash = ""
-            if(href.href[href.href.length-1] == "/"){
-                fixSlash = ""
-            }else{
-                fixSlash = "/"
+        let controlHrefs = this.is05Hrefs(device);
+        let patchHref = "";
+        try{
+            let result:any = await this.viaDevice("IS-05", receiver.device_id, controlHrefs, (href)=>{
+                patchHref = joinHref(href, "single/receivers/" + receiverId + "/staged");
+                return axios.patch(patchHref, patch, deviceRequest(30000));
+            });
+            // The device's own answer goes into the log line: what it
+            // staged is the only way to see which of our parameters it
+            // took, silently changed or ignored.
+            return SyncLog.log("success", "nmos_connect", "Successfully patched: "+receiverId, {href:patchHref, data:patch, status:result?.status, response:result?.data})
+        }catch(e:any){
+            if(allUnreachable(e)){
+                let id = SyncLog.log("error", "nmos_connect", "Receiver Control unreachable.",{controlHrefs, tried:e.tried, patch});
+                throw new LoggedError("Receiver Control unreachable.", id);
             }
-            let patchHref = href.href + fixSlash + "single/receivers/" + receiverId + "/staged"
-            try{
-                let result = await axios.patch(patchHref, patch, {timeout:30000});
-                // The device's own answer goes into the log line: what it
-                // staged is the only way to see which of our parameters it
-                // took, silently changed or ignored.
-                return SyncLog.log("success", "nmos_connect", "Successfully patched: "+receiverId, {href:patchHref, data:patch, status:result?.status, response:result?.data})
-            }catch(e){
-                if (axios.isAxiosError(e)) {
-                    if(tryNextControl(e)){
-                        // NEXT
-                        let id = SyncLog.log("info", "nmos_connect", "Patch on "+patchHref+" unreachable ("+e.code+"), trying next.");
-                    }else{
-                        // The device's own text, for a 500 as much as for a 400.
-                        const why = failedBecause(e.response?.status, e.response?.data, e.code);
-                        let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" "+why,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
-                        throw Object.assign(new LoggedError("Receiver "+why, id), {status:e.response?.status});
-                    }
-                }else{
-                    throw new LoggedError("Patch Failed: "+e.message);
-                }
-                
+            if(axios.isAxiosError(e)){
+                // The device's own text, for a 500 as much as for a 400.
+                const why = failedBecause(e.response?.status, e.response?.data, e.code);
+                let id = SyncLog.log("error", "nmos_connect", "Receiver "+receiverId+" "+why,{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
+                throw Object.assign(new LoggedError("Receiver "+why, id), {status:e.response?.status});
             }
+            throw new LoggedError("Patch Failed: "+e.message);
         }
-        let id = SyncLog.log("error", "nmos_connect", "Receiver Control unreachable.",{controlHrefs,patch});
-        throw new LoggedError("Receiver Control unreachable.", id);
     }
 
 
@@ -2196,25 +2197,9 @@ export class NmosRegistryConnector {
     async enableFlow(senderId:string, disable=false){
 
         try{
-            let versionFound = false;
-            let controlHrefs = [];
-
             let sender = this.nmosState.senders[senderId];
             let device = this.nmosState.devices[sender.device_id];
-
-            let controlTypes = SR_CTRL_TYPES
-
-            for(let type of controlTypes){
-                device.controls.forEach((control)=>{
-                    if(control.type == type.type){
-                        controlHrefs.push({href:control.href, version:type.version});
-                        versionFound = true;
-                    }
-                })
-                if(versionFound){
-                    break;
-                }
-            }
+            let controlHrefs = this.is05Hrefs(device);
 
             // Determine number of legs: prefer interface_bindings, otherwise
             // fall back to whatever the sender currently advertises in its
@@ -2233,31 +2218,18 @@ export class NmosRegistryConnector {
             let patch:any = buildSenderEnablePatch(sender.transport, legCount, disable);
 
 
-            for(let href of controlHrefs){
-                // TODO, version specific things
-                let fixSlash = ""
-                if(href.href[href.href.length-1] == "/"){
-                    fixSlash = ""
-                }else{
-                    fixSlash = "/"
-                }
-                let patchHref = href.href + fixSlash + "single/senders/" + senderId + "/staged";
-                try{
-                    let result = await axios.patch(patchHref, patch, {timeout:30000});
-                    SyncLog.log("success", "nmos", "Successfully enabled: "+senderId, {href:patchHref, data:patch, status:result?.status, response:result?.data})
-                    return;
-                }catch(e){
-                    if (axios.isAxiosError(e)) {
-                        if(tryNextControl(e)){
-                            // NEXT
-                            SyncLog.log("info", "nmos", "Patch on "+senderId+" unreachable ("+e.code+"), trying next.");
-                        }else{
-                            SyncLog.log("error", "nmos", "Sender "+senderId+" "+failedBecause(e.response?.status, e.response?.data, e.code),{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
-                            return;
-                        }
-                    }else{
-                        return;
-                    }
+            let patchHref = "";
+            try{
+                let result:any = await this.viaDevice("IS-05", sender.device_id, controlHrefs, (href)=>{
+                    patchHref = joinHref(href, "single/senders/" + senderId + "/staged");
+                    return axios.patch(patchHref, patch, deviceRequest(30000));
+                });
+                SyncLog.log("success", "nmos", "Successfully enabled: "+senderId, {href:patchHref, data:patch, status:result?.status, response:result?.data})
+            }catch(e:any){
+                if(allUnreachable(e)){
+                    SyncLog.log("error", "nmos", "Sender "+senderId+": Connection API unreachable.", {controlHrefs, tried:e.tried, patch});
+                }else if(axios.isAxiosError(e)){
+                    SyncLog.log("error", "nmos", "Sender "+senderId+" "+failedBecause(e.response?.status, e.response?.data, e.code),{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
                 }
             }
         }catch(e){
@@ -2274,26 +2246,13 @@ export class NmosRegistryConnector {
      */
     async enableReceiver(receiverId:string, disable=false){
         try{
-            let versionFound = false;
-            let controlHrefs:any[] = [];
-
             let receiver = this.nmosState.receivers[receiverId];
             if(!receiver){
                 SyncLog.log("warning", "NMOS", "Cannot toggle receiver, unknown id: " + receiverId);
                 return;
             }
             let device = this.nmosState.devices[receiver.device_id];
-
-            let controlTypes = SR_CTRL_TYPES;
-            for(let type of controlTypes){
-                device.controls.forEach((control:any)=>{
-                    if(control.type == type.type){
-                        controlHrefs.push({href:control.href, version:type.version});
-                        versionFound = true;
-                    }
-                });
-                if(versionFound){ break; }
-            }
+            let controlHrefs = this.is05Hrefs(device);
 
             let patch:any = {
                 master_enable: !disable,
@@ -2303,31 +2262,25 @@ export class NmosRegistryConnector {
                 }
             };
 
-            for(let href of controlHrefs){
-                let fixSlash = (href.href[href.href.length-1] == "/") ? "" : "/";
-                let patchHref = href.href + fixSlash + "single/receivers/" + receiverId + "/staged";
-                try{
-                    let result = await axios.patch(patchHref, patch, {timeout:30000});
-                    SyncLog.log("success", "nmos", "Successfully " + (disable?"disabled":"enabled") + " receiver: " + receiverId, {href:patchHref, data:patch, status:result?.status, response:result?.data});
-                    return;
-                }catch(e:any){
-                    if(axios.isAxiosError(e)){
-                        if(tryNextControl(e)){
-                            SyncLog.log("info", "nmos", "Patch on " + receiverId + " unreachable ("+e.code+"), trying next.");
-                        }else{
-                            let logBody:any = {controlHrefs, failedControl:patchHref, patch, status:e.response?.status};
-                            if(e.response){
-                                logBody.error = e.response.data;
-                            }
-                            if(e.code != "ERR_BAD_REQUEST"){
-                                logBody.message = e.message;
-                            }
-                            SyncLog.log("error", "nmos", "Receiver " + receiverId + " " + failedBecause(e.response?.status, e.response?.data, e.code), logBody);
-                            return;
-                        }
-                    }else{
-                        return;
+            let patchHref = "";
+            try{
+                let result:any = await this.viaDevice("IS-05", receiver.device_id, controlHrefs, (href)=>{
+                    patchHref = joinHref(href, "single/receivers/" + receiverId + "/staged");
+                    return axios.patch(patchHref, patch, deviceRequest(30000));
+                });
+                SyncLog.log("success", "nmos", "Successfully " + (disable?"disabled":"enabled") + " receiver: " + receiverId, {href:patchHref, data:patch, status:result?.status, response:result?.data});
+            }catch(e:any){
+                if(allUnreachable(e)){
+                    SyncLog.log("error", "nmos", "Receiver " + receiverId + ": Connection API unreachable.", {controlHrefs, tried:e.tried, patch});
+                }else if(axios.isAxiosError(e)){
+                    let logBody:any = {controlHrefs, failedControl:patchHref, patch, status:e.response?.status};
+                    if(e.response){
+                        logBody.error = e.response.data;
                     }
+                    if(e.code != "ERR_BAD_REQUEST"){
+                        logBody.message = e.message;
+                    }
+                    SyncLog.log("error", "nmos", "Receiver " + receiverId + " " + failedBecause(e.response?.status, e.response?.data, e.code), logBody);
                 }
             }
         }catch(e){}
@@ -2402,16 +2355,21 @@ export class NmosRegistryConnector {
             const r = kind === "sender" ? st.senders?.[id] : st.receivers?.[id];
             nodeId = st.devices?.[r?.device_id]?.node_id || "";
         }
-        const base = annotationHref(st.nodes?.[nodeId]);
-        if(!base){ throw new Error("This device does not offer IS-13 annotation."); }
-        const href = base + annotationPath(kind, id);
+        const bases = annotationHrefs(st.nodes?.[nodeId]);
+        if(bases.length == 0){ throw new Error("This device does not offer IS-13 annotation."); }
         const body = buildLabelPatch(label);
+        let href = "";
         try{
-            const r = await axios.patch(href, body, { timeout: 10000 });
+            const r:any = await this.viaDevice("IS-13", nodeId, bases, (base)=>{
+                href = base + annotationPath(kind, id);
+                return axios.patch(href, body, deviceRequest(10000));
+            });
             SyncLog.log("success", "annotation", "IS-13 " + (label === null ? "reset the label of " : "set the label of ") + kind + " " + id,
                 { href, data: body, status: r?.status, response: r?.data });
         }catch(e:any){
-            const msg = annotationErrorText(e?.response?.status, e?.response?.data, "IS-13 PATCH failed: " + (e?.message || e));
+            const fallback = allUnreachable(e) ? "IS-13 Annotation API unreachable (" + (e.tried || []).join(", ") + ")"
+                : "IS-13 PATCH failed: " + (e?.message || e);
+            const msg = annotationErrorText(e?.response?.status, e?.response?.data, fallback);
             SyncLog.log("error", "annotation", msg + " — " + kind + " " + id, { href, data: body, status: e?.response?.status, error: e?.response?.data });
             throw new Error(msg);
         }
@@ -2422,29 +2380,13 @@ export class NmosRegistryConnector {
     async setFlowMulticast(senderId:string, data:any): Promise<boolean>{
 
         try{
-            let versionFound = false;
-            let controlHrefs = [];
-
             let sender = this.nmosState.senders[senderId];
             if(!hasRtpDestination(sender)){
                 SyncLog.log("warning", "nmos", "Sender "+senderId+" is not an RTP sender; it has no destination to set.");
                 return false;
             }
             let device = this.nmosState.devices[sender.device_id];
-
-            let controlTypes = SR_CTRL_TYPES
-
-            for(let type of controlTypes){
-                device.controls.forEach((control)=>{
-                    if(control.type == type.type){
-                        controlHrefs.push({href:control.href, version:type.version});
-                        versionFound = true;
-                    }
-                })
-                if(versionFound){
-                    break;
-                }
-            }
+            let controlHrefs = this.is05Hrefs(device);
 
             // Determine number of legs the sender actually advertises.
             let legCount = 1;
@@ -2608,17 +2550,13 @@ export class NmosRegistryConnector {
 
             
 
-            for(let href of controlHrefs){
-                // TODO, version specific things
-                let fixSlash = ""
-                if(href.href[href.href.length-1] == "/"){
-                    fixSlash = ""
-                }else{
-                    fixSlash = "/"
-                }
-                let patchHref = href.href + fixSlash + "single/senders/" + senderId + "/staged";
+            let patchHref = "";
+            {
                 try{
-                    let result = await axios.patch(patchHref, patch, {timeout:30000});
+                    let result:any = await this.viaDevice("IS-05", sender.device_id, controlHrefs, (href)=>{
+                        patchHref = joinHref(href, "single/senders/" + senderId + "/staged");
+                        return axios.patch(patchHref, patch, deviceRequest(30000));
+                    });
                     SyncLog.log("success", "nmos", "Successfully set multicast: "+senderId, {href:patchHref, data:patch, status:result?.status, response:result?.data});
 
 
@@ -2652,18 +2590,13 @@ export class NmosRegistryConnector {
 
 
                     return true;
-                }catch(e){
-                    if (axios.isAxiosError(e)) {
-                        if(tryNextControl(e)){
-                            // NEXT
-                            SyncLog.log("info", "nmos", "Patch on "+senderId+" unreachable ("+e.code+"), trying next.");
-                        }else{
-                            SyncLog.log("error", "nmos", "Sender "+senderId+" "+failedBecause(e.response?.status, e.response?.data, e.code),{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
-                            return false;
-                        }
-                    }else{
-                        return false;
+                }catch(e:any){
+                    if(allUnreachable(e)){
+                        SyncLog.log("error", "nmos", "Sender "+senderId+": Connection API unreachable.", {controlHrefs, tried:e.tried, patch});
+                    }else if(axios.isAxiosError(e)){
+                        SyncLog.log("error", "nmos", "Sender "+senderId+" "+failedBecause(e.response?.status, e.response?.data, e.code),{controlHrefs,failedControl:patchHref,patch, status:e.response?.status, error:e.response?.data, message:e.message});
                     }
+                    return false;
                 }
             }
         }catch(e){
@@ -2697,25 +2630,27 @@ export class NmosRegistryConnector {
             if(!sender){ return false; }
             let device = this.nmosState.devices[sender.device_id];
             if(!device || !Array.isArray(device.controls)){ return false; }
-            // Accept both supported IS-05 control versions — QSC and other
-            // newer devices advertise v1.1 only. v1.1 wins when both are
-            // present (newer schema, better field coverage).
-            let preferred = SR_CTRL_TYPES.map(t => t.type);
-            for(let ctrlType of preferred){
-                for(let c of device.controls){
-                    if(c && c.type === ctrlType){
-                        let href:string = c.href;
-                        if(href[href.length-1] !== "/"){ href += "/"; }
-                        href += "single/senders/" + senderId + "/active/";
-                        try{
-                            let response = await axios.get(href);
-                            this.nmosState.senderActiveData[senderId] = response.data;
-                            return true;
-                        }catch(e:any){
-                            SyncLog.log("warn", "Multicast Lease", "refreshSenderActive failed for " + senderId + " via " + ctrlType + ": " + (e?.message || e));
-                            // Don't return — try the other version before giving up
-                        }
-                    }
+            // Every IS-05 version the device offers, newest first (QSC and
+            // other newer devices advertise v1.1 only); an older version is
+            // asked when a newer one fails.
+            let newest = true;
+            for(let t of SR_CTRL_TYPES){
+                let hrefs:string[] = device.controls
+                    .filter((c:any)=>c && c.type === t.type && typeof c.href === "string")
+                    .map((c:any)=>c.href);
+                if(hrefs.length == 0){ continue; }
+                // The newest version shares the remembered href with every
+                // other IS-05 request; an older one keeps its own.
+                const api = newest ? "IS-05" : "IS-05 " + t.version;
+                newest = false;
+                try{
+                    let response:any = await this.viaDevice(api, sender.device_id, hrefs,
+                        (href)=>axios.get(joinHref(href, "single/senders/" + senderId + "/active/"), deviceRequest(10000)));
+                    this.nmosState.senderActiveData[senderId] = response.data;
+                    return true;
+                }catch(e:any){
+                    SyncLog.log("warn", "Multicast Lease", "refreshSenderActive failed for " + senderId + " via " + t.type + ": " + (e?.message || e));
+                    // Don't return — try the other version before giving up
                 }
             }
         }catch(e){}

@@ -10,17 +10,22 @@ import { deviceErrorText } from "./deviceError";
 
 export const ANNOTATION_SERVICE = "urn:x-nmos:service:annotation/";
 
-/** Annotation API base href of an IS-04 Node, newest version first; "" when
- *  the Node does not offer one. Always ends with "/". */
-export function annotationHref(node: any): string {
+/** Every Annotation API base href of an IS-04 Node for the newest version it
+ *  offers, in the Node's order (one per address or interface); [] when it
+ *  offers none. Each ends with "/". */
+export function annotationHrefs(node: any): string[] {
     const services: any[] = Array.isArray(node?.services) ? node.services : [];
     const found = services
         .filter((s: any) => s && typeof s.type === "string" && s.type.startsWith(ANNOTATION_SERVICE) && typeof s.href === "string" && s.href)
-        .map((s: any) => ({ href: s.href as string, ver: s.type.substring(ANNOTATION_SERVICE.length) }))
-        .sort((a, b) => b.ver.localeCompare(a.ver, undefined, { numeric: true }));
-    if (found.length === 0) return "";
-    const h = found[0].href;
-    return h.endsWith("/") ? h : h + "/";
+        .map((s: any) => ({ href: s.href as string, ver: s.type.substring(ANNOTATION_SERVICE.length) }));
+    if (found.length === 0) return [];
+    const newest = found.map(f => f.ver).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
+    return found.filter(f => f.ver === newest).map(f => f.href.endsWith("/") ? f.href : f.href + "/");
+}
+
+/** The first of annotationHrefs; "" when the Node offers no Annotation API. */
+export function annotationHref(node: any): string {
+    return annotationHrefs(node)[0] || "";
 }
 
 export type AnnotationKind = "node" | "device" | "sender" | "receiver";

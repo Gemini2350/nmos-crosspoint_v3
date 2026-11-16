@@ -148,14 +148,26 @@ class DeviceMonitorConnection {
     private loggedConnecting = false;
     private pingTimer: any = null;
     private lastPong = 0;
+    // A device may list its IS-12 endpoint under several hrefs (an address
+    // per interface). A connect that never opens moves on to the next one at
+    // once; only a full round without success waits for the backoff. A
+    // connection that opened keeps its href for the reconnect.
+    private idx = 0;
+    private roundStart = 0;
+    private openedNow = false;
+    private workingIdx = -1;
+    public readonly key: string;
 
     constructor(
         public deviceId: string,
-        public url: string,
+        private urls: string[],
         private onStatus: (flowId: string, st: MonitorStatus | null) => void,
     ) {
+        this.key = urls.join(" ");
         this.connect();
     }
+
+    get url(): string { return this.urls[this.idx]; }
 
     dispose() {
         this.disposed = true;
@@ -179,7 +191,15 @@ class DeviceMonitorConnection {
             }
             const ws: any = new WebSocket(this.url, { handshakeTimeout: 5000 });
             this.ws = ws;
+            this.openedNow = false;
             ws.on("open", () => {
+                this.openedNow = true;
+                if (this.workingIdx !== this.idx && (this.workingIdx >= 0 || this.idx !== 0)) {
+                    const skipped = this.urls.filter((u, i) => i !== this.idx).join(", ");
+                    SyncLog.log("info", "BCP-008", "Connected to " + this.url + " (" + skipped + " not reachable).");
+                }
+                this.workingIdx = this.idx;
+                this.roundStart = this.idx;
                 this.backoff = RECONNECT_MIN_MS;
                 this.startKeepalive(ws);
                 SyncLog.log("verbose", "BCP-008", "Connected to " + this.url + " — discovering device model.");
@@ -225,11 +245,18 @@ class DeviceMonitorConnection {
         // rather than showing outdated health.
         for (const m of this.monitors) { this.onStatus(m.flowId, null); }
         this.monitors = [];
+        let delay = this.backoff;
+        let slower = true;
+        if (!this.openedNow && this.urls.length > 1) {
+            this.idx = (this.idx + 1) % this.urls.length;
+            // Next href of this round at once; back at the start, wait.
+            if (this.idx !== this.roundStart) { delay = 0; slower = false; }
+        }
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
             this.connect();
-        }, this.backoff);
-        this.backoff = Math.min(this.backoff * 2, RECONNECT_MAX_MS);
+        }, delay);
+        if (slower) this.backoff = Math.min(this.backoff * 2, RECONNECT_MAX_MS);
     }
 
     private failAllPending(err: Error) {
@@ -741,36 +768,37 @@ export class Bcp008Monitor {
     updateFromNmos(state: any) {
         this.lastNmosState = state;
         if (!this.enabled) return;
-        const wanted: Map<string, string> = new Map();   // deviceId → ncp url
+        const wanted: Map<string, string[]> = new Map();   // deviceId → ncp urls, the device's order
         try {
             const devices = state?.devices || {};
             for (const devId in devices) {
                 const controls = devices[devId]?.controls;
                 if (!Array.isArray(controls)) continue;
+                const urls: string[] = [];
                 for (const c of controls) {
                     if (typeof c?.type === "string" && c.type.startsWith("urn:x-nmos:control:ncp/")
-                        && typeof c?.href === "string" && c.href.startsWith("ws")) {
-                        wanted.set(devId, c.href);
-                        break;
+                        && typeof c?.href === "string" && c.href.startsWith("ws") && !urls.includes(c.href)) {
+                        urls.push(c.href);
                     }
                 }
+                if (urls.length > 0) wanted.set(devId, urls);
             }
         } catch (e) { return; }
 
-        // Drop connections whose device vanished or whose endpoint moved.
+        // Drop connections whose device vanished or whose endpoints changed.
         for (const [devId, conn] of Array.from(this.conns.entries())) {
-            const url = wanted.get(devId);
-            if (!url || url !== conn.url) {
+            const urls = wanted.get(devId);
+            if (!urls || urls.join(" ") !== conn.key) {
                 conn.dispose();
                 this.conns.delete(devId);
                 this.devVersions.delete(devId);
             }
         }
         // Open connections for new devices.
-        for (const [devId, url] of wanted.entries()) {
+        for (const [devId, urls] of wanted.entries()) {
             if (this.conns.has(devId)) continue;
             this.devVersions.set(devId, "" + (state?.devices?.[devId]?.version || ""));
-            this.conns.set(devId, new DeviceMonitorConnection(devId, url, (flowId, st) => {
+            this.conns.set(devId, new DeviceMonitorConnection(devId, urls, (flowId, st) => {
                 this.applyStatus(flowId, st);
             }));
         }
