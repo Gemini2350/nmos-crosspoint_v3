@@ -210,6 +210,37 @@
         > .select { padding-right: 28px; padding-top: 0; padding-bottom: 0; line-height: 1.2; }
     }
 
+    // Who made it, below everything else.
+    .setup-about {
+        border-top: 2px solid theme('colors.base-content / 18%');
+        margin-top: 16px;
+        padding-top: 12px;
+
+        h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 8px; }
+        .about-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+            b { font-size: 1.15rem; font-weight: 750; letter-spacing: -0.02em; }
+        }
+        .about-version {
+            font: 500 0.72rem 'Roboto Mono', monospace;
+            color: theme('colors.base-content / 60%');
+        }
+        dl {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            gap: 3px 14px;
+            font-size: 0.85rem;
+        }
+        dt { color: theme('colors.base-content / 60%'); }
+        a {
+            color: #34d399;
+            &:hover { text-decoration: underline; }
+        }
+    }
+
     .setup-actions {
         margin-top: 12px;
         display: flex;
@@ -587,3 +618,6 @@
         }
     }
 }
+
+// The logo green is too pale for links on the light page.
+html[data-theme="light"] .setup-page .setup-about a { color: #047857; }

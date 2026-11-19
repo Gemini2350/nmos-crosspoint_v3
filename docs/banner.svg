@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" width="880" height="300">
+  <defs>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <radialGradient id="g1" cx="78%" cy="-10%" r="70%"><stop offset="0" stop-color="#34d399" stop-opacity=".16"/><stop offset="1" stop-color="#34d399" stop-opacity="0"/></radialGradient>
+    <radialGradient id="g2" cx="0%" cy="110%" r="60%"><stop offset="0" stop-color="#8b5cf6" stop-opacity=".14"/><stop offset="1" stop-color="#8b5cf6" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="880" height="300" rx="18" fill="#0a0e13"/>
+  <rect width="880" height="300" rx="18" fill="url(#g1)"/>
+  <rect width="880" height="300" rx="18" fill="url(#g2)"/>
+  <rect x="389.5" y="44" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="416.5" y="44" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="443.5" y="44" width="20" height="20" rx="5" fill="#34d399" filter="url(#glow)"/>
+  <rect x="470.5" y="44" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="389.5" y="71" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="416.5" y="71" width="20" height="20" rx="5" fill="#34d399" filter="url(#glow)"/>
+  <rect x="443.5" y="71" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="470.5" y="71" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="389.5" y="98" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="416.5" y="98" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="443.5" y="98" width="20" height="20" rx="5" fill="#ffffff" fill-opacity=".12"/>
+  <rect x="470.5" y="98" width="20" height="20" rx="5" fill="#34d399" filter="url(#glow)"/>
+  <text x="412.0" y="186" text-anchor="middle" textLength="560" lengthAdjust="spacingAndGlyphs" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="66" font-weight="700" letter-spacing="-1.5" fill="#eef2f6">NMOS Crosspoint</text>
+  <rect x="704.0" y="138" width="48" height="26" rx="6" fill="#34d399"/>
+  <text x="728.0" y="157" text-anchor="middle" font-family="SFMono-Regular,Menlo,Consolas,monospace" font-size="16" font-weight="700" fill="#0a0e13">V3</text>
+  <text x="440.0" y="240" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="22" font-weight="500" fill="#93a0b0">The open-source NMOS controller for <tspan fill="#eef2f6" font-weight="600">ST 2110</tspan>, <tspan fill="#eef2f6" font-weight="600">AES67</tspan> and <tspan fill="#eef2f6" font-weight="600">MXL</tspan></text>
+</svg>

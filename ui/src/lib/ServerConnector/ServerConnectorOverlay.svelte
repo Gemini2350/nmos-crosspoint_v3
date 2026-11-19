@@ -81,7 +81,7 @@ function doLogin(){
         <form method="dialog">
             <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
         </form>
-        <div class="login-brand"><Logo size={46} /><span>NMOS Crosspoint</span></div>
+        <div class="login-brand"><Logo size={46} /><span>NMOS Crosspoint<span class="v3-badge">V3</span></span></div>
         <h3 class="text-lg font-bold">Login</h3>
         <div class="form-control">
             <div class="pt-8">

@@ -1327,14 +1327,16 @@ class CrosspointUpdateThread{
               break;
             }
             case 'urn:x-nmos:format:data':
+              // One of the three: without the else the ANC case also took
+              // the last branch and read "smpte291flow.media.type".
               if (flow.media_type == 'video/smpte291') {
                 info += 'smpte291';
               }
-              if (flow.media_type == 'application/json') {
+              else if (flow.media_type == 'application/json') {
                 info += 'websocket';
               }
               else{
-                info += 'flow.media.type';
+                info += flow.media_type || '';
               }
               break;
           }

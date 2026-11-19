@@ -6,6 +6,7 @@
 
     import { Icon, ExclamationTriangle, CheckCircle, Plus, Trash } from "svelte-hero-icons";
     import HelpTip from "../lib/HelpTip.svelte";
+    import Logo from "../lib/Logo.svelte";
 
     interface VendorProfile {
       id: string;
@@ -1666,6 +1667,22 @@
         {#if saving}Saving…{:else}Save{/if}
       </button>
     </div>
+
+
+    <section class="setup-about">
+      <h3>About</h3>
+      <div class="about-brand">
+        <Logo size={38} />
+        <b>NMOS Crosspoint<span class="v3-badge">V3</span></b>
+        {#if serverState.version}<span class="about-version">v{serverState.version}</span>{/if}
+      </div>
+      <dl>
+        <dt>V3</dt><dd>Oliver Ettlin (Gemini2350), Simplexity</dd>
+        <dt>Original</dt><dd>Johannes Grieb, 2021</dd>
+        <dt>License</dt><dd><a href="https://github.com/Gemini2350/nmos-crosspoint_v3/blob/master/LICENSE.md" target="_blank" rel="noopener noreferrer">MIT</a></dd>
+        <dt>Source</dt><dd><a href="https://github.com/Gemini2350/nmos-crosspoint_v3" target="_blank" rel="noopener noreferrer">github.com/Gemini2350/nmos-crosspoint_v3</a></dd>
+      </dl>
+    </section>
   </div>
 </div>
 
