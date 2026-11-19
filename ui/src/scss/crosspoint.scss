@@ -356,6 +356,9 @@ $cp-border: 1px solid transparent;
         // left in the header — the leftovers of margins against a line box
         // that is not the cell.
         tbody td.cp-line-stick .cp-type { position: relative; top: 2px; }
+        // In a 32px row the tag has 6px below the glyph: further down it
+        // would sit on the line to the next row.
+        tbody td.cp-line-stick .cp-type .cp-mxl-tag { bottom: -5px; }
         thead th .cp-type { position: relative; left: 1.5px; }
 
         // ----- BCP-008 state IS the colour of the essence glyph -----
@@ -418,13 +421,15 @@ $cp-border: 1px solid transparent;
                 z-index: 12;
             }
 
-            // MXL flows say so in small letters at the foot of their glyph;
-            // ST 2110 is the default and stays unmarked. The counter sits
-            // left of / above the glyph, so the foot is free.
+            // MXL flows say so in small letters below their glyph; ST 2110
+            // is the default and stays unmarked. The counter sits left of /
+            // above the glyph, so the foot is free. Clear of the glyph: at
+            // -3px it ran into the stand of the microphone and the monitor,
+            // which reach the bottom of the icon.
             .cp-mxl-tag {
                 position: absolute;
                 left: 50%;
-                bottom: -3px;
+                bottom: -8px;
                 transform: translateX(-50%);
                 font: 700 7px/7px Roboto, sans-serif;
                 letter-spacing: 0.3px;
