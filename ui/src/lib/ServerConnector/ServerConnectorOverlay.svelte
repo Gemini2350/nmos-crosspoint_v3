@@ -2,6 +2,7 @@
     import { onMount, tick } from "svelte";
     import ServerConnector from "./ServerConnectorService";
     import { Icon, User, Key } from "svelte-hero-icons";
+    import Logo from "../Logo.svelte";
 
 
 let feedbackList:any[]= [];
@@ -80,6 +81,7 @@ function doLogin(){
         <form method="dialog">
             <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
         </form>
+        <div class="login-brand"><Logo size={46} /><span>NMOS Crosspoint</span></div>
         <h3 class="text-lg font-bold">Login</h3>
         <div class="form-control">
             <div class="pt-8">

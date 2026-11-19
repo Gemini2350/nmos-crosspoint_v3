@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- A 4x3 crosspoint matrix, three crosspoints switched: one per receiver row. -->
+  <defs><filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+  <rect width="64" height="64" rx="14" fill="#0a0e13"/>
+  <rect x="4.05" y="11.45" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="18.85" y="11.45" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="33.65" y="11.45" width="11.5" height="11.5" rx="2.6" fill="#34d399" filter="url(#glow)"/>
+  <rect x="48.45" y="11.45" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="4.05" y="26.25" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="18.85" y="26.25" width="11.5" height="11.5" rx="2.6" fill="#34d399" filter="url(#glow)"/>
+  <rect x="33.65" y="26.25" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="48.45" y="26.25" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="4.05" y="41.05" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="18.85" y="41.05" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="33.65" y="41.05" width="11.5" height="11.5" rx="2.6" fill="#ffffff" fill-opacity=".18"/>
+  <rect x="48.45" y="41.05" width="11.5" height="11.5" rx="2.6" fill="#34d399" filter="url(#glow)"/>
+</svg>

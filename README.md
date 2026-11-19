@@ -1,3 +1,5 @@
+<p align="center"><img src="ui/public/logo.svg" width="96" alt=""></p>
+
 # NMOS Crosspoint
 
 A web-based NMOS controller for ST 2110, AES67 and MXL networks: see every device, route senders to receivers like on a classic crosspoint, and let it take care of the multicast addresses.

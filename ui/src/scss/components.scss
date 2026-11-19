@@ -344,3 +344,13 @@ html[data-theme="light"] {
 
 
 }
+
+// Login dialog: the logo and the name above "Login". Global: the dialog
+// lives outside every page root.
+.login-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 4px 0 18px;
+    span { font-size: 1.35rem; font-weight: 750; letter-spacing: -0.02em; }
+}
