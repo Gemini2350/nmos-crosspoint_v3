@@ -64,6 +64,7 @@ const ROOT_BLOCK_OID = 1;
 const METHOD_GET = { level: 1, index: 1 };                 // NcObject.Get(id)
 const METHOD_GET_MEMBERS = { level: 2, index: 1 };         // NcBlock.GetMemberDescriptors(recurse)
 const PROP_TOUCHPOINTS = { level: 1, index: 7 };           // NcObject.touchpoints (1p6 is userLabel!)
+const PROP_BLOCK_MEMBERS = { level: 2, index: 2 };         // NcBlock.members (2p1 is enabled)
 const PROP_OVERALL_STATUS = { level: 3, index: 1 };        // NcStatusMonitor.overallStatus
 const PROP_OVERALL_STATUS_MESSAGE = { level: 3, index: 2 };// NcStatusMonitor.overallStatusMessage
 
@@ -110,6 +111,13 @@ const COMMAND_TIMEOUT_MS = 8000;
 // hearts) undetected until TCP gives up.
 const PING_INTERVAL_MS = 15000;
 const PONG_TIMEOUT_MS = 30000;
+
+// A PropertyChanged notification on NcBlock.members: a member was added to
+// or removed from the block, so its device model changed.
+export function isBlockMembersChange(n: any): boolean {
+    const pid = n?.eventData?.propertyId;
+    return !!pid && pid.level === PROP_BLOCK_MEMBERS.level && pid.index === PROP_BLOCK_MEMBERS.index;
+}
 
 function classIdIsStatusMonitor(classId: any): boolean {
     return Array.isArray(classId) && classId.length >= 3
@@ -333,11 +341,10 @@ class DeviceMonitorConnection {
     }
 
     private onNotification(n: any) {
-        // A members change on a known block (NcBlock.members = 2p1) means
-        // the device model changed — new or removed senders/receivers.
+        // A members change on a known block means the device model changed:
+        // new or removed senders/receivers.
         if (this.knownBlocks.has(n?.oid)) {
-            const pid = n?.eventData?.propertyId;
-            if (pid && pid.level === 2 && pid.index === 1) {
+            if (isBlockMembersChange(n)) {
                 this.scheduleRediscover("block " + n.oid + " members changed");
             }
             return;
