@@ -5,14 +5,21 @@
 
 import * as cluster from "cluster";
 import * as WebSocket from "ws";
+import * as http from "http";
 
 var path = require("path");
+
+// Request headers up to this size are served, larger ones get 431. A browser
+// sends every cookie set for the parent domain with each request, which can
+// pass Node's 16 KiB default.
+const MAX_HEADER_BYTES = 64 * 1024;
 
 const express = require("express");
 
 import { WebsocketClient } from "./websocketClient";
 import { SyncObject } from "./syncObject";
 import { SyncLog } from "../syncLog";
+import { Identity } from "../oidc";
 
 interface SyncObjectList {
     [key: string]: SyncObject;
@@ -44,9 +51,23 @@ export class WebsocketSyncServer {
         this.authData = data;
     }
 
+    // Single sign-on: who a WebSocket upgrade request is signed in as, and
+    // the label of the sign-in button. Both stay null without OIDC.
+    public identify: ((request:any) => Identity | null) | null = null;
+    public oidcLogin: { label: string } | null = null;
+
+    /** Closes the sync connections `match` picks; their clients reconnect. */
+    public closeClients(match: (client: WebsocketClient) => boolean) {
+        for (const client of [...this.clientList]) {
+            if (match(client)) client.close();
+        }
+    }
+
     private static instance: WebsocketSyncServer;
 
     private server: any;
+    /** The HTTP server the app and the WebSocket upgrades are served by. */
+    public httpServer: http.Server;
 
     public static getInstance(): WebsocketSyncServer {
         if (!WebsocketSyncServer.instance) {
@@ -72,7 +93,7 @@ export class WebsocketSyncServer {
             let query = route.splice(1);
             if (this.routeList.hasOwnProperty(message.method + "_" + routeBase)) {
                 // TODO Check Permission
-                if(this.checkPermission(client.user, this.routeList[message.method + "_" + routeBase].permission, (message.method =="GET" ? false:true))){
+                if(this.checkPermission(client.user, this.routeList[message.method + "_" + routeBase].permission, (message.method =="GET" ? false:true), client.groups)){
                     this.routeList[message.method + "_" + routeBase].func(client, query, message.data)
                     .then((data) => {
                         resolve({
@@ -141,7 +162,7 @@ export class WebsocketSyncServer {
 
     public subscribeSyncObject(name: string, client: WebsocketClient, objectId: string | number = 0) {
         if (this.syncObjectList.hasOwnProperty(name)) {
-            if(this.checkPermission(client.user,this.syncObjectList[name].requiredPermission,false)){
+            if(this.checkPermission(client.user,this.syncObjectList[name].requiredPermission,false,client.groups)){
                 this.syncObjectList[name].subscribe(client, objectId);
             }else{
                 client.sendPermissionDenied("sync",{name,objectId});
@@ -183,9 +204,9 @@ export class WebsocketSyncServer {
 
     private constructor(address:string, port:number, beforeCatchAll?: (app:any)=>void) {
         this.wss = new WebSocket.Server({ noServer: true });
-        this.wss.on("connection", (ws) => {
+        this.wss.on("connection", (ws, request) => {
 
-            const client = new WebsocketClient(ws, {});
+            const client = new WebsocketClient(ws, {}, this.identify ? this.identify(request) : null);
             this.clientList.push(client);
             SyncLog.log("verbose", "Server", "New Client connected", {env:client.getEnv} );
         });
@@ -212,9 +233,7 @@ export class WebsocketSyncServer {
             res.sendFile(path.resolve("./") + "/public/index.html");
         });
 
-        const ls = this.server.listen(port, address, (e) => {
-            SyncLog.log("error", "Server", "Failed to start on: "+address+":"+port, e )
-        },() => {
+        const ls = this.httpServer = http.createServer({ maxHeaderSize: MAX_HEADER_BYTES }, this.server).listen(port, address, () => {
             SyncLog.log("info", "Server", "Listening to: "+address+":"+port )
         });
 
@@ -240,28 +259,34 @@ export class WebsocketSyncServer {
     }
 
 
-     public checkPermission(user:string,required:string, write:boolean){
+     // `ssoGroups` are the groups of a single sign-on session. Such a user is
+     // matched by group only: the user lists name local users, and a name
+     // from the provider must not borrow their rights.
+     public checkPermission(user:string,required:string, write:boolean, ssoGroups:string[]|null = null){
         
         try{
             let permis = this.authData.permissions[required];
 
             let groups = [];
-            if(user!="__noAuth"){
+            if(ssoGroups){
+                groups = ssoGroups;
+            }else if(user!="__noAuth"){
                 groups = this.authData.users[user].groups;
             }
+            const named = (list) => !ssoGroups && list.users.includes(user);
 
             if(write){
-                if( permis.denyWrite.users.includes(user) || permis.denyWrite.groups.some((v)=>groups.includes(v))){
+                if( named(permis.denyWrite) || permis.denyWrite.groups.some((v)=>groups.includes(v))){
                     return false;
                 }
-                if( permis.allowWrite.users.includes(user) || permis.allowWrite.groups.some((v)=>groups.includes(v))){
+                if( named(permis.allowWrite) || permis.allowWrite.groups.some((v)=>groups.includes(v))){
                     return true;
                 }
             }else{
-                if( permis.denyRead.users.includes(user) || permis.denyRead.groups.some((v)=>groups.includes(v))){
+                if( named(permis.denyRead) || permis.denyRead.groups.some((v)=>groups.includes(v))){
                     return false;
                 }
-                if( permis.allowRead.users.includes(user) || permis.allowRead.groups.some((v)=>groups.includes(v))){
+                if( named(permis.allowRead) || permis.allowRead.groups.some((v)=>groups.includes(v))){
                     return true;
                 }
             }

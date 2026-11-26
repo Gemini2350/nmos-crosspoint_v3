@@ -16,6 +16,7 @@ A web-based NMOS controller for ST 2110, AES67 and MXL networks: see every devic
 - **Aliases, hide, forget:** rename devices and flows, hide what you don't need, remove offline devices.
 - **Virtual senders:** devices without NMOS join the matrix with their SDP.
 - **Web UI links and DDNS:** open a device's own web page in one click, and push device names to your DNS server.
+- **Single sign-on:** optionally via an OpenID Connect provider, beside the local accounts; its groups or roles map onto the crosspoint's own. See [docs/oidc.md](docs/oidc.md).
 
 Tested with Lawo, Riedel, Embrionix, AJA, Imagine, Sony, Grass Valley, Blackmagic, Merging, DirectOut, QSC and Matrox, and with more than 2000 flows.
 

@@ -8,12 +8,17 @@ import * as WebSocket from "ws";
 import * as Crypto from "crypto";
 
 import { WebsocketSyncServer } from "./websocketSyncServer";
+import { Identity } from "../oidc";
 
 export class WebsocketClient {
     private ws: WebSocket;
 
     private authSeed: string = "";
     public user: string = "__noAuth"
+    // Groups of a single sign-on session; null for a local user, whose
+    // groups are read from users.json.
+    public groups: string[] | null = null;
+    public sessionId: string = "";
     public sendPermissionDenied(type:string, data:any){
         this.send({
             type:"permissionDenied",
@@ -37,9 +42,14 @@ export class WebsocketClient {
     private pongTimeoutMs  = 30000;
     private lastPongAt: number = Date.now();
 
-    constructor(s: WebSocket, e: any) {
+    constructor(s: WebSocket, e: any, identity: Identity | null = null) {
         this.ws = s;
         this.env = e;
+        if (identity) {
+            this.user = identity.user;
+            this.groups = identity.groups;
+            this.sessionId = identity.sessionId;
+        }
 
         this.authSeed = Crypto.createHash('sha1').update(""+Math.random()).digest('hex');
 
@@ -88,9 +98,13 @@ export class WebsocketClient {
         }, this.pingIntervalMs);
 
         try{
+            if(identity){
+                this.ws.send(JSON.stringify({type:"auth", user:this.user, oidc:true}));
+            }
             this.ws.send(JSON.stringify({
                 type:"authseed",
-                seed:this.authSeed
+                seed:this.authSeed,
+                oidc:WebsocketSyncServer.getInstance().oidcLogin
             }));
         }catch(e){}
     }
@@ -101,6 +115,9 @@ export class WebsocketClient {
         // not the state itself — the old checks compared against those and
         // were always-true / always-false.
         return this.ws.readyState === this.ws.OPEN;
+    }
+    close() {
+        try { this.ws.close(); } catch (e) {}
     }
 
     private send(obj) {
@@ -169,6 +186,10 @@ export class WebsocketClient {
 
     
     processAuth(message:any){
+        // A login attempt replaces whoever the socket was signed in as.
+        this.user = "__noAuth";
+        this.groups = null;
+        this.sessionId = "";
         if(WebsocketSyncServer.getInstance().authData.users.hasOwnProperty(message.user)){
             let proof = WebsocketSyncServer.getInstance().authData.users[message.user].password + this.authSeed
             proof = Crypto.createHash('sha256').update(proof).digest('hex');
