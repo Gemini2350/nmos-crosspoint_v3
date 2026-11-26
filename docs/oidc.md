@@ -1,6 +1,10 @@
 # Single sign-on (OpenID Connect)
 
-Add an `oidc` block to `users.json` and restart. The login dialog then offers "Sign in with <label>" next to the local login, which keeps working.
+Set it up on the Setup page under "Single sign-on (OpenID Connect)": only members of the `admin` group see and change it, and a change applies at once, without a restart. The login dialog then offers "Sign in with <label>" next to the local login, which keeps working. "Test provider" checks that the issuer answers with its configuration and signing keys; the page also shows the redirect URIs to register at the provider.
+
+Saving a change ends all single sign-on sessions, so a right taken away does not live on. Switched off, the settings stay and come back when it is switched on again.
+
+The settings are kept as the `oidc` block of `users.json`, which can also be written by hand (then restart):
 
 ```json
 "oidc": {

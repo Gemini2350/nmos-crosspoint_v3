@@ -21,6 +21,18 @@ import { SyncObject } from "./syncObject";
 import { SyncLog } from "../syncLog";
 import { Identity } from "../oidc";
 
+// Permissions that exist without being written into users.json. "admin":
+// read and write for the group admin only (the single sign-on settings).
+// A users.json that defines one of these names wins.
+const BUILTIN_PERMISSIONS: { [name:string]: any } = {
+    admin: {
+        allowRead:  { users: [], groups: ["admin"] },
+        allowWrite: { users: [], groups: ["admin"] },
+        denyRead:   { users: [], groups: [] },
+        denyWrite:  { users: [], groups: [] },
+    },
+};
+
 interface SyncObjectList {
     [key: string]: SyncObject;
 }
@@ -265,7 +277,7 @@ export class WebsocketSyncServer {
      public checkPermission(user:string,required:string, write:boolean, ssoGroups:string[]|null = null){
         
         try{
-            let permis = this.authData.permissions[required];
+            let permis = this.authData.permissions[required] ?? BUILTIN_PERMISSIONS[required];
 
             let groups = [];
             if(ssoGroups){

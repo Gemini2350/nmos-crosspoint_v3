@@ -621,3 +621,56 @@
 
 // The logo green is too pale for links on the light page.
 html[data-theme="light"] .setup-page .setup-about a { color: #047857; }
+
+// ----- Single sign-on -----
+.setup-page {
+    .sso-badge {
+        padding: 0 7px;
+        border-radius: 9px;
+        font-size: 0.64rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: theme('colors.amber.500');
+        border: 1px solid color-mix(in oklab, theme('colors.amber.500') 45%, transparent);
+    }
+    .sso-link {
+        margin-left: 6px;
+        text-transform: none;
+        letter-spacing: 0;
+        text-decoration: underline;
+        color: theme('colors.base-content / 60%');
+        &:hover { color: theme('colors.base-content'); }
+    }
+    .setup-field input.sso-plain { font-family: inherit; }
+    .sso-test { font-size: 0.82rem; }
+    .sso-map-wrap { margin-top: 6px; }
+    .vendor-table.sso-map {
+        .sso-col { width: 120px; text-align: center; }
+        .sso-everyone { font-style: italic; color: theme('colors.base-content / 70%'); padding-left: 10px; }
+    }
+    .sso-register {
+        margin-top: 10px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: theme('colors.base-content / 6%');
+        font-size: 0.8rem;
+        b {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 0.66rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: theme('colors.base-content / 60%');
+        }
+        div { display: flex; align-items: center; gap: 10px; margin: 2px 0; flex-wrap: wrap; }
+        span { min-width: 170px; color: theme('colors.base-content / 75%'); }
+        code {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 0.78rem;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: theme('colors.base-content / 8%');
+            word-break: break-all;
+        }
+    }
+}

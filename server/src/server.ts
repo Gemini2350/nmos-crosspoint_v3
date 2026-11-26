@@ -36,7 +36,8 @@ import { Bcp008Monitor } from "./lib/bcp008Monitor";
 import { ProbeGateway } from "./lib/probeGateway";
 import { NmosNodeApi } from "./lib/NmosNode/NmosNodeApi";
 import { NmosNodeRegistration } from "./lib/NmosNode/NmosNodeRegistration";
-import { OidcSignIn, parseOidcConfig } from "./lib/oidc";
+import { OidcSignIn, parseOidcConfig, mountOidcRoutes, testProvider } from "./lib/oidc";
+import { ssoView, ssoBlockFromInput, sameSignIn } from "./lib/ssoSettings";
 
 
 
@@ -140,8 +141,9 @@ try {
 } catch (e) {
     SyncLog.log("error", "Server", "Error while reading file: ./config/users.json", e);
 }
-const oidcConfig = parseOidcConfig(users?.oidc);
-const oidc = oidcConfig ? new OidcSignIn(oidcConfig) : null;
+// Single sign-on: Setup switches it on, off or to another provider while the
+// server runs, so the sign-in paths always ask for the current one.
+let oidc: OidcSignIn | null = null;
 
 WebsocketSyncServer.init(serverAddress, serverPort, (app:any) => {
     // Mount /x-nmos/... routes BEFORE the SPA-fallback so the registry and
@@ -149,23 +151,57 @@ WebsocketSyncServer.init(serverAddress, serverPort, (app:any) => {
     // init callback guarantees the routes are registered between the static
     // middleware and the `/*` index.html fallback.
     nmosNodeApi.mount(app);
-    if(oidc) oidc.mount(app);
+    mountOidcRoutes(app, () => oidc);
 });
 let server = WebsocketSyncServer.getInstance();
 if(users){
     server.relaodAuthData(users);
 }
-if(oidc){
-    server.identify = (request:any) => oidc.identify(request);
-    server.oidcLogin = { label: oidc.config.label };
-    // A sync connection lives no longer than its session.
-    oidc.onLogout = (id) => server.closeClients((c) => c.sessionId === id);
-    setInterval(() => {
-        oidc.prune();
-        server.closeClients((c) => c.sessionId !== "" && !oidc.isActive(c.sessionId));
-    }, 60 * 1000);
-    SyncLog.log("info", "OIDC", "Sign-in with " + oidcConfig.issuer + " as client " + oidcConfig.clientId);
+// What everyone signed in may know about single sign-on: on or off, with
+// which provider, how many are signed in with it. The settings themselves
+// are for admins only (route "ssoConfig").
+function ssoStatus(){
+    return {
+        enabled: !!oidc,
+        label: oidc ? oidc.config.label : "",
+        issuer: oidc ? oidc.config.issuer : "",
+        sessions: oidc ? oidc.sessionCount() : 0,
+    };
 }
+const ssoStatusSync: SyncObject = new SyncObject("ssoStatus", ssoStatus());
+server.addSyncObject("ssoStatus", "global", ssoStatusSync);
+function publishSsoStatus(){
+    try{ ssoStatusSync.setState(ssoStatus()); }catch(e){}
+}
+
+server.identify = (request:any) => oidc ? oidc.identify(request) : null;
+/** Switches single sign-on to the `oidc` block given (null: off). The SSO
+ *  sessions of the one before end, so a right taken away does not live on. */
+function applySso(block:any){
+    const cfg = parseOidcConfig(block);
+    const had = oidc;
+    oidc = cfg ? new OidcSignIn(cfg) : null;
+    server.oidcLogin = oidc ? { label: oidc.config.label } : null;
+    if(oidc){
+        // A sync connection lives no longer than its session.
+        oidc.onLogout = (id) => server.closeClients((c) => c.sessionId === id);
+        oidc.onSessionsChanged = () => publishSsoStatus();
+        SyncLog.log("info", "OIDC", "Sign-in with " + cfg!.issuer + " as client " + cfg!.clientId);
+    }else if(had){
+        SyncLog.log("info", "OIDC", "Single sign-on switched off.");
+    }
+    if(had){ server.closeClients((c) => c.sessionId !== ""); }
+    publishSsoStatus();
+}
+applySso(users?.oidc);
+setInterval(() => {
+    if(oidc){
+        const o = oidc;
+        o.prune();
+        server.closeClients((c) => c.sessionId !== "" && !o.isActive(c.sessionId));
+    }
+    publishSsoStatus();
+}, 60 * 1000);
 
 
 const crosspoint = new CrosspointAbstraction(settings);
@@ -522,7 +558,9 @@ function getSetupConfigState() {
     };
 }
 const setupConfigSync: SyncObject = new SyncObject("setupConfig", getSetupConfigState());
-server.addSyncObject("setupConfig","public",setupConfigSync);
+// Signed-in users only: it shows registry, vendor profiles, virtual sender
+// SDPs and DDNS details, nothing for a browser that has not logged in.
+server.addSyncObject("setupConfig","global",setupConfigSync);
 
 // Refresh the setupConfig SyncObject when the crosspoint abstraction
 // renames a virtual sender (alias change on the Details page). Keeps the
@@ -1103,6 +1141,49 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
 // We refuse if the caller isn't logged in (`__noAuth`), or if they try to
 // edit a different user than they're authenticated as. After the rename
 // the user will be auto-logged-out — their stored hash no longer matches.
+// Single sign-on settings, admins only (built-in permission "admin"). The
+// client secret never goes back to the page.
+server.addRoute("GET", "ssoConfig","admin", (client: WebsocketClient, query:string[], postData: any) => {
+    return Promise.resolve({ data: ssoView(users?.oidc, users) });
+});
+server.addRoute("POST", "ssoConfig","admin", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        let block:any;
+        try{
+            block = ssoBlockFromInput(postData, users?.oidc, users);
+        }catch(e:any){
+            reject({ status: 400, message: e?.message || "Invalid single sign-on settings." });
+            return;
+        }
+        if(!users){ reject({ message: "No users.json loaded." }); return; }
+        const before = users.oidc;
+        const changed = !sameSignIn(before, block);
+        users.oidc = block;
+        try{
+            let tmp = "./config/users.json.tmp";
+            fs.writeFileSync(tmp, JSON.stringify(users, null, 4));
+            fs.renameSync(tmp, "./config/users.json");
+        }catch(e:any){
+            users.oidc = before;
+            SyncLog.log("error", "Settings", "Failed to write ./config/users.json: " + e.message);
+            reject({ message: "Could not write users.json: " + e.message });
+            return;
+        }
+        SyncLog.log("info", "Settings", "Single sign-on settings saved by " + client.user + (block.enabled ? " (on, " + block.issuer + ")." : " (off)."));
+        if(changed){ applySso(block); }
+        resolve({ data: ssoView(users.oidc, users) });
+    });
+});
+server.addRoute("POST", "ssoTest","admin", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        const issuer = (typeof postData?.issuer === "string") ? postData.issuer.trim() : "";
+        if(!issuer){ reject({ status: 400, message: "Enter the issuer URL first." }); return; }
+        testProvider(issuer)
+            .then((text) => resolve({ data: { ok: true, message: text } }))
+            .catch((e:any) => reject({ status: 502, message: e?.message || "The provider did not answer." }));
+    });
+});
+
 server.addRoute("POST", "changeCredentials","global", (client: WebsocketClient, query:string[], postData: any) => {
     return new Promise((resolve, reject) => {
         try{

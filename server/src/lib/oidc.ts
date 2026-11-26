@@ -11,7 +11,7 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { SyncLog } from "./syncLog";
 
 const LOGIN_PATH = "/auth/oidc/login";
-const CALLBACK_PATH = "/auth/oidc/callback";
+export const CALLBACK_PATH = "/auth/oidc/callback";
 const LOGOUT_PATH = "/auth/oidc/logout";
 export const SESSION_COOKIE = "nmoscrosspoint_session";
 const STATE_COOKIE = "nmoscrosspoint_oidc_state";
@@ -39,6 +39,8 @@ const strings = (v: any): string[] => (Array.isArray(v) ? v.map(str).filter((s) 
 /** The `oidc` block of users.json, normalised; null when sign-in is off. */
 export function parseOidcConfig(raw: any): OidcConfig | null {
     if (!raw || typeof raw !== "object") return null;
+    // Switched off in Setup: the block stays, so switching on again keeps it.
+    if (raw.enabled === false) return null;
     const issuer = str(raw.issuer);
     const clientId = str(raw.clientId);
     if (!issuer || !clientId) return null;
@@ -144,6 +146,15 @@ export class OidcSignIn {
 
     /** Called with the id of every session that ends by logout. */
     public onLogout: (sessionId: string) => void = () => {};
+    /** Called when a session starts or ends (sign-in, logout, expiry). */
+    public onSessionsChanged: () => void = () => {};
+
+    /** Sessions that have not expired. */
+    sessionCount(now = Date.now()): number {
+        let n = 0;
+        for (const s of this.sessions.values()) if (s.expires > now) n++;
+        return n;
+    }
 
     constructor(readonly config: OidcConfig) {}
 
@@ -204,16 +215,21 @@ export class OidcSignIn {
     }
 
     mount(app: any) {
-        const handle = (fn: (req: any, res: any) => Promise<void>) => (req: any, res: any) => {
-            fn(req, res).catch((e: any) => {
-                const detail = e?.response?.data?.error_description || e?.response?.data?.error || e?.message || e;
-                SyncLog.log("error", "OIDC", "Sign-in failed: " + detail);
-                res.status(502).type("text/plain").send("Sign-in failed. The crosspoint's log has the reason.");
-            });
-        };
-        app.get(LOGIN_PATH, handle((req, res) => this.login(req, res)));
-        app.get(CALLBACK_PATH, handle((req, res) => this.callback(req, res)));
-        app.get(LOGOUT_PATH, handle((req, res) => this.logout(req, res)));
+        for (const path of [LOGIN_PATH, CALLBACK_PATH, LOGOUT_PATH]) {
+            app.get(path, (req: any, res: any) => this.serve(path, req, res));
+        }
+    }
+
+    /** Answers one of the sign-in paths. */
+    serve(path: string, req: any, res: any) {
+        const run = path === LOGIN_PATH ? this.login(req, res)
+            : path === CALLBACK_PATH ? this.callback(req, res)
+            : this.logout(req, res);
+        run.catch((e: any) => {
+            const detail = e?.response?.data?.error_description || e?.response?.data?.error || e?.message || e;
+            SyncLog.log("error", "OIDC", "Sign-in failed: " + detail);
+            res.status(502).type("text/plain").send("Sign-in failed. The crosspoint's log has the reason.");
+        });
     }
 
     private async discover() {
@@ -298,6 +314,7 @@ export class OidcSignIn {
         this.sessions.delete(this.readCookie(req, SESSION_COOKIE));
         const id = random();
         this.sessions.set(id, { user, groups, idToken, expires: Date.now() + this.config.sessionHours * 3600 * 1000 });
+        this.onSessionsChanged();
         SyncLog.log("info", "OIDC", "Signed in " + user + " (" + groups.join(", ") + ")");
         res.setHeader("Set-Cookie", [
             cookie(SESSION_COOKIE, id, Math.round(this.config.sessionHours * 3600), secure),
@@ -363,7 +380,7 @@ export class OidcSignIn {
         const id = this.readCookie(req, SESSION_COOKIE);
         const s = this.sessions.get(id);
         this.sessions.delete(id);
-        if (s) this.onLogout(id);
+        if (s) { this.onLogout(id); this.onSessionsChanged(); }
         const origin = this.origin(req);
         res.setHeader("Set-Cookie", [cookie(SESSION_COOKIE, "", 0, this.secure(req)), ...this.legacyClears(req)]);
         const end = this.meta?.end_session_endpoint;
@@ -379,4 +396,47 @@ export class OidcSignIn {
         url.searchParams.set("post_logout_redirect_uri", origin + "/");
         res.redirect(url.toString());
     }
+}
+
+/**
+ * Mounts the sign-in paths once, for a sign-in that Setup can switch on, off
+ * or to another provider while the server runs: they serve whichever
+ * OidcSignIn `current` returns, and 404 while single sign-on is off.
+ */
+export function mountOidcRoutes(app: any, current: () => OidcSignIn | null) {
+    for (const path of [LOGIN_PATH, CALLBACK_PATH, LOGOUT_PATH]) {
+        app.get(path, (req: any, res: any) => {
+            const o = current();
+            if (!o) {
+                res.status(404).type("text/plain").send("Single sign-on is off.");
+                return;
+            }
+            o.serve(path, req, res);
+        });
+    }
+}
+
+/**
+ * Asks a provider for its configuration and signing keys the way sign-in
+ * will (Setup's "Test provider"). Resolves with what was found, rejects with
+ * why not, in words the page can show.
+ */
+export async function testProvider(issuer: string): Promise<string> {
+    const base = str(issuer).replace(/\/+$/, "");
+    const url = base + "/.well-known/openid-configuration";
+    const why = (e: any) => e?.response ? "HTTP " + e.response.status : (e?.code || e?.message || String(e));
+    let meta: any;
+    try { meta = (await axios.get(url, { timeout: HTTP_TIMEOUT })).data; }
+    catch (e: any) { throw new Error("No configuration at " + url + " (" + why(e) + ")."); }
+    if (str(meta?.issuer).replace(/\/+$/, "") !== base) throw new Error("The provider names another issuer: " + meta?.issuer);
+    for (const k of ["authorization_endpoint", "token_endpoint", "jwks_uri"]) {
+        if (!str(meta?.[k])) throw new Error("The provider's configuration has no " + k + ".");
+    }
+    let keys: any;
+    try { keys = (await axios.get(meta.jwks_uri, { timeout: HTTP_TIMEOUT })).data; }
+    catch (e: any) { throw new Error("The provider's signing keys do not load from " + meta.jwks_uri + " (" + why(e) + ")."); }
+    const n = Array.isArray(keys?.keys) ? keys.keys.length : 0;
+    if (n === 0) throw new Error("The provider publishes no signing keys.");
+    return "Provider found: " + n + " signing key" + (n === 1 ? "" : "s") + ", sign-in and token endpoints" +
+        (str(meta.end_session_endpoint) ? ", logout." : "; it offers no logout, so signing out here leaves you signed in there.");
 }

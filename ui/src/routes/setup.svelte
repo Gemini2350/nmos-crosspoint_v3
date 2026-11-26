@@ -179,6 +179,63 @@
     let registryStatusList:any[] = [];
     let dnssdStatus:any = { enabled: true, override: "", domains: [] };
     let syncProbeState:Subject<any>;
+
+    // ----- Single sign-on (OpenID Connect) -----
+    // The server keeps and checks the settings (route "ssoConfig", admins
+    // only; the client secret never comes back). Here only the form.
+    let syncSso:Subject<any>;
+    let ssoStatus:any = { enabled:false, label:"", issuer:"", sessions:0 };
+    let ssoAdmin = false;          // the server let us read the settings
+    let ssoLoaded:any = null;      // the settings as stored
+    let ssoForm:any = null;        // the form
+    let ssoDirty = false;
+    let ssoTest:any = { busy:false, ok:false, text:"" };
+    function ssoFromView(v:any){
+      return {
+        enabled: !!v.enabled, issuer: v.issuer || "", clientId: v.clientId || "",
+        clientSecret: "", clearSecret: false, secretSet: !!v.secretSet,
+        label: v.label || "", groupsClaim: v.groupsClaim || "",
+        mappings: (v.mappings || []).map((m:any) => ({ value: m.value, groups: [...m.groups] })),
+        everyone: [...(v.everyone || [])],
+        redirectUri: v.redirectUri || "", scopes: v.scopes || "", sessionHours: "" + (v.sessionHours || 12),
+        groupsAvailable: v.groupsAvailable || ["user", "admin"],
+        callbackPath: v.callbackPath || "/auth/oidc/callback", logoutReturnPath: v.logoutReturnPath || "/",
+      };
+    }
+    function loadSso(){
+      ServerConnector.get("ssoConfig").then((resp:any)=>{
+        ssoAdmin = true;
+        ssoLoaded = resp?.data || null;
+        if(ssoLoaded && !ssoDirty){ ssoForm = ssoFromView(ssoLoaded); }
+      }).catch(()=>{ ssoAdmin = false; });
+    }
+    function ssoChanged(){ ssoDirty = true; markDirty(); }
+    function ssoToggleGroup(list:string[], g:string){ return list.includes(g) ? list.filter((x) => x !== g) : [...list, g]; }
+    function ssoAddMapping(){ ssoForm.mappings = [...ssoForm.mappings, { value: "", groups: [] }]; ssoChanged(); }
+    function ssoRemoveMapping(i:number){ ssoForm.mappings = ssoForm.mappings.filter((_:any, k:number) => k !== i); ssoChanged(); }
+    function ssoGroupLabel(g:string){ return g === "user" ? "Operate (user)" : g === "admin" ? "Admin (admin)" : g; }
+    function ssoTestProvider(){
+      ssoTest = { busy:true, ok:false, text:"" };
+      ServerConnector.post("ssoTest", { issuer: ssoForm.issuer }).then((r:any)=>{
+        ssoTest = { busy:false, ok:true, text: r?.data?.message || "Provider found." };
+      }).catch((e:any)=>{
+        ssoTest = { busy:false, ok:false, text: e?.message || "The provider did not answer." };
+      });
+    }
+    // What to register at the provider: the configured redirect URI, or this
+    // page's own address (which only the browser knows).
+    function ssoRedirectUri(f:any){ return f.redirectUri || (window.location.origin + f.callbackPath); }
+    function ssoLogoutUri(f:any){
+      try{ return (f.redirectUri ? new URL(f.redirectUri).origin : window.location.origin) + f.logoutReturnPath; }
+      catch(e){ return window.location.origin + f.logoutReturnPath; }
+    }
+    function copyText(t:string){ try{ navigator.clipboard.writeText(t); }catch(e){} }
+    function ssoPayload(){
+      const f = ssoForm;
+      return { enabled: f.enabled, issuer: f.issuer, clientId: f.clientId, clientSecret: f.clientSecret, clearSecret: f.clearSecret,
+               label: f.label, groupsClaim: f.groupsClaim, mappings: f.mappings, everyone: f.everyone,
+               redirectUri: f.redirectUri, scopes: f.scopes, sessionHours: Number(f.sessionHours) };
+    }
     // {token, probes:[{name,address,streams}]} from the probeState sync.
     let probeState:any = { token:"", probes:[] };
     function regTotal(r:any):number{
@@ -287,6 +344,13 @@
       syncProbeState.subscribe((obj:any)=>{
         if(obj){ probeState = obj; }
       });
+      // Arrives once signed in; then also ask for the settings, which the
+      // server only hands to admins.
+      syncSso = ServerConnector.sync("ssoStatus");
+      syncSso.subscribe((obj:any)=>{
+        if(obj){ ssoStatus = obj; }
+        if(!ssoAdmin){ loadSso(); }
+      });
     });
 
     onDestroy(() => {
@@ -301,6 +365,8 @@
       try{syncConnState && syncConnState.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("nmosConnectionState");}catch(e){}
       try{syncProbeState && syncProbeState.unsubscribe();}catch(e){}
+      try{syncSso && syncSso.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("ssoStatus");}catch(e){}
       try{ServerConnector.unsync("probeState");}catch(e){}
     });
 
@@ -341,6 +407,9 @@
         formDdnsKeySecretSet = !!serverState.ddns.keySecretSet;
         formDdnsKeyAlgorithm = serverState.ddns.keyAlgorithm || "hmac-sha256";
       }
+      if(ssoLoaded){ ssoForm = ssoFromView(ssoLoaded); }
+      ssoDirty = false;
+      ssoTest = { busy:false, ok:false, text:"" };
       dirty = false;
       saveError = "";
     }
@@ -467,7 +536,15 @@
     function doSave(payload:any){
       saving = true;
       saveError = "";
-      ServerConnector.post("setupConfig", payload).then((resp:any)=>{
+      // Single sign-on first: if the server refuses it, nothing is saved.
+      const ssoStep = (ssoAdmin && ssoDirty && ssoForm)
+        ? ServerConnector.post("ssoConfig", ssoPayload()).then((r:any)=>{
+            ssoLoaded = r?.data || ssoLoaded;
+            ssoForm = ssoFromView(ssoLoaded);
+            ssoDirty = false;
+          })
+        : Promise.resolve();
+      ssoStep.then(()=>ServerConnector.post("setupConfig", payload)).then((resp:any)=>{
         saving = false;
         dirty = false;
         savedFlash = true;
@@ -1599,6 +1676,177 @@
         </div>
       </details>
     </section>
+
+
+    {#if ssoAdmin && ssoForm}
+    <section class="setup-section">
+      <div class="setup-section-head">
+        <h3>Single sign-on (OpenID Connect)</h3>
+        <HelpTip label="About single sign-on">
+          <p>Sign in with an OpenID Connect provider (Keycloak, Entra ID, Authentik, …)
+          beside the local accounts, which keep working. Authorization code flow with PKCE;
+          the ID token is checked against the provider's keys.</p>
+          <p>The rights come from a claim of the ID token, its groups or roles: each value
+          you list below gives the crosspoint groups ticked. An account that gets no group
+          is not signed in.</p>
+          <p>Saving a change ends all single sign-on sessions; everyone signs in again
+          with the new settings. Only members of the admin group see and change this.</p>
+        </HelpTip>
+        <span class="sso-badge">ADMINS ONLY</span>
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable single sign-on"
+               bind:checked={ssoForm.enabled} on:change={ssoChanged} />
+      </div>
+
+      {#if ssoForm.enabled}
+        <div class="setup-form">
+          <label class="setup-field">
+            <span class="setup-label">Issuer URL</span>
+            <input type="text" class="input input-bordered" placeholder="https://sso.example.com/realms/media"
+                   bind:value={ssoForm.issuer} on:input={ssoChanged} />
+          </label>
+        </div>
+        <div class="setup-form">
+          <label class="setup-field">
+            <span class="setup-label">Client ID</span>
+            <input type="text" class="input input-bordered" placeholder="nmos-crosspoint"
+                   bind:value={ssoForm.clientId} on:input={ssoChanged} />
+          </label>
+          <label class="setup-field">
+            <span class="setup-label">Client secret
+              {#if ssoForm.secretSet && !ssoForm.clearSecret}
+                <button class="sso-link" on:click|preventDefault={()=>{ ssoForm.clearSecret = true; ssoForm.clientSecret = ""; ssoChanged(); }}>remove</button>
+              {/if}
+            </span>
+            <input type="password" class="input input-bordered" autocomplete="new-password"
+                   placeholder={ssoForm.clearSecret ? "removed on save (public client)" : ssoForm.secretSet ? "stored, blank keeps it" : "confidential client only"}
+                   bind:value={ssoForm.clientSecret} on:input={()=>{ ssoForm.clearSecret = false; ssoChanged(); }} />
+          </label>
+          <label class="setup-field">
+            <span class="setup-label">Button text</span>
+            <input type="text" class="input input-bordered sso-plain" placeholder="SSO" maxlength="40"
+                   bind:value={ssoForm.label} on:input={ssoChanged} />
+          </label>
+        </div>
+        <div class="setup-form setup-form-buttons">
+          <button class="btn btn-sm" on:click={ssoTestProvider} disabled={ssoTest.busy || !ssoForm.issuer}>
+            {ssoTest.busy ? "Testing…" : "Test provider"}
+          </button>
+          {#if ssoTest.text}
+            <span class={"sso-test " + (ssoTest.ok ? "text-success" : "text-error")}>{ssoTest.ok ? "✓ " : ""}{ssoTest.text}</span>
+          {/if}
+        </div>
+
+        <div class="setup-subhead"><h4>Rights</h4></div>
+        <div class="setup-form">
+          <label class="setup-field">
+            <span class="setup-label">Groups claim in the ID token</span>
+            <input type="text" class="input input-bordered" placeholder="groups (or e.g. realm_access.roles)"
+                   bind:value={ssoForm.groupsClaim} on:input={ssoChanged} />
+          </label>
+        </div>
+        <div class="vendor-table-wrap sso-map-wrap">
+          <table class="vendor-table sso-map">
+            <thead>
+              <tr>
+                <th>Value at the provider</th>
+                {#each ssoForm.groupsAvailable as g}<th class="sso-col">{ssoGroupLabel(g)}</th>{/each}
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each ssoForm.mappings as m, i}
+                <tr>
+                  <td>
+                    <input type="text" class="input input-bordered input-sm vendor-mono" placeholder="e.g. crosspoint-operators"
+                           aria-label="Value at the provider" bind:value={m.value} on:input={ssoChanged} />
+                  </td>
+                  {#each ssoForm.groupsAvailable as g}
+                    <td class="sso-col">
+                      <input type="checkbox" class="checkbox checkbox-sm" aria-label={ssoGroupLabel(g)}
+                             checked={m.groups.includes(g)}
+                             on:change={()=>{ m.groups = ssoToggleGroup(m.groups, g); ssoForm.mappings = ssoForm.mappings; ssoChanged(); }} />
+                    </td>
+                  {/each}
+                  <td>
+                    <button class="btn btn-ghost btn-sm" on:click={()=>ssoRemoveMapping(i)} aria-label="Remove mapping" title="Remove">
+                      <Icon src={Trash} />
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+              <tr>
+                <td class="sso-everyone">Everyone who signs in</td>
+                {#each ssoForm.groupsAvailable as g}
+                  <td class="sso-col">
+                    <input type="checkbox" class="checkbox checkbox-sm" aria-label={"Everyone: " + ssoGroupLabel(g)}
+                           checked={ssoForm.everyone.includes(g)}
+                           on:change={()=>{ ssoForm.everyone = ssoToggleGroup(ssoForm.everyone, g); ssoChanged(); }} />
+                  </td>
+                {/each}
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="vendor-actions-row">
+          <button class="btn btn-sm" on:click={ssoAddMapping}><Icon src={Plus} /> Add mapping</button>
+        </div>
+
+        <div class="sso-register">
+          <b>Register at your provider</b>
+          <div><span>Redirect URI</span><code>{ssoRedirectUri(ssoForm)}</code>
+            <button class="btn btn-ghost btn-xs" on:click={()=>copyText(ssoRedirectUri(ssoForm))}>Copy</button></div>
+          <div><span>Post-logout redirect URI</span><code>{ssoLogoutUri(ssoForm)}</code>
+            <button class="btn btn-ghost btn-xs" on:click={()=>copyText(ssoLogoutUri(ssoForm))}>Copy</button></div>
+        </div>
+
+        <details class="lease-inventory">
+          <summary>Advanced</summary>
+          <div class="setup-form">
+            <label class="setup-field">
+              <span class="setup-label">Redirect URI (only behind a proxy)</span>
+              <input type="text" class="input input-bordered" placeholder={"taken from the browser's address, …" + ssoForm.callbackPath}
+                     bind:value={ssoForm.redirectUri} on:input={ssoChanged} />
+            </label>
+          </div>
+          <div class="setup-form">
+            <label class="setup-field">
+              <span class="setup-label">Scopes</span>
+              <input type="text" class="input input-bordered" placeholder="openid profile email"
+                     bind:value={ssoForm.scopes} on:input={ssoChanged} />
+            </label>
+            <label class="setup-field setup-field-narrow">
+              <span class="setup-label">Session (h)</span>
+              <input type="number" class="input input-bordered" min="1" max="168"
+                     bind:value={ssoForm.sessionHours} on:input={ssoChanged} />
+            </label>
+          </div>
+        </details>
+
+        {#if ssoStatus.enabled}
+          <div class="setup-registry-status">
+            <div class="setup-registry-row">
+              <span class="setup-dot setup-dot-success"></span>
+              <span>Single sign-on is on · {ssoStatus.sessions} {ssoStatus.sessions === 1 ? "user" : "users"} signed in with it</span>
+            </div>
+          </div>
+        {/if}
+      {/if}
+    </section>
+    {:else if ssoStatus.enabled}
+    <section class="setup-section">
+      <div class="setup-section-head">
+        <h3>Single sign-on (OpenID Connect)</h3>
+        <span class="sso-badge">ADMINS ONLY</span>
+      </div>
+      <div class="setup-registry-status">
+        <div class="setup-registry-row">
+          <span class="setup-dot setup-dot-success"></span>
+          <span>On, with {ssoStatus.label} ({ssoStatus.issuer}). Only members of the admin group can change it.</span>
+        </div>
+      </div>
+    </section>
+    {/if}
 
 
     <section class="setup-section">
