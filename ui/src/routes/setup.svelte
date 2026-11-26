@@ -278,16 +278,12 @@
     }
     // A click anywhere on a title row folds it, except on what has a click
     // of its own there: the toggle, the "?" and its bubble. The arrow is a
-    // button, so the keyboard gets there too. A section that is switched
-    // off and hides its settings (virtual senders, single sign-on) has the
-    // arrow disabled.
+    // button, so the keyboard gets there too.
     function foldHead(node:HTMLElement, id:string){
       let cur = id;
       const onClick = (e:MouseEvent) => {
         const t = e.target as HTMLElement;
         if(t.closest("input, select, textarea, a, label, .help-tip, .help-tip-pop, button:not(.setup-fold)")){ return; }
-        const btn = node.querySelector(".setup-fold") as HTMLButtonElement | null;
-        if(!btn || btn.disabled){ return; }
         setOpen([cur], !openSections[cur]);
       };
       node.addEventListener("click", onClick);
@@ -1510,9 +1506,9 @@
     </section>
 
 
-    <section class="setup-section" class:setup-folded={!(formVirtualNodeEnabled && openSections.virtual)}>
-      <div class="setup-section-head" class:setup-head-fold={formVirtualNodeEnabled} use:foldHead={"virtual"}>
-        <button type="button" class="setup-fold" aria-expanded={!!(formVirtualNodeEnabled && openSections.virtual)} disabled={!(formVirtualNodeEnabled)}
+    <section class="setup-section" class:setup-folded={!openSections.virtual}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"virtual"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.virtual}
                 aria-label="Show or hide Virtual Senders"><Icon src={ChevronRight} /></button>
         <h3>Virtual Senders</h3>
         <HelpTip label="About virtual senders">
@@ -1547,131 +1543,129 @@
                bind:checked={formVirtualNodeEnabled} on:change={(e)=>{ markDirty(); openIfOn("virtual", e); }} />
       </div>
 
-      {#if formVirtualNodeEnabled}
-        <div class="setup-subhead"><h4>Register at</h4></div>
-        <div class="virtual-reg">
-          <label>
-            <input type="radio" class="radio radio-sm" value="registry" bind:group={formVirtualRegMode} on:change={markDirty} />
-            <span>The registry above
-              {#if serverState.virtualNode?.registryTarget}<code>{serverState.virtualNode.registryTarget}</code>{:else}(none connected yet){/if}</span>
+      <div class="setup-subhead"><h4>Register at</h4></div>
+      <div class="virtual-reg">
+        <label>
+          <input type="radio" class="radio radio-sm" value="registry" bind:group={formVirtualRegMode} on:change={markDirty} />
+          <span>The registry above
+            {#if serverState.virtualNode?.registryTarget}<code>{serverState.virtualNode.registryTarget}</code>{:else}(none connected yet){/if}</span>
+        </label>
+        <label>
+          <input type="radio" class="radio radio-sm" value="custom" bind:group={formVirtualRegMode} on:change={markDirty} />
+          <span>Another registration API (when the registry's query and registration API differ)</span>
+        </label>
+      </div>
+      {#if formVirtualRegMode === "custom"}
+        <div class="setup-form virtual-reg-form">
+          <label class="setup-field">
+            <span class="setup-label">Registration API IP / host</span>
+            <input type="text" class="input input-bordered" placeholder="e.g. 10.0.100.112"
+                   bind:value={formVirtualRegHost} on:input={markDirty} />
           </label>
-          <label>
-            <input type="radio" class="radio radio-sm" value="custom" bind:group={formVirtualRegMode} on:change={markDirty} />
-            <span>Another registration API (when the registry's query and registration API differ)</span>
+          <label class="setup-field setup-field-narrow">
+            <span class="setup-label">Port</span>
+            <input type="number" class="input input-bordered" min="1" max="65535" placeholder="3210"
+                   bind:value={formVirtualRegPort} on:input={markDirty} />
           </label>
-        </div>
-        {#if formVirtualRegMode === "custom"}
-          <div class="setup-form virtual-reg-form">
-            <label class="setup-field">
-              <span class="setup-label">Registration API IP / host</span>
-              <input type="text" class="input input-bordered" placeholder="e.g. 10.0.100.112"
-                     bind:value={formVirtualRegHost} on:input={markDirty} />
-            </label>
-            <label class="setup-field setup-field-narrow">
-              <span class="setup-label">Port</span>
-              <input type="number" class="input input-bordered" min="1" max="65535" placeholder="3210"
-                     bind:value={formVirtualRegPort} on:input={markDirty} />
-            </label>
-          </div>
-        {/if}
-        {#if serverState.virtualNode?.enabled && virtualStatus}
-          <div class="setup-registry-status">
-            <div class="setup-registry-row">
-              {#if virtualStatus.state === "registered"}
-                <span class="setup-dot setup-dot-success"></span>
-                <code>{virtualStatus.target}</code>
-                <span>registered · {virtualStatus.devices} {virtualStatus.devices === 1 ? "device" : "devices"}, {virtualStatus.senders} {virtualStatus.senders === 1 ? "sender" : "senders"}</span>
-              {:else if virtualStatus.state === "error"}
-                <span class="setup-dot setup-dot-error"></span>
-                <code>{virtualStatus.target}</code>
-                <span>registration failed: {virtualStatus.error}</span>
-              {:else if virtualStatus.state === "none"}
-                <span class="setup-dot setup-dot-warning"></span>
-                <span>No registry to register at yet — it registers as soon as one is connected.</span>
-              {/if}
-            </div>
-          </div>
-        {/if}
-
-        <div class="setup-subhead"><h4>Devices</h4></div>
-        {#each formVirtualDevices as d (d.key)}
-          {@const devSenders = formVirtualSenders.filter(v => v.deviceKey === d.key)}
-          <div class="virtual-device">
-            <div class="virtual-device-head">
-              <Icon src={ServerStack} class="virtual-device-icon" />
-              <input type="text" class="input input-bordered input-sm virtual-device-name"
-                     placeholder="Device name (e.g. Playout)" aria-label="Device name"
-                     bind:value={d.name} on:input={markDirty} />
-              <span class="virtual-device-count">{devSenders.length} {devSenders.length === 1 ? "sender" : "senders"}</span>
-              <span class="virtual-device-gap"></span>
-              <button class="btn btn-ghost btn-sm" on:click={()=>removeVirtualDevice(d.key)}
-                      aria-label="Remove device" title="Remove device">
-                <Icon src={Trash} />
-              </button>
-            </div>
-
-            {#each devSenders as v (v.id)}
-              <details class="virtual-sender-row">
-                <summary class="virtual-sender-head">
-                  <span class="virtual-sender-summary-name">
-                    {v.name || "(unnamed virtual sender)"}
-                  </span>
-                  <span class="virtual-sender-summary-meta" class:virtual-sender-summary-error={!!v.error}>
-                    {v.error ? "SDP error" : v.sdp ? "SDP set" : "no SDP"}
-                  </span>
-                  <button class="btn btn-ghost btn-sm"
-                          on:click|stopPropagation|preventDefault={()=>removeVirtualSender(v.id)}
-                          aria-label="Remove virtual sender" title="Remove">
-                    <Icon src={Trash} />
-                  </button>
-                </summary>
-
-                <div class="virtual-sender-body">
-                  <div class="setup-form virtual-sender-fields">
-                    <label class="setup-field">
-                      <span class="setup-label">Name</span>
-                      <input type="text" class="input input-bordered input-sm virtual-sender-name"
-                             placeholder="Sender name (e.g. PlayoutA)"
-                             bind:value={v.name} on:input={markDirty} />
-                    </label>
-                    <label class="setup-field">
-                      <span class="setup-label">Device</span>
-                      <select class="select select-bordered select-sm virtual-sender-device"
-                              bind:value={v.deviceKey} on:change={()=>{ formVirtualSenders = formVirtualSenders; markDirty(); }}>
-                        {#each formVirtualDevices as o (o.key)}
-                          <option value={o.key}>{o.name || "(unnamed device)"}</option>
-                        {/each}
-                      </select>
-                    </label>
-                  </div>
-                  <label class="setup-field" style="margin-top:6px;">
-                    <span class="setup-label">SDP</span>
-                    <textarea class="textarea textarea-bordered vendor-mono virtual-sender-sdp"
-                              rows="8" placeholder="Paste a full SDP here…&#10;v=0&#10;o=- 0 0 IN IP4 …&#10;s=…&#10;m=audio 5004 RTP/AVP 96&#10;c=IN IP4 239.x.x.x/32&#10;a=rtpmap:96 L24/48000/2"
-                              bind:value={v.sdp} on:input={()=>{ v.error = ""; markDirty(); }}></textarea>
-                  </label>
-                  {#if v.error}
-                    <p class="virtual-sender-error">Not published: {v.error}</p>
-                  {/if}
-                </div>
-              </details>
-            {/each}
-
-            <button class="btn btn-xs" on:click={()=>addVirtualSender(d.key)}>
-              <Icon src={Plus} /> Add sender
-            </button>
-          </div>
-        {/each}
-        {#if formVirtualDevices.length === 0}
-          <p class="vendor-empty">No virtual devices defined.</p>
-        {/if}
-
-        <div class="vendor-actions-row virtual-device-actions">
-          <button class="btn btn-sm" on:click={addVirtualDevice}>
-            <Icon src={Plus} /> Add device
-          </button>
         </div>
       {/if}
+      {#if serverState.virtualNode?.enabled && virtualStatus}
+        <div class="setup-registry-status">
+          <div class="setup-registry-row">
+            {#if virtualStatus.state === "registered"}
+              <span class="setup-dot setup-dot-success"></span>
+              <code>{virtualStatus.target}</code>
+              <span>registered · {virtualStatus.devices} {virtualStatus.devices === 1 ? "device" : "devices"}, {virtualStatus.senders} {virtualStatus.senders === 1 ? "sender" : "senders"}</span>
+            {:else if virtualStatus.state === "error"}
+              <span class="setup-dot setup-dot-error"></span>
+              <code>{virtualStatus.target}</code>
+              <span>registration failed: {virtualStatus.error}</span>
+            {:else if virtualStatus.state === "none"}
+              <span class="setup-dot setup-dot-warning"></span>
+              <span>No registry to register at yet — it registers as soon as one is connected.</span>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      <div class="setup-subhead"><h4>Devices</h4></div>
+      {#each formVirtualDevices as d (d.key)}
+        {@const devSenders = formVirtualSenders.filter(v => v.deviceKey === d.key)}
+        <div class="virtual-device">
+          <div class="virtual-device-head">
+            <Icon src={ServerStack} class="virtual-device-icon" />
+            <input type="text" class="input input-bordered input-sm virtual-device-name"
+                   placeholder="Device name (e.g. Playout)" aria-label="Device name"
+                   bind:value={d.name} on:input={markDirty} />
+            <span class="virtual-device-count">{devSenders.length} {devSenders.length === 1 ? "sender" : "senders"}</span>
+            <span class="virtual-device-gap"></span>
+            <button class="btn btn-ghost btn-sm" on:click={()=>removeVirtualDevice(d.key)}
+                    aria-label="Remove device" title="Remove device">
+              <Icon src={Trash} />
+            </button>
+          </div>
+
+          {#each devSenders as v (v.id)}
+            <details class="virtual-sender-row">
+              <summary class="virtual-sender-head">
+                <span class="virtual-sender-summary-name">
+                  {v.name || "(unnamed virtual sender)"}
+                </span>
+                <span class="virtual-sender-summary-meta" class:virtual-sender-summary-error={!!v.error}>
+                  {v.error ? "SDP error" : v.sdp ? "SDP set" : "no SDP"}
+                </span>
+                <button class="btn btn-ghost btn-sm"
+                        on:click|stopPropagation|preventDefault={()=>removeVirtualSender(v.id)}
+                        aria-label="Remove virtual sender" title="Remove">
+                  <Icon src={Trash} />
+                </button>
+              </summary>
+
+              <div class="virtual-sender-body">
+                <div class="setup-form virtual-sender-fields">
+                  <label class="setup-field">
+                    <span class="setup-label">Name</span>
+                    <input type="text" class="input input-bordered input-sm virtual-sender-name"
+                           placeholder="Sender name (e.g. PlayoutA)"
+                           bind:value={v.name} on:input={markDirty} />
+                  </label>
+                  <label class="setup-field">
+                    <span class="setup-label">Device</span>
+                    <select class="select select-bordered select-sm virtual-sender-device"
+                            bind:value={v.deviceKey} on:change={()=>{ formVirtualSenders = formVirtualSenders; markDirty(); }}>
+                      {#each formVirtualDevices as o (o.key)}
+                        <option value={o.key}>{o.name || "(unnamed device)"}</option>
+                      {/each}
+                    </select>
+                  </label>
+                </div>
+                <label class="setup-field" style="margin-top:6px;">
+                  <span class="setup-label">SDP</span>
+                  <textarea class="textarea textarea-bordered vendor-mono virtual-sender-sdp"
+                            rows="8" placeholder="Paste a full SDP here…&#10;v=0&#10;o=- 0 0 IN IP4 …&#10;s=…&#10;m=audio 5004 RTP/AVP 96&#10;c=IN IP4 239.x.x.x/32&#10;a=rtpmap:96 L24/48000/2"
+                            bind:value={v.sdp} on:input={()=>{ v.error = ""; markDirty(); }}></textarea>
+                </label>
+                {#if v.error}
+                  <p class="virtual-sender-error">Not published: {v.error}</p>
+                {/if}
+              </div>
+            </details>
+          {/each}
+
+          <button class="btn btn-xs" on:click={()=>addVirtualSender(d.key)}>
+            <Icon src={Plus} /> Add sender
+          </button>
+        </div>
+      {/each}
+      {#if formVirtualDevices.length === 0}
+        <p class="vendor-empty">No virtual devices defined.</p>
+      {/if}
+
+      <div class="vendor-actions-row virtual-device-actions">
+        <button class="btn btn-sm" on:click={addVirtualDevice}>
+          <Icon src={Plus} /> Add device
+        </button>
+      </div>
     </section>
 
 
@@ -1914,9 +1908,9 @@
 
 
     {#if ssoAdmin && ssoForm}
-    <section class="setup-section" class:setup-folded={!(ssoForm.enabled && openSections.sso)}>
-      <div class="setup-section-head" class:setup-head-fold={ssoForm.enabled} use:foldHead={"sso"}>
-        <button type="button" class="setup-fold" aria-expanded={!!(ssoForm.enabled && openSections.sso)} disabled={!(ssoForm.enabled)}
+    <section class="setup-section" class:setup-folded={!openSections.sso}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"sso"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.sso}
                 aria-label="Show or hide Single sign-on (OpenID Connect)"><Icon src={ChevronRight} /></button>
         <h3>Single sign-on (OpenID Connect)</h3>
         <HelpTip label="About single sign-on">
@@ -1934,140 +1928,138 @@
                bind:checked={ssoForm.enabled} on:change={(e)=>{ ssoChanged(); openIfOn("sso", e); }} />
       </div>
 
-      {#if ssoForm.enabled}
-        <div class="setup-form">
-          <label class="setup-field">
-            <span class="setup-label">Issuer URL</span>
-            <input type="text" class="input input-bordered" placeholder="https://sso.example.com/realms/media"
-                   bind:value={ssoForm.issuer} on:input={ssoChanged} />
-          </label>
-        </div>
-        <div class="setup-form">
-          <label class="setup-field">
-            <span class="setup-label">Client ID</span>
-            <input type="text" class="input input-bordered" placeholder="nmos-crosspoint"
-                   bind:value={ssoForm.clientId} on:input={ssoChanged} />
-          </label>
-          <label class="setup-field">
-            <span class="setup-label">Client secret
-              {#if ssoForm.secretSet && !ssoForm.clearSecret}
-                <button class="sso-link" on:click|preventDefault={()=>{ ssoForm.clearSecret = true; ssoForm.clientSecret = ""; ssoChanged(); }}>remove</button>
-              {/if}
-            </span>
-            <input type="password" class="input input-bordered" autocomplete="new-password"
-                   placeholder={ssoForm.clearSecret ? "removed on save (public client)" : ssoForm.secretSet ? "stored, blank keeps it" : "confidential client only"}
-                   bind:value={ssoForm.clientSecret} on:input={()=>{ ssoForm.clearSecret = false; ssoChanged(); }} />
-          </label>
-          <label class="setup-field">
-            <span class="setup-label">Button text</span>
-            <input type="text" class="input input-bordered sso-plain" placeholder="SSO" maxlength="40"
-                   bind:value={ssoForm.label} on:input={ssoChanged} />
-          </label>
-        </div>
-        <div class="setup-form setup-form-buttons">
-          <button class="btn btn-sm" on:click={ssoTestProvider} disabled={ssoTest.busy || !ssoForm.issuer}>
-            {ssoTest.busy ? "Testing…" : "Test provider"}
-          </button>
-          {#if ssoTest.text}
-            <span class={"sso-test " + (ssoTest.ok ? "text-success" : "text-error")}>{ssoTest.ok ? "✓ " : ""}{ssoTest.text}</span>
-          {/if}
-        </div>
+      <div class="setup-form">
+        <label class="setup-field">
+          <span class="setup-label">Issuer URL</span>
+          <input type="text" class="input input-bordered" placeholder="https://sso.example.com/realms/media"
+                 bind:value={ssoForm.issuer} on:input={ssoChanged} />
+        </label>
+      </div>
+      <div class="setup-form">
+        <label class="setup-field">
+          <span class="setup-label">Client ID</span>
+          <input type="text" class="input input-bordered" placeholder="nmos-crosspoint"
+                 bind:value={ssoForm.clientId} on:input={ssoChanged} />
+        </label>
+        <label class="setup-field">
+          <span class="setup-label">Client secret
+            {#if ssoForm.secretSet && !ssoForm.clearSecret}
+              <button class="sso-link" on:click|preventDefault={()=>{ ssoForm.clearSecret = true; ssoForm.clientSecret = ""; ssoChanged(); }}>remove</button>
+            {/if}
+          </span>
+          <input type="password" class="input input-bordered" autocomplete="new-password"
+                 placeholder={ssoForm.clearSecret ? "removed on save (public client)" : ssoForm.secretSet ? "stored, blank keeps it" : "confidential client only"}
+                 bind:value={ssoForm.clientSecret} on:input={()=>{ ssoForm.clearSecret = false; ssoChanged(); }} />
+        </label>
+        <label class="setup-field">
+          <span class="setup-label">Button text</span>
+          <input type="text" class="input input-bordered sso-plain" placeholder="SSO" maxlength="40"
+                 bind:value={ssoForm.label} on:input={ssoChanged} />
+        </label>
+      </div>
+      <div class="setup-form setup-form-buttons">
+        <button class="btn btn-sm" on:click={ssoTestProvider} disabled={ssoTest.busy || !ssoForm.issuer}>
+          {ssoTest.busy ? "Testing…" : "Test provider"}
+        </button>
+        {#if ssoTest.text}
+          <span class={"sso-test " + (ssoTest.ok ? "text-success" : "text-error")}>{ssoTest.ok ? "✓ " : ""}{ssoTest.text}</span>
+        {/if}
+      </div>
 
-        <div class="setup-subhead"><h4>Rights</h4></div>
-        <div class="setup-form">
-          <label class="setup-field">
-            <span class="setup-label">Groups claim in the ID token</span>
-            <input type="text" class="input input-bordered" placeholder="groups (or e.g. realm_access.roles)"
-                   bind:value={ssoForm.groupsClaim} on:input={ssoChanged} />
-          </label>
-        </div>
-        <div class="vendor-table-wrap sso-map-wrap">
-          <table class="vendor-table sso-map">
-            <thead>
+      <div class="setup-subhead"><h4>Rights</h4></div>
+      <div class="setup-form">
+        <label class="setup-field">
+          <span class="setup-label">Groups claim in the ID token</span>
+          <input type="text" class="input input-bordered" placeholder="groups (or e.g. realm_access.roles)"
+                 bind:value={ssoForm.groupsClaim} on:input={ssoChanged} />
+        </label>
+      </div>
+      <div class="vendor-table-wrap sso-map-wrap">
+        <table class="vendor-table sso-map">
+          <thead>
+            <tr>
+              <th>Value at the provider</th>
+              {#each ssoForm.groupsAvailable as g}<th class="sso-col">{ssoGroupLabel(g)}</th>{/each}
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each ssoForm.mappings as m, i}
               <tr>
-                <th>Value at the provider</th>
-                {#each ssoForm.groupsAvailable as g}<th class="sso-col">{ssoGroupLabel(g)}</th>{/each}
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each ssoForm.mappings as m, i}
-                <tr>
-                  <td>
-                    <input type="text" class="input input-bordered input-sm vendor-mono" placeholder="e.g. crosspoint-operators"
-                           aria-label="Value at the provider" bind:value={m.value} on:input={ssoChanged} />
-                  </td>
-                  {#each ssoForm.groupsAvailable as g}
-                    <td class="sso-col">
-                      <input type="checkbox" class="checkbox checkbox-sm" aria-label={ssoGroupLabel(g)}
-                             checked={m.groups.includes(g)}
-                             on:change={()=>{ m.groups = ssoToggleGroup(m.groups, g); ssoForm.mappings = ssoForm.mappings; ssoChanged(); }} />
-                    </td>
-                  {/each}
-                  <td>
-                    <button class="btn btn-ghost btn-sm" on:click={()=>ssoRemoveMapping(i)} aria-label="Remove mapping" title="Remove">
-                      <Icon src={Trash} />
-                    </button>
-                  </td>
-                </tr>
-              {/each}
-              <tr>
-                <td class="sso-everyone">Everyone who signs in</td>
+                <td>
+                  <input type="text" class="input input-bordered input-sm vendor-mono" placeholder="e.g. crosspoint-operators"
+                         aria-label="Value at the provider" bind:value={m.value} on:input={ssoChanged} />
+                </td>
                 {#each ssoForm.groupsAvailable as g}
                   <td class="sso-col">
-                    <input type="checkbox" class="checkbox checkbox-sm" aria-label={"Everyone: " + ssoGroupLabel(g)}
-                           checked={ssoForm.everyone.includes(g)}
-                           on:change={()=>{ ssoForm.everyone = ssoToggleGroup(ssoForm.everyone, g); ssoChanged(); }} />
+                    <input type="checkbox" class="checkbox checkbox-sm" aria-label={ssoGroupLabel(g)}
+                           checked={m.groups.includes(g)}
+                           on:change={()=>{ m.groups = ssoToggleGroup(m.groups, g); ssoForm.mappings = ssoForm.mappings; ssoChanged(); }} />
                   </td>
                 {/each}
-                <td></td>
+                <td>
+                  <button class="btn btn-ghost btn-sm" on:click={()=>ssoRemoveMapping(i)} aria-label="Remove mapping" title="Remove">
+                    <Icon src={Trash} />
+                  </button>
+                </td>
               </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="vendor-actions-row">
-          <button class="btn btn-sm" on:click={ssoAddMapping}><Icon src={Plus} /> Add mapping</button>
-        </div>
+            {/each}
+            <tr>
+              <td class="sso-everyone">Everyone who signs in</td>
+              {#each ssoForm.groupsAvailable as g}
+                <td class="sso-col">
+                  <input type="checkbox" class="checkbox checkbox-sm" aria-label={"Everyone: " + ssoGroupLabel(g)}
+                         checked={ssoForm.everyone.includes(g)}
+                         on:change={()=>{ ssoForm.everyone = ssoToggleGroup(ssoForm.everyone, g); ssoChanged(); }} />
+                </td>
+              {/each}
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="vendor-actions-row">
+        <button class="btn btn-sm" on:click={ssoAddMapping}><Icon src={Plus} /> Add mapping</button>
+      </div>
 
-        <div class="sso-register">
-          <b>Register at your provider</b>
-          <div><span>Redirect URI</span><code>{ssoRedirectUri(ssoForm)}</code>
-            <button class="btn btn-ghost btn-xs" on:click={()=>copyText(ssoRedirectUri(ssoForm))}>Copy</button></div>
-          <div><span>Post-logout redirect URI</span><code>{ssoLogoutUri(ssoForm)}</code>
-            <button class="btn btn-ghost btn-xs" on:click={()=>copyText(ssoLogoutUri(ssoForm))}>Copy</button></div>
+      <div class="sso-register">
+        <b>Register at your provider</b>
+        <div><span>Redirect URI</span><code>{ssoRedirectUri(ssoForm)}</code>
+          <button class="btn btn-ghost btn-xs" on:click={()=>copyText(ssoRedirectUri(ssoForm))}>Copy</button></div>
+        <div><span>Post-logout redirect URI</span><code>{ssoLogoutUri(ssoForm)}</code>
+          <button class="btn btn-ghost btn-xs" on:click={()=>copyText(ssoLogoutUri(ssoForm))}>Copy</button></div>
+      </div>
+
+      <details class="lease-inventory">
+        <summary>Advanced</summary>
+        <div class="setup-form">
+          <label class="setup-field">
+            <span class="setup-label">Redirect URI (only behind a proxy)</span>
+            <input type="text" class="input input-bordered" placeholder={"taken from the browser's address, …" + ssoForm.callbackPath}
+                   bind:value={ssoForm.redirectUri} on:input={ssoChanged} />
+          </label>
         </div>
+        <div class="setup-form">
+          <label class="setup-field">
+            <span class="setup-label">Scopes</span>
+            <input type="text" class="input input-bordered" placeholder="openid profile email"
+                   bind:value={ssoForm.scopes} on:input={ssoChanged} />
+          </label>
+          <label class="setup-field setup-field-narrow">
+            <span class="setup-label">Session (h)</span>
+            <input type="number" class="input input-bordered" min="1" max="168"
+                   bind:value={ssoForm.sessionHours} on:input={ssoChanged} />
+          </label>
+        </div>
+      </details>
 
-        <details class="lease-inventory">
-          <summary>Advanced</summary>
-          <div class="setup-form">
-            <label class="setup-field">
-              <span class="setup-label">Redirect URI (only behind a proxy)</span>
-              <input type="text" class="input input-bordered" placeholder={"taken from the browser's address, …" + ssoForm.callbackPath}
-                     bind:value={ssoForm.redirectUri} on:input={ssoChanged} />
-            </label>
+      {#if ssoStatus.enabled}
+        <div class="setup-registry-status">
+          <div class="setup-registry-row">
+            <span class="setup-dot setup-dot-success"></span>
+            <span>Single sign-on is on · {ssoStatus.sessions} {ssoStatus.sessions === 1 ? "user" : "users"} signed in with it</span>
           </div>
-          <div class="setup-form">
-            <label class="setup-field">
-              <span class="setup-label">Scopes</span>
-              <input type="text" class="input input-bordered" placeholder="openid profile email"
-                     bind:value={ssoForm.scopes} on:input={ssoChanged} />
-            </label>
-            <label class="setup-field setup-field-narrow">
-              <span class="setup-label">Session (h)</span>
-              <input type="number" class="input input-bordered" min="1" max="168"
-                     bind:value={ssoForm.sessionHours} on:input={ssoChanged} />
-            </label>
-          </div>
-        </details>
-
-        {#if ssoStatus.enabled}
-          <div class="setup-registry-status">
-            <div class="setup-registry-row">
-              <span class="setup-dot setup-dot-success"></span>
-              <span>Single sign-on is on · {ssoStatus.sessions} {ssoStatus.sessions === 1 ? "user" : "users"} signed in with it</span>
-            </div>
-          </div>
-        {/if}
+        </div>
       {/if}
     </section>
     {:else if ssoStatus.enabled}
