@@ -1519,14 +1519,14 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         };
 
         // Pass 1: device-level NMOS metadata
-        // Compute the crosspoint device id that backs OUR virtual NMOS node
-        // (settings.virtualNode.deviceId) once — the worker prefixes NMOS
-        // device ids with "nmos_", so a match here means "every sender on
-        // this device is a virtual sender we registered ourselves".
-        let virtualDeviceCpId = "";
+        // The crosspoint device ids of OUR virtual NMOS node's devices
+        // (settings.virtualDevices) — the worker prefixes NMOS device ids
+        // with "nmos_", so a match here means "every sender on this device
+        // is a virtual sender we registered ourselves".
+        let virtualDeviceCpIds = new Set<string>();
         try{
-            if(this.settings?.virtualNode?.deviceId){
-                virtualDeviceCpId = "nmos_" + this.settings.virtualNode.deviceId;
+            for(let vd of (this.settings?.virtualDevices || [])){
+                if(vd && vd.id) virtualDeviceCpIds.add("nmos_" + vd.id);
             }
         }catch(e){}
 
@@ -1566,7 +1566,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             let nodeAlias = nodeId ? (this.nodeAliases[nodeId] || "") : "";
             if(nodeAlias){ nodeLabel = nodeAlias; }
 
-            isVirtualByDev[dev.id] = !!virtualDeviceCpId && dev.id === virtualDeviceCpId;
+            isVirtualByDev[dev.id] = virtualDeviceCpIds.has(dev.id);
             let gm = this.buildGmidFromNode(info.nodeId);
             let d = dev as CrosspointDevice;
             d.nodeLabel  = nodeLabel;

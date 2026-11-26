@@ -78,7 +78,79 @@
         line-height: 1.35;
         min-height: 120px;
     }
+
+    .virtual-sender-head .virtual-sender-summary-error {
+        color: theme('colors.error');
+    }
+    .virtual-sender-fields {
+        margin-top: 4px;
+    }
+    .virtual-sender-device {
+        max-width: 280px;
+    }
+    .virtual-sender-error {
+        margin-top: 4px;
+        font-size: 0.8rem;
+        color: theme('colors.error');
+    }
 }
+
+// Virtual devices: one box per device, holding its senders.
+.virtual-device {
+    border: 1px solid theme('colors.base-content / 15%');
+    border-radius: 10px;
+    padding: 8px 10px 10px;
+    margin-top: 8px;
+    background-color: theme('colors.base-content / 3%');
+
+    .virtual-device-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 6px;
+    }
+    .virtual-device-icon {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        opacity: 0.6;
+    }
+    .virtual-device-name {
+        max-width: 280px;
+        font-weight: 600;
+    }
+    .virtual-device-count {
+        font-size: 0.75rem;
+        opacity: 0.6;
+        font-family: 'Roboto Mono', monospace;
+        white-space: nowrap;
+    }
+    .virtual-device-gap { flex: 1; }
+    .virtual-sender-row { margin-bottom: 6px; }
+}
+.virtual-device-actions { margin-top: 8px; }
+
+// "Register at" choice of the virtual Node.
+.virtual-reg {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 0.85rem;
+    label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+    }
+    code {
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.8rem;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background-color: theme('colors.base-content / 8%');
+    }
+}
+.virtual-reg-form { margin-top: 6px; }
 
 
 .setup-page {

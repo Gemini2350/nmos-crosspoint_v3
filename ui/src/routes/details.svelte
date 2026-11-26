@@ -144,7 +144,7 @@
       gmidLocked:boolean;
       // Link to the device's web UI (derived from the NMOS Node's href). "" if unknown.
       deviceUrl:string;
-      // True for our own virtual NMOS device (settings.virtualNode.deviceId).
+      // True for our own virtual NMOS devices (settings.virtualDevices).
       // Used by the template to skip controls that don't make sense here
       // (Forget would just trigger an immediate re-register; multicast
       // editing is rejected with 405).

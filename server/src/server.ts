@@ -36,6 +36,7 @@ import { Bcp008Monitor } from "./lib/bcp008Monitor";
 import { ProbeGateway } from "./lib/probeGateway";
 import { NmosNodeApi } from "./lib/NmosNode/NmosNodeApi";
 import { NmosNodeRegistration } from "./lib/NmosNode/NmosNodeRegistration";
+import { devicesFromInput, registrationFromInput, normaliseRegistration } from "./lib/virtualDevices";
 import { OidcSignIn, parseOidcConfig, mountOidcRoutes, testProvider } from "./lib/oidc";
 import { ssoView, ssoBlockFromInput, sameSignIn } from "./lib/ssoSettings";
 
@@ -234,6 +235,8 @@ try{
 // to come up first — that way, the registry's WS push reflecting our own
 // just-registered Node lands cleanly in nmosState without racing.
 const nmosNodeRegistration = new NmosNodeRegistration(settings);
+// "The registry above" without a static one: the one the crosspoint found.
+nmosNodeRegistration.registrySource = () => NmosRegistryConnector.instance?.currentRegistry() || null;
 setTimeout(async () => {
     try {
         // Ask the kernel which local IP it would use to reach the registry
@@ -458,7 +461,19 @@ function getSetupConfigState() {
         if(Array.isArray(settings.virtualSenders)){
             virtualSenders = settings.virtualSenders.map((v:any) => ({
                 id: v.id, name: v.name || "", sdp: v.sdp || "",
-                senderId: v.senderId || ""
+                senderId: v.senderId || "",
+                deviceId: v.deviceId || "",
+                // Why the SDP could not be published, else "".
+                error: (v.senderId && nmosNodeApi?.lastError?.[v.senderId]) || ""
+            }));
+        }
+    }catch(e){}
+    let virtualDevices:any[] = [];
+    try{
+        if(Array.isArray(settings.virtualDevices)){
+            virtualDevices = settings.virtualDevices.map((d:any) => ({
+                id: d.id, name: d.name || "",
+                senders: virtualSenders.filter((v:any) => v.deviceId === d.id).length
             }));
         }
     }catch(e){}
@@ -511,8 +526,20 @@ function getSetupConfigState() {
     let virtualNode = {
         enabled:  virtualNodeCfg.enabled === true,
         deviceId: (typeof virtualNodeCfg.deviceId === "string") ? virtualNodeCfg.deviceId : "",
-        nodeId:   (typeof virtualNodeCfg.nodeId   === "string") ? virtualNodeCfg.nodeId   : ""
+        nodeId:   (typeof virtualNodeCfg.nodeId   === "string") ? virtualNodeCfg.nodeId   : "",
+        // Where it registers: "registry" (the one the crosspoint uses) or
+        // "custom" (a registration API of its own).
+        registration: normaliseRegistration(virtualNodeCfg.registration),
+        // The registry "registry" means, as "host:port"; "" while none.
+        registryTarget: "",
+        // How the registration went: off | none | registered | error.
+        status: { target: "", state: "off", error: "", devices: 0, senders: 0 }
     };
+    try{
+        let base = nmosNodeRegistration?.registryBase({ mode: "registry", host: "", port: 0 }) || "";
+        virtualNode.registryTarget = base.replace(/^http:\/\//, "");
+        if(nmosNodeRegistration) virtualNode.status = { ...nmosNodeRegistration.status };
+    }catch(e){}
 
     // BCP-008 status monitoring: master toggle (read-only IS-12 client).
     let bcp008Cfg = {
@@ -539,6 +566,7 @@ function getSetupConfigState() {
         acceptableGmid: (typeof settings.acceptableGmid === "string") ? settings.acceptableGmid : "",
         vendorProfiles,
         virtualSenders,
+        virtualDevices,
         virtualNode,
         audioMonitor: audioMonitorCfg,
         bcp008: bcp008Cfg,
@@ -558,6 +586,10 @@ function getSetupConfigState() {
     };
 }
 const setupConfigSync: SyncObject = new SyncObject("setupConfig", getSetupConfigState());
+// The virtual Node's registration status is shown on the Setup page.
+nmosNodeRegistration.onStatus = () => {
+    try{ setupConfigSync.setState(getSetupConfigState()); }catch(e){}
+};
 // Signed-in users only: it shows registry, vendor profiles, virtual sender
 // SDPs and DDNS details, nothing for a browser that has not logged in.
 server.addSyncObject("setupConfig","global",setupConfigSync);
@@ -819,17 +851,23 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                             };
                         });
                 }
+                // The virtual devices. The page names each by `key` (its id,
+                // or a "new:…" key for one just added); ids are minted here.
+                let deviceKeyToId: {[key:string]:string} | null = null;
+                if(Array.isArray(postData.virtualDevices)){
+                    let r = devicesFromInput(postData.virtualDevices, settings.virtualDevices || [], () => require("crypto").randomUUID());
+                    next.virtualDevices = r.devices;
+                    deviceKeyToId = r.keyToId;
+                }
                 if(Array.isArray(postData.virtualSenders)){
-                    // Preserve existing senderIds keyed by the editor `id`
-                    // so an edit-and-save doesn't churn the UUIDs and break
-                    // any currently-connected receivers.
-                    let prevSenderIds: {[id:string]:string} = {};
+                    // Preserve the existing sender/flow/source ids keyed by
+                    // the editor `id` so an edit-and-save doesn't churn the
+                    // UUIDs and break any currently-connected receivers.
+                    let prevById: {[id:string]:any} = {};
                     try{
                         if(Array.isArray(settings.virtualSenders)){
                             for(let v of settings.virtualSenders){
-                                if(v && typeof v.id === "string" && typeof v.senderId === "string"){
-                                    prevSenderIds[v.id] = v.senderId;
-                                }
+                                if(v && typeof v.id === "string") prevById[v.id] = v;
                             }
                         }
                     }catch(e){}
@@ -837,23 +875,41 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                         .filter((v:any) => v && typeof v === "object")
                         .map((v:any) => {
                             let id = (typeof v.id === "string" && v.id) ? v.id : ("vs_" + Math.random().toString(36).slice(2,10));
+                            let prev = prevById[id] || {};
                             let senderId = (typeof v.senderId === "string" && /^[a-f0-9-]{36}$/i.test(v.senderId))
                                 ? v.senderId
-                                : (prevSenderIds[id] || "");  // parseSettings will mint one if still ""
+                                : (prev.senderId || "");  // parseSettings will mint one if still ""
+                            // Its device, by the page's key; without one
+                            // parseSettings puts it on the first device.
+                            let key = (typeof v.deviceKey === "string") ? v.deviceKey : "";
+                            let deviceId = deviceKeyToId ? (deviceKeyToId[key] || "") : (prev.deviceId || "");
                             return {
                                 id,
                                 name: (typeof v.name === "string") ? v.name.trim() : "",
                                 sdp:  (typeof v.sdp === "string") ? v.sdp : "",
-                                senderId
+                                senderId,
+                                sourceId: prev.sourceId || "",
+                                flowId:   prev.flowId || "",
+                                deviceId
                             };
                         });
                 }
                 if(postData.virtualNode && typeof postData.virtualNode === "object" && typeof postData.virtualNode.enabled === "boolean"){
                     // getSetupConfigState always seeds next.virtualNode with
-                    // { enabled, deviceId, nodeId } — we only ever flip the
-                    // operator-controlled enable flag here.
+                    // { enabled, deviceId, nodeId, registration } — we only
+                    // take the enable flag and the registration target here.
                     if(next.virtualNode){
                         next.virtualNode.enabled = postData.virtualNode.enabled;
+                        if(postData.virtualNode.registration && typeof postData.virtualNode.registration === "object"){
+                            // Checked while it is in use; switched off, the
+                            // hidden fields are kept as they are.
+                            if(postData.virtualNode.enabled){
+                                try{ next.virtualNode.registration = registrationFromInput(postData.virtualNode.registration); }
+                                catch(e:any){ reject({message: e.message}); return; }
+                            }else{
+                                next.virtualNode.registration = normaliseRegistration(postData.virtualNode.registration);
+                            }
+                        }
                     }
                 }
                 if(postData.bcp008 && typeof postData.bcp008 === "object" && typeof postData.bcp008.enabled === "boolean"){
@@ -905,7 +961,7 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             // Track whether anything that affects our published IS-04 Node
             // changed (virtual senders, acceptable GMID for the clock entry,
             // the master enable toggle). If yes, rebuild + re-POST below.
-            let virtualSendersChanged = Array.isArray(next.virtualSenders);
+            let virtualSendersChanged = Array.isArray(next.virtualSenders) || Array.isArray(next.virtualDevices);
             let gmidChanged           = prevAcceptableGmid !== settings.acceptableGmid;
             let prevVirtualEnabled    = !!(settings.virtualNode && settings.virtualNode.enabled === true);
             let nextVirtualEnabled    = (next.virtualNode && typeof next.virtualNode.enabled === "boolean")
@@ -917,16 +973,31 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 if(!settings.virtualNode) settings.virtualNode = {};
                 settings.virtualNode.enabled = nextVirtualEnabled;
             }
+            // Another registration target: the next sync moves the
+            // resources there (deleted at the old one first).
+            let registrationChanged = false;
+            if(next.virtualNode?.registration){
+                if(!settings.virtualNode) settings.virtualNode = {};
+                registrationChanged = JSON.stringify(normaliseRegistration(settings.virtualNode.registration)) !== JSON.stringify(next.virtualNode.registration);
+                settings.virtualNode.registration = next.virtualNode.registration;
+            }
 
             if(virtualSendersChanged){
-                settings.virtualSenders = next.virtualSenders;
+                if(Array.isArray(next.virtualSenders)) settings.virtualSenders = next.virtualSenders;
+                if(Array.isArray(next.virtualDevices)) settings.virtualDevices = next.virtualDevices;
                 // Re-run the parse step on just this slice so any missing
-                // senderId / sourceId / flowId UUIDs get minted and the
-                // schema stays self-healing (same logic as boot-time read).
+                // senderId / sourceId / flowId UUIDs get minted, each sender
+                // lands on an existing device and the schema stays
+                // self-healing (same logic as boot-time read).
                 try{
-                    let tmp:any = { virtualSenders: settings.virtualSenders };
+                    let tmp:any = {
+                        virtualSenders: settings.virtualSenders,
+                        virtualDevices: settings.virtualDevices,
+                        virtualNode: { ...settings.virtualNode }
+                    };
                     parseSettings(tmp);
                     settings.virtualSenders = tmp.virtualSenders;
+                    settings.virtualDevices = tmp.virtualDevices;
                 }catch(e){}
                 // Notify the crosspoint abstraction so the worker's
                 // virtualSenders mirror stays current (used by the alias-
@@ -949,7 +1020,7 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                     // on → off: deregister and stop heartbeat.
                     nmosNodeRegistration.stop().catch(()=>{});
                 }
-            }else if(virtualSendersChanged || gmidChanged){
+            }else if(virtualSendersChanged || gmidChanged || registrationChanged){
                 // Rebuild the IS-04 / IS-05 record cache from the new
                 // settings (virtual senders' SDPs and the acceptable GMID
                 // both feed into the Node + Sender records) and re-POST
@@ -1116,6 +1187,13 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             // Restart no longer required — keep the field for back-compat
             // with older UIs but always report false from here on.
             next.restartRequired = false;
+            // The virtual Node as stored: ids minted, senders on devices.
+            try{
+                let fresh = getSetupConfigState();
+                next.virtualSenders = fresh.virtualSenders;
+                next.virtualDevices = fresh.virtualDevices;
+                next.virtualNode = fresh.virtualNode;
+            }catch(e){}
             setupConfigSync.setState(next);
 
             resolve({message:200, data:next});

@@ -6,7 +6,7 @@
  * queried by any controller, receiver or registry:
  *
  *   /x-nmos/node/v1.3/self                              — the Node resource
- *   /x-nmos/node/v1.3/devices[/<id>]                    — one virtual Device
+ *   /x-nmos/node/v1.3/devices[/<id>]                    — the virtual Devices
  *   /x-nmos/node/v1.3/sources[/<id>]                    — one Source per sender
  *   /x-nmos/node/v1.3/flows[/<id>]                      — one Flow per sender
  *   /x-nmos/node/v1.3/senders[/<id>]                    — every virtual Sender
@@ -34,7 +34,7 @@ export class NmosNodeApi {
     // Cache of derived IS-04 / IS-05 records keyed by UUID, regenerated on
     // every settings change. Cheaper than re-parsing the SDP on every request.
     private nodeResource:any   = null;
-    private deviceResource:any = null;
+    private deviceResources:    { [id:string]: any } = {};
     private senderResources:    { [id:string]: any } = {};
     private flowResources:      { [id:string]: any } = {};
     private sourceResources:    { [id:string]: any } = {};
@@ -128,29 +128,6 @@ export class NmosNodeApi {
             ]
         };
 
-        // ----- Device -----
-        let senderIds: string[] = (this.settings?.virtualSenders || [])
-            .filter((v:any) => v && v.senderId)
-            .map((v:any) => v.senderId);
-        this.deviceResource = {
-            id:          virtualNode.deviceId,
-            version,
-            label:       "Virtual Senders",
-            description: "",
-            tags:        {},
-            type:        "urn:x-nmos:device:generic",
-            node_id:     virtualNode.nodeId,
-            senders:     senderIds,
-            receivers:   [],
-            controls: [
-                {
-                    href:          this.buildUrl(advertiseHost, advertisePort, advertiseProto, "/x-nmos/connection/v1.0/"),
-                    type:          "urn:x-nmos:control:sr-ctrl/v1.0",
-                    authorization: false
-                }
-            ]
-        };
-
         // ----- Senders / Flows / Sources -----
         this.senderResources = {};
         this.flowResources   = {};
@@ -158,6 +135,12 @@ export class NmosNodeApi {
         this.transportFiles  = {};
         this.transportParams = {};
         this.lastError       = {};
+        // Each sender's device; one not (or no longer) among the devices
+        // belongs to the first, as parseSettings assigns it.
+        let devices: any[] = (this.settings?.virtualDevices || []).filter((d:any) => d && d.id);
+        if(devices.length === 0 && virtualNode.deviceId) devices = [{ id: virtualNode.deviceId, name: "Virtual Senders" }];
+        let deviceIds = new Set(devices.map((d:any) => d.id));
+        let deviceOf = (vs:any) => deviceIds.has(vs.deviceId) ? vs.deviceId : devices[0]?.id;
 
         for(let vs of (this.settings?.virtualSenders || [])){
             if(!vs || !vs.senderId || !vs.flowId || !vs.sourceId) continue;
@@ -174,7 +157,7 @@ export class NmosNodeApi {
                     tags:        {},
                     format:      parsed.format,
                     caps:        {},
-                    device_id:   virtualNode.deviceId,
+                    device_id:   deviceOf(vs),
                     parents:     [],
                     clock_name:  "clk0"
                 };
@@ -199,7 +182,7 @@ export class NmosNodeApi {
                     format:      parsed.format,
                     media_type:  parsed.mediaType,
                     source_id:   vs.sourceId,
-                    device_id:   virtualNode.deviceId,
+                    device_id:   deviceOf(vs),
                     parents:     []
                 };
                 if(parsed.format === "urn:x-nmos:format:audio" && parsed.audio){
@@ -235,7 +218,7 @@ export class NmosNodeApi {
                     tags:               {},
                     flow_id:            vs.flowId,
                     transport:          "urn:x-nmos:transport:rtp.mcast",
-                    device_id:          virtualNode.deviceId,
+                    device_id:          deviceOf(vs),
                     manifest_href:      manifestUrl,
                     // Must reference an entry in node.interfaces[].name
                     // (`ifaceName` resolved above, defaults to the actual
@@ -255,13 +238,39 @@ export class NmosNodeApi {
                 SyncLog.log("warn", "NMOS Node", "Virtual sender " + vs.senderId + " (" + (vs.name||"") + ") skipped: " + msg);
             }
         }
+
+        // ----- Devices -----
+        // One per settings.virtualDevices entry, listing the senders built
+        // above (a sender whose SDP failed is not registered, so not listed).
+        // They share the Node's IS-05 Connection API.
+        this.deviceResources = {};
+        for(let d of devices){
+            this.deviceResources[d.id] = {
+                id:          d.id,
+                version,
+                label:       d.name || "Virtual Device",
+                description: "",
+                tags:        {},
+                type:        "urn:x-nmos:device:generic",
+                node_id:     virtualNode.nodeId,
+                senders:     Object.values(this.senderResources).filter((x:any) => x.device_id === d.id).map((x:any) => x.id),
+                receivers:   [],
+                controls: [
+                    {
+                        href:          this.buildUrl(advertiseHost, advertisePort, advertiseProto, "/x-nmos/connection/v1.0/"),
+                        type:          "urn:x-nmos:control:sr-ctrl/v1.0",
+                        authorization: false
+                    }
+                ]
+            };
+        }
     }
 
     /** Snapshot used by NmosNodeRegistration when POSTing to the registry. */
     public getResources(){
         return {
             node:   this.nodeResource,
-            device: this.deviceResource,
+            devices: Object.values(this.deviceResources),
             sources: Object.values(this.sourceResources),
             flows:   Object.values(this.flowResources),
             senders: Object.values(this.senderResources)
@@ -269,7 +278,7 @@ export class NmosNodeApi {
     }
 
     public getNode()    { return this.nodeResource; }
-    public getDevice()  { return this.deviceResource; }
+    public getDevices() { return Object.values(this.deviceResources); }
     public getSenders() { return Object.values(this.senderResources); }
     public getFlows()   { return Object.values(this.flowResources); }
     public getSources() { return Object.values(this.sourceResources); }
@@ -298,10 +307,11 @@ export class NmosNodeApi {
         });
 
         app.get("/x-nmos/node/v1.3/devices",         (_req:any, res:any) => {
-            json(res, this.deviceResource ? [this.deviceResource] : []);
+            json(res, Object.values(this.deviceResources));
         });
         app.get("/x-nmos/node/v1.3/devices/:id",     (req:any, res:any) => {
-            if(this.deviceResource && req.params.id === this.deviceResource.id) return json(res, this.deviceResource);
+            let r = this.deviceResources[req.params.id];
+            if(r) return json(res, r);
             res.status(404).send("Not Found");
         });
 

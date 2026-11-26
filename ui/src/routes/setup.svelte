@@ -4,7 +4,7 @@
     import { onDestroy, onMount } from "svelte";
     import sha256 from "js-sha256";
 
-    import { Icon, ExclamationTriangle, CheckCircle, Plus, Trash } from "svelte-hero-icons";
+    import { Icon, ExclamationTriangle, CheckCircle, Plus, Trash, ServerStack } from "svelte-hero-icons";
     import HelpTip from "../lib/HelpTip.svelte";
     import Logo from "../lib/Logo.svelte";
 
@@ -22,7 +22,14 @@
       id: string;
       name: string;
       sdp: string;
+      deviceId?: string;
+      // Why the server could not publish the saved SDP, else "".
+      error?: string;
     }
+    // A virtual device as edited: `key` is its id, or "new:…" until saved.
+    interface VirtualDeviceForm { key: string; name: string; }
+    // A virtual sender as edited, on the device named by `deviceKey`.
+    interface VirtualSenderForm { id: string; name: string; sdp: string; deviceKey: string; error: string; }
     interface LeaseStat { used: number; total: number }
     interface Ddns {
       enabled: boolean;
@@ -39,6 +46,10 @@
       enabled: boolean;
       deviceId?: string;
       nodeId?: string;
+      registration?: { mode: "registry" | "custom", host: string, port: number };
+      // What "the registry above" is, as host:port; "" while none.
+      registryTarget?: string;
+      status?: { target: string, state: "off" | "none" | "registered" | "error", error: string, devices: number, senders: number };
     }
     // One pool in the lease stats; key "default" or the limit as text.
     interface PoolStat { key:string, label:string, name?:string, maxMbps:number|null, cidr:string, used:number, total:number }
@@ -47,6 +58,7 @@
       acceptableGmid: string;
       vendorProfiles: VendorProfile[];
       virtualSenders: VirtualSender[];
+      virtualDevices?: Array<{ id: string, name: string }>;
       virtualNode: VirtualNodeCfg;
       multicastRange: string;
       // Pools by bandwidth on top of the default pool (multicastRange).
@@ -86,8 +98,12 @@
     let formPort:string = "80";
     let formGmid:string = "";
     let formProfiles:VendorProfile[] = [];
-    let formVirtualSenders:VirtualSender[] = [];
+    let formVirtualDevices:VirtualDeviceForm[] = [];
+    let formVirtualSenders:VirtualSenderForm[] = [];
     let formVirtualNodeEnabled:boolean = false;
+    let formVirtualRegMode:"registry"|"custom" = "registry";
+    let formVirtualRegHost:string = "";
+    let formVirtualRegPort:string = "";
     let formAutoMulticastEnabled:boolean = false;
     let formReconnectReceivers:boolean = false;
     let formAutoActivateSender:boolean = false;
@@ -274,8 +290,7 @@
             formPort = ""+(obj.registry.port || 80);
             formGmid = obj.acceptableGmid || "";
             formProfiles = Array.isArray(obj.vendorProfiles) ? obj.vendorProfiles.map((p:any) => ({...p})) : [];
-            formVirtualSenders = Array.isArray(obj.virtualSenders) ? obj.virtualSenders.map((v:any) => ({...v})) : [];
-            formVirtualNodeEnabled = (obj.virtualNode && typeof obj.virtualNode.enabled === "boolean") ? obj.virtualNode.enabled : false;
+            loadVirtualForm(obj);
             formAutoMulticastEnabled = !!(obj.autoMulticast && obj.autoMulticast.enabled);
             // `reconnectReceiversOnSenderChange` default is now FALSE, so we
             // take the stored value as-is (no "!== false" magic).
@@ -381,8 +396,7 @@
       formPort = ""+(serverState.registry.port || 80);
       formGmid = serverState.acceptableGmid || "";
       formProfiles = Array.isArray(serverState.vendorProfiles) ? serverState.vendorProfiles.map((p:any)=>({...p})) : [];
-      formVirtualSenders = Array.isArray((serverState as any).virtualSenders) ? (serverState as any).virtualSenders.map((v:any)=>({...v})) : [];
-      formVirtualNodeEnabled = (serverState.virtualNode && typeof serverState.virtualNode.enabled === "boolean") ? serverState.virtualNode.enabled : false;
+      loadVirtualForm(serverState);
       formAutoMulticastEnabled = !!(serverState.autoMulticast && serverState.autoMulticast.enabled);
       formReconnectReceivers   = !!(serverState.autoMulticast && (
         (serverState.autoMulticast as any).reconnectReceiversOnSenderChange ??
@@ -479,8 +493,12 @@
         registry: { ip: formIp.trim(), port: port },
         acceptableGmid: formGmid.trim(),
         vendorProfiles: formProfiles,
-        virtualSenders: formVirtualSenders.map(v => ({ id: v.id, name: v.name, sdp: v.sdp })),
-        virtualNode: { enabled: formVirtualNodeEnabled },
+        virtualDevices: formVirtualDevices.map(d => ({ key: d.key, name: d.name })),
+        virtualSenders: formVirtualSenders.map(v => ({ id: v.id, name: v.name, sdp: v.sdp, deviceKey: v.deviceKey })),
+        virtualNode: {
+          enabled: formVirtualNodeEnabled,
+          registration: { mode: formVirtualRegMode, host: formVirtualRegHost, port: formVirtualRegPort }
+        },
         multicastRange: formMulticastRange.trim(),
         multicastPools: poolsOut,
         multicastDefaultPoolName: formMulticastDefaultPoolName.trim(),
@@ -641,11 +659,38 @@
 
 
     // ----- Virtual Senders -----
-    function addVirtualSender(){
+    // The edit buffer, from what the server stored: devices by id, each
+    // sender on the device the server put it on.
+    function loadVirtualForm(obj:any){
+      formVirtualDevices = Array.isArray(obj.virtualDevices) ? obj.virtualDevices.map((d:any) => ({ key: d.id, name: d.name || "" })) : [];
+      formVirtualSenders = Array.isArray(obj.virtualSenders)
+        ? obj.virtualSenders.map((v:any) => ({ id: v.id, name: v.name || "", sdp: v.sdp || "", deviceKey: v.deviceId || "", error: v.error || "" }))
+        : [];
+      formVirtualNodeEnabled = (obj.virtualNode && typeof obj.virtualNode.enabled === "boolean") ? obj.virtualNode.enabled : false;
+      let reg = obj.virtualNode?.registration || {};
+      formVirtualRegMode = reg.mode === "custom" ? "custom" : "registry";
+      formVirtualRegHost = reg.host || "";
+      formVirtualRegPort = reg.port ? ("" + reg.port) : "";
+    }
+    function addVirtualDevice(){
+      formVirtualDevices = [...formVirtualDevices, { key: "new:" + Math.random().toString(36).slice(2,10), name: "" }];
+      markDirty();
+    }
+    function removeVirtualDevice(key:string){
+      let d = formVirtualDevices.find(x => x.key === key);
+      let n = formVirtualSenders.filter(v => v.deviceKey === key).length;
+      if(n > 0 && !window.confirm("Remove the device \"" + (d?.name || "unnamed") + "\" and its " + n + (n === 1 ? " sender" : " senders") + "? Nothing changes until you save.")) return;
+      formVirtualDevices = formVirtualDevices.filter(x => x.key !== key);
+      formVirtualSenders = formVirtualSenders.filter(v => v.deviceKey !== key);
+      markDirty();
+    }
+    function addVirtualSender(deviceKey:string){
       formVirtualSenders = [...formVirtualSenders, {
         id:   "vs_" + Math.random().toString(36).slice(2,10),
         name: "",
-        sdp:  ""
+        sdp:  "",
+        deviceKey,
+        error: ""
       }];
       markDirty();
     }
@@ -653,6 +698,7 @@
       formVirtualSenders = formVirtualSenders.filter(v => v.id !== id);
       markDirty();
     }
+    $: virtualStatus = serverState.virtualNode?.status;
 
 
     // ----- Lease inventory derived state -----
@@ -1379,8 +1425,12 @@
           entry as a real NMOS sender (with full Source / Flow / Sender records and an IS-05
           <code>transport_file</code> endpoint). Once registered, the senders show up in <em>every</em>
           NMOS-aware controller on the network, not just here.</p>
-          <p>Heartbeats keep the Node alive against the configured registry; switching registries
-          deregisters the old one cleanly. The toggle turns this Node on and off.</p>
+          <p>The senders sit on <strong>devices</strong> of that Node; make as many as you like and
+          move a sender to another device with its Device field.</p>
+          <p>The Node registers at the registry above, or at a registration API of its own when the
+          registry's query and registration API listen on different addresses or ports. Heartbeats keep
+          it alive; switching registries deregisters at the old one cleanly. The toggle turns this Node
+          on and off; switched off, the devices and senders stay saved.</p>
           <p>Each sender keeps the same UUID across restarts, so receivers stay bound. The destination IP
           comes from the SDP exactly as you typed it; virtual senders are read-only over IS-05,
           so the multicast-edit pencil is hidden for them on the Details page.</p>
@@ -1389,58 +1439,131 @@
                bind:checked={formVirtualNodeEnabled} on:change={markDirty} />
       </div>
 
-      {#if !formVirtualNodeEnabled && formVirtualSenders.length > 0}
-        <div class="alert alert-warning setup-alert">
-          <Icon src={ExclamationTriangle} />
-          <span>
-            Virtual Node disabled &mdash; the senders listed below stay in <code>settings.json</code>
-            but are NOT registered with the NMOS registry. Re-enable to make them visible to
-            controllers and receivers again.
-          </span>
+      {#if formVirtualNodeEnabled}
+        <div class="setup-subhead"><h4>Register at</h4></div>
+        <div class="virtual-reg">
+          <label>
+            <input type="radio" class="radio radio-sm" value="registry" bind:group={formVirtualRegMode} on:change={markDirty} />
+            <span>The registry above
+              {#if serverState.virtualNode?.registryTarget}<code>{serverState.virtualNode.registryTarget}</code>{:else}(none connected yet){/if}</span>
+          </label>
+          <label>
+            <input type="radio" class="radio radio-sm" value="custom" bind:group={formVirtualRegMode} on:change={markDirty} />
+            <span>Another registration API (when the registry's query and registration API differ)</span>
+          </label>
         </div>
-      {/if}
-
-      {#each formVirtualSenders as v (v.id)}
-        <details class="virtual-sender-row">
-          <summary class="virtual-sender-head">
-            <span class="virtual-sender-summary-name">
-              {v.name || "(unnamed virtual sender)"}
-            </span>
-            <span class="virtual-sender-summary-meta">
-              {v.sdp ? "SDP set" : "no SDP"}
-            </span>
-            <button class="btn btn-ghost btn-sm"
-                    on:click|stopPropagation|preventDefault={()=>removeVirtualSender(v.id)}
-                    aria-label="Remove virtual sender" title="Remove">
-              <Icon src={Trash} />
-            </button>
-          </summary>
-
-          <div class="virtual-sender-body">
+        {#if formVirtualRegMode === "custom"}
+          <div class="setup-form virtual-reg-form">
             <label class="setup-field">
-              <span class="setup-label">Name</span>
-              <input type="text" class="input input-bordered input-sm virtual-sender-name"
-                     placeholder="Sender name (e.g. PlayoutA)"
-                     bind:value={v.name} on:input={markDirty} />
+              <span class="setup-label">Registration API IP / host</span>
+              <input type="text" class="input input-bordered" placeholder="e.g. 10.0.100.112"
+                     bind:value={formVirtualRegHost} on:input={markDirty} />
             </label>
-            <label class="setup-field" style="margin-top:6px;">
-              <span class="setup-label">SDP</span>
-              <textarea class="textarea textarea-bordered vendor-mono virtual-sender-sdp"
-                        rows="8" placeholder="Paste a full SDP here…&#10;v=0&#10;o=- 0 0 IN IP4 …&#10;s=…&#10;m=audio 5004 RTP/AVP 96&#10;c=IN IP4 239.x.x.x/32&#10;a=rtpmap:96 L24/48000/2"
-                        bind:value={v.sdp} on:input={markDirty}></textarea>
+            <label class="setup-field setup-field-narrow">
+              <span class="setup-label">Port</span>
+              <input type="number" class="input input-bordered" min="1" max="65535" placeholder="3210"
+                     bind:value={formVirtualRegPort} on:input={markDirty} />
             </label>
           </div>
-        </details>
-      {/each}
-      {#if formVirtualSenders.length === 0}
-        <p class="vendor-empty">No virtual senders defined.</p>
-      {/if}
+        {/if}
+        {#if serverState.virtualNode?.enabled && virtualStatus}
+          <div class="setup-registry-status">
+            <div class="setup-registry-row">
+              {#if virtualStatus.state === "registered"}
+                <span class="setup-dot setup-dot-success"></span>
+                <code>{virtualStatus.target}</code>
+                <span>registered · {virtualStatus.devices} {virtualStatus.devices === 1 ? "device" : "devices"}, {virtualStatus.senders} {virtualStatus.senders === 1 ? "sender" : "senders"}</span>
+              {:else if virtualStatus.state === "error"}
+                <span class="setup-dot setup-dot-error"></span>
+                <code>{virtualStatus.target}</code>
+                <span>registration failed: {virtualStatus.error}</span>
+              {:else if virtualStatus.state === "none"}
+                <span class="setup-dot setup-dot-warning"></span>
+                <span>No registry to register at yet — it registers as soon as one is connected.</span>
+              {/if}
+            </div>
+          </div>
+        {/if}
 
-      <div class="vendor-actions-row">
-        <button class="btn btn-sm" on:click={addVirtualSender}>
-          <Icon src={Plus} /> Add virtual sender
-        </button>
-      </div>
+        <div class="setup-subhead"><h4>Devices</h4></div>
+        {#each formVirtualDevices as d (d.key)}
+          {@const devSenders = formVirtualSenders.filter(v => v.deviceKey === d.key)}
+          <div class="virtual-device">
+            <div class="virtual-device-head">
+              <Icon src={ServerStack} class="virtual-device-icon" />
+              <input type="text" class="input input-bordered input-sm virtual-device-name"
+                     placeholder="Device name (e.g. Playout)" aria-label="Device name"
+                     bind:value={d.name} on:input={markDirty} />
+              <span class="virtual-device-count">{devSenders.length} {devSenders.length === 1 ? "sender" : "senders"}</span>
+              <span class="virtual-device-gap"></span>
+              <button class="btn btn-ghost btn-sm" on:click={()=>removeVirtualDevice(d.key)}
+                      aria-label="Remove device" title="Remove device">
+                <Icon src={Trash} />
+              </button>
+            </div>
+
+            {#each devSenders as v (v.id)}
+              <details class="virtual-sender-row">
+                <summary class="virtual-sender-head">
+                  <span class="virtual-sender-summary-name">
+                    {v.name || "(unnamed virtual sender)"}
+                  </span>
+                  <span class="virtual-sender-summary-meta" class:virtual-sender-summary-error={!!v.error}>
+                    {v.error ? "SDP error" : v.sdp ? "SDP set" : "no SDP"}
+                  </span>
+                  <button class="btn btn-ghost btn-sm"
+                          on:click|stopPropagation|preventDefault={()=>removeVirtualSender(v.id)}
+                          aria-label="Remove virtual sender" title="Remove">
+                    <Icon src={Trash} />
+                  </button>
+                </summary>
+
+                <div class="virtual-sender-body">
+                  <div class="setup-form virtual-sender-fields">
+                    <label class="setup-field">
+                      <span class="setup-label">Name</span>
+                      <input type="text" class="input input-bordered input-sm virtual-sender-name"
+                             placeholder="Sender name (e.g. PlayoutA)"
+                             bind:value={v.name} on:input={markDirty} />
+                    </label>
+                    <label class="setup-field">
+                      <span class="setup-label">Device</span>
+                      <select class="select select-bordered select-sm virtual-sender-device"
+                              bind:value={v.deviceKey} on:change={()=>{ formVirtualSenders = formVirtualSenders; markDirty(); }}>
+                        {#each formVirtualDevices as o (o.key)}
+                          <option value={o.key}>{o.name || "(unnamed device)"}</option>
+                        {/each}
+                      </select>
+                    </label>
+                  </div>
+                  <label class="setup-field" style="margin-top:6px;">
+                    <span class="setup-label">SDP</span>
+                    <textarea class="textarea textarea-bordered vendor-mono virtual-sender-sdp"
+                              rows="8" placeholder="Paste a full SDP here…&#10;v=0&#10;o=- 0 0 IN IP4 …&#10;s=…&#10;m=audio 5004 RTP/AVP 96&#10;c=IN IP4 239.x.x.x/32&#10;a=rtpmap:96 L24/48000/2"
+                              bind:value={v.sdp} on:input={()=>{ v.error = ""; markDirty(); }}></textarea>
+                  </label>
+                  {#if v.error}
+                    <p class="virtual-sender-error">Not published: {v.error}</p>
+                  {/if}
+                </div>
+              </details>
+            {/each}
+
+            <button class="btn btn-xs" on:click={()=>addVirtualSender(d.key)}>
+              <Icon src={Plus} /> Add sender
+            </button>
+          </div>
+        {/each}
+        {#if formVirtualDevices.length === 0}
+          <p class="vendor-empty">No virtual devices defined.</p>
+        {/if}
+
+        <div class="vendor-actions-row virtual-device-actions">
+          <button class="btn btn-sm" on:click={addVirtualDevice}>
+            <Icon src={Plus} /> Add device
+          </button>
+        </div>
+      {/if}
     </section>
 
 

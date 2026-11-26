@@ -1590,6 +1590,18 @@ export class NmosRegistryConnector {
         }
     }
 
+    /** The registry the crosspoint is using, for the virtual Node to
+     *  register at: of those connected (all of the best-ranked source), the
+     *  one with the lowest priority number, as IS-04 ranks them. */
+    public currentRegistry(): { ip: string, port: number, source: string } | null {
+        let best: NmosRegistry | null = null;
+        for (const r of this.nmosRegistryList) {
+            if (!r || !r.ip || !r.port || r.ip === "0.0.0.0") continue;
+            if (!best || (r.priority ?? 1000) < (best.priority ?? 1000)) best = r;
+        }
+        return best ? { ip: best.ip, port: best.port, source: best.source } : null;
+    }
+
     updateSyncConnectionState() {
         let list = [];
         this.nmosRegistryList.forEach((registry) => {

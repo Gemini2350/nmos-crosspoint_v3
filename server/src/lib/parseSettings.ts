@@ -1,4 +1,5 @@
 import { normalisePoolDefs, poolName } from "./multicastPools";
+import { normaliseVirtualDevices, assignSenderDevices, normaliseRegistration } from "./virtualDevices";
 
 export function parseSettings(settings:any){
 
@@ -208,7 +209,10 @@ export function parseSettings(settings:any){
                 // source_id in the IS-04 records this server registers.
                 senderId:  (typeof v.senderId === "string" && uuidRe.test(v.senderId)) ? v.senderId : mkUuid(),
                 sourceId:  (typeof v.sourceId === "string" && uuidRe.test(v.sourceId)) ? v.sourceId : mkUuid(),
-                flowId:    (typeof v.flowId   === "string" && uuidRe.test(v.flowId))   ? v.flowId   : mkUuid()
+                flowId:    (typeof v.flowId   === "string" && uuidRe.test(v.flowId))   ? v.flowId   : mkUuid(),
+                // The virtual device it belongs to; checked against
+                // settings.virtualDevices below, once those are known.
+                deviceId:  (typeof v.deviceId === "string") ? v.deviceId : ""
             }));
     }
 
@@ -273,8 +277,8 @@ export function parseSettings(settings:any){
     }
 
     // ----- Virtual NMOS Node identity -----
-    // The Node + Device records (one of each, shared by ALL virtual senders)
-    // we publish to the registry. UUIDs are persisted so the registry sees
+    // The Node record and its devices (settings.virtualDevices) we publish
+    // to the registry. UUIDs are persisted so the registry sees
     // the same Node across restarts and doesn't accumulate orphans.
     if(!settings.virtualNode || typeof settings.virtualNode !== "object"){
         settings.virtualNode = {};
@@ -301,6 +305,15 @@ export function parseSettings(settings:any){
     if(typeof settings.virtualNode.advertiseHost !== "string"){
         settings.virtualNode.advertiseHost = "";
     }
+    // Where the Node registers: the registry the crosspoint uses, or a
+    // registration API of its own (a registry whose query and registration
+    // APIs listen on different addresses or ports).
+    settings.virtualNode.registration = normaliseRegistration(settings.virtualNode.registration);
+    // The Node's devices, each holding some of the virtual senders. Before
+    // there were several, the one device was virtualNode.deviceId; it is
+    // the first device then, so existing senders keep their device.
+    settings.virtualDevices = normaliseVirtualDevices(settings.virtualDevices, settings.virtualNode.deviceId, mkUuid, settings.virtualSenders.length);
+    settings.virtualSenders = assignSenderDevices(settings.virtualSenders, settings.virtualDevices);
 
 
     // ----- DDNS (RFC 2136 Dynamic Updates) -----
