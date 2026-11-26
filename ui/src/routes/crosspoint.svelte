@@ -39,6 +39,10 @@
       showData: true,
       show2110: true,
       showMxl: true,
+      showInactive: true,
+      // "number" (the sorting numbers, the order drag & drop changes),
+      // "name" or "type": a view of this browser only.
+      sortBy: "number",
       searchReceivers:"",
       searchSenders:"",
       expanded: { senders :[], receivers :[]}
@@ -251,6 +255,65 @@
       receiverGroups = [...receiverGroups];
     }
 
+    // ----- Drag & drop: the order of nodes and devices -----
+    // Here only who is dragged, where it may go and the line that shows the
+    // spot; the server works out the sorting numbers ("placedevices").
+    // A node, or a device that is a node of its own, moves among the others;
+    // a device inside an open node only among its siblings.
+    $: sortByNumber = (filter.sortBy || "number") === "number";
+    let dnd:any = null;
+    let dndTarget:any = null;
+    let dndMark:any = null;
+    function dndItem(axis:string, g:any, dev:any, inStrip:boolean){
+      const top = !!dev.isNode || !inStrip;
+      return { axis, top, groupKey: g.key, nodeId: top ? (g.nodeId || "") : "", devId: dev.isNode ? "" : dev.id,
+               label: top ? g.label : deviceRowLabel(dev, inStrip) };
+    }
+    function dndStart(e:any, item:any){
+      if(!sortByNumber){ e.preventDefault(); return; }
+      dnd = item;
+      try{ e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", item.label); }catch(err){}
+    }
+    function dndValid(t:any){
+      if(!dnd || t.axis !== dnd.axis) return false;
+      if(dnd.top) return t.top && t.groupKey !== dnd.groupKey;
+      return !t.top && t.groupKey === dnd.groupKey && t.devId !== dnd.devId;
+    }
+    // The header element where the item behind `el` starts, or null at the end.
+    function dndNextStart(el:any, t:any){
+      const all = Array.from(document.querySelectorAll('[data-dnd-axis="' + t.axis + '"]'));
+      for(let i = all.indexOf(el) + 1; i < all.length; i++){
+        const o:any = all[i];
+        if(t.top ? o.dataset.dndGroup !== t.groupKey : o.dataset.dndDev !== t.devId){ return o; }
+      }
+      return null;
+    }
+    function dndOver(e:any, t:any, rows:boolean){
+      if(!dndValid(t)) return;
+      e.preventDefault();
+      try{ e.dataTransfer.dropEffect = "move"; }catch(err){}
+      const el = e.currentTarget, r = el.getBoundingClientRect(), table = el.closest("table").getBoundingClientRect();
+      const after = rows ? e.clientY > r.top + r.height / 2 : e.clientX > r.left + r.width / 2;
+      const next = after ? dndNextStart(el, t) : null;
+      const nr = next ? next.getBoundingClientRect() : null;
+      dndTarget = { ...t, after };
+      dndMark = rows
+        ? { left: r.left, top: (after ? (nr ? nr.top : table.bottom) : r.top) - 2, width: table.right - r.left, height: 4 }
+        : { left: (after ? (nr ? nr.left : table.right) : r.left) - 2, top: r.top, width: 4, height: table.bottom - r.top };
+      dndMark.text = (after ? "after " : "before ") + t.label;
+    }
+    function dndEnd(){ dnd = null; dndTarget = null; dndMark = null; }
+    function dndDrop(e:any, t:any){
+      if(!dndValid(t) || !dndTarget){ dndEnd(); return; }
+      e.preventDefault();
+      const req:any = { action: "placedevices" };
+      if(dnd.top && dnd.nodeId){ req.nodeId = dnd.nodeId; } else { req.ids = [dnd.devId]; }
+      const where = dndTarget.after ? "after" : "before";
+      if(t.top && t.nodeId){ req[where + "NodeId"] = t.nodeId; } else { req[where + "Id"] = t.devId; }
+      dndEnd();
+      ServerConnector.post("crosspoint", req).catch((err:any)=>{ console.warn("placedevices", err); });
+    }
+
     function getFlowTypeIcon(type:any, source=true){
       if(source){
         switch(type){
@@ -461,6 +524,19 @@
           });
         }
 
+        // Switched-off senders, from the Show menu. A device left without a
+        // sender leaves the sender axis.
+        if(filter.showInactive === false){
+          senders = senders.filter((dev:any)=>{
+            let count = 0;
+            flowTypes.forEach((type)=>{
+              dev.senders[type] = dev.senders[type].filter((flow:any)=>flow.active !== false);
+              count += dev.senders[type].length;
+            });
+            return count > 0;
+          });
+        }
+
         // Essence and transport, from the Show menu. A flow whose essence or
         // transport has no switch there (unknown, websocket, ...) is always
         // shown; a device left without flows goes, like an unavailable one.
@@ -550,6 +626,15 @@
         // the flat arrays in group order — the tbody connect-cell loops
         // iterate the flat arrays, so their column/row sequence must match
         // the grouped header markup exactly.
+        // "Sort by" Name or Type: the server ranks the devices, the matrix
+        // only orders by the rank; by Number it keeps the server's order.
+        if(filter.sortBy === "name" || filter.sortBy === "type"){
+          const k = filter.sortBy;
+          const rank = (d:any) => (d.sortRank && typeof d.sortRank[k] === "number") ? d.sortRank[k] : Number.MAX_SAFE_INTEGER;
+          senders.sort((a:any, b:any) => rank(a) - rank(b));
+          receivers.sort((a:any, b:any) => rank(a) - rank(b));
+        }
+
         senderGroups = collapseNodes(groupDevicesByNode(senders), "senders");
         senders = flattenGroups(senderGroups);
         receiverGroups = collapseNodes(groupDevicesByNode(receivers), "receivers");
@@ -998,6 +1083,7 @@
     // Essence and transport default to on: the button says when any is off,
     // or rows would go missing without a visible reason.
     $: showMenuNarrowed = filter.showVideo === false || filter.showAudio === false || filter.showData === false ||
+                          filter.showInactive === false || (filter.sortBy && filter.sortBy !== "number") ||
                           filter.show2110 === false || filter.showMxl === false;
 
     function toggleExpandSender(id:string){
@@ -1825,6 +1911,10 @@
   </script>
   <svelte:window on:click={showMenuWindowClick}/>
   <div class="content-container crosspoint">
+  {#if dndMark}
+    <div class="cp-dnd-line" style="left:{dndMark.left}px;top:{dndMark.top}px;width:{dndMark.width}px;height:{dndMark.height}px"></div>
+    <div class="cp-dnd-hint" style="left:{dndMark.left + (dndMark.width > 10 ? 160 : 10)}px;top:{dndMark.top + (dndMark.width > 10 ? -22 : 40)}px">{dndMark.text}</div>
+  {/if}
     <ul class="menu bg-base-200 menu-horizontal rounded-box filter-nav">
       <li>
         <label class="input input-ghost flex gap-2">
@@ -1854,9 +1944,23 @@
         <div id="cp-show-menu" class="cp-show-menu" role="group" aria-label="Show"
              bind:this={showMenuPanel} on:keydown={showMenuKey} on:focusout={showMenuFocusOut}>
           <fieldset>
+            <legend>Sort by</legend>
+            <div class="cp-sortby" role="radiogroup" aria-label="Sort by">
+              {#each [["number", "Number"], ["name", "Name"], ["type", "Type"]] as [key, text]}
+                <button role="radio" aria-checked={(filter.sortBy || "number") === key} class:on={(filter.sortBy || "number") === key}
+                        on:click={()=>{ filter.sortBy = key; changeFilter(); }}>{text}</button>
+              {/each}
+            </div>
+            <p class="cp-sortby-note">
+              {#if sortByNumber}Drag a node or device by its name to move it. That changes the sorting numbers, for everyone.
+              {:else}Sorted by {filter.sortBy} in this browser only. Switch back to Number to move devices.{/if}
+            </p>
+          </fieldset>
+          <fieldset>
             <legend>Options</legend>
             <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showUnavailable} on:change={()=>changeFilter()}/><span>Unavailable</span></label>
             <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showHidden} on:change={()=>changeFilter()}/><span>Hidden</span></label>
+            <label><input type="checkbox" class="toggle toggle-info toggle-sm" bind:checked={filter.showInactive} on:change={()=>changeFilter()}/><span>Inactive senders</span></label>
           </fieldset>
           <fieldset>
             <legend>Essences</legend>
@@ -1931,8 +2035,13 @@
                     {#each senderGroups as sg}
                     {@const inStrip = !!(sg.devices[0] && sg.devices[0].isNode)}
                     {#each sg.devices as dev}
+                      {@const dndT = dndItem("senders", sg, dev, inStrip)}
                       <th class="cp-device" class:cp-grp={inStrip} class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen} class:cp-top={dev.isNode || !inStrip}
                           class:expanded={dev.isNode ? dev.isOpen : isSenderExpanded(dev.id)}
+                          class:cp-dnd-dragging={dnd && dnd.axis === "senders" && dnd.groupKey === sg.key && (dnd.top || dnd.devId === dev.id)}
+                          draggable={sortByNumber} data-dnd-axis="senders" data-dnd-group={sg.key} data-dnd-dev={dndT.devId}
+                          on:dragstart={(e)=>dndStart(e, dndT)} on:dragover={(e)=>dndOver(e, dndT, false)}
+                          on:drop={(e)=>dndDrop(e, dndT)} on:dragend={dndEnd}
                           on:click={()=>{ dev.isNode ? toggleExpandNode("senders", dev.nodeKey) : toggleExpandSender(dev.id); }}><!--
                         --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                         --><span class="cp-label {(dev.hidden?"hidden":"")}" use:nameTooltip={deviceRowLabel(dev, inStrip)}><!--
@@ -1985,6 +2094,11 @@
               {#each rg.devices as dev, devIdx}
                 <tr class="cp-device" class:cp-grp={inStrip} class:cp-node-row={dev.isNode} class:cp-top={dev.isNode || !inStrip} class:expanded={dev.isNode ? dev.isOpen : isReceiverExpanded(dev.id)}>
                   <td class="cp-line-stick" class:cp-node-entry={dev.isNode} class:cp-node-open={dev.isNode && dev.isOpen}
+                      class:cp-dnd-dragging={dnd && dnd.axis === "receivers" && dnd.groupKey === rg.key && (dnd.top || dnd.devId === dev.id)}
+                      draggable={sortByNumber} data-dnd-axis="receivers" data-dnd-group={rg.key} data-dnd-dev={dev.isNode ? "" : dev.id}
+                      on:dragstart={(e)=>dndStart(e, dndItem("receivers", rg, dev, inStrip))}
+                      on:dragover={(e)=>dndOver(e, dndItem("receivers", rg, dev, inStrip), true)}
+                      on:drop={(e)=>dndDrop(e, dndItem("receivers", rg, dev, inStrip))} on:dragend={dndEnd}
                       on:click={()=>{ dev.isNode ? toggleExpandNode("receivers", dev.nodeKey) : toggleExpandReceiver(dev.id); }}><!--
                     --><span class="cp-expand"><Icon src={ChevronRight}></Icon></span><!--
                     --><span class="cp-label {(dev.hidden?"hidden":"")}" use:nameTooltip={deviceRowLabel(dev, inStrip)}><!--

@@ -306,12 +306,8 @@
           senderRows.push(row);
         });
 
-        senderRows.sort((a,b)=>{
-          if(a.type === b.type){
-            return (a.alias||"").localeCompare(b.alias||"");
-          }
-          return (a.type||"").localeCompare(b.type||"");
-        });
+        // The server sends them in order: by type, then the name shown, the
+        // same order the crosspoint matrix uses (deviceOrder.sortDeviceFlows).
 
 
         // ----- Receivers for this device -----
@@ -357,12 +353,6 @@
           receiverRows.push(row);
         });
 
-        receiverRows.sort((a,b)=>{
-          if(a.type === b.type){
-            return (a.alias||"").localeCompare(b.alias||"");
-          }
-          return (a.type||"").localeCompare(b.type||"");
-        });
 
         if(senderRows.length === 0 && receiverRows.length === 0){
           return;

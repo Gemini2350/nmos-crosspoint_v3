@@ -789,3 +789,21 @@ html[data-theme="light"] {
         }
     }
 }
+
+
+// A switched-off sender: its glyph struck through, as in the matrix.
+.details-page tr.det-flow-tx .cp-type:not(.active) {
+    position: relative;
+    &::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 22px;
+        height: 1.7px;
+        border-radius: 1px;
+        background: theme('colors.neutral-400');
+        transform: translate(-50%, -50%) rotate(-45deg);
+        pointer-events: none;
+    }
+}

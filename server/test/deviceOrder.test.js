@@ -125,3 +125,63 @@ test("no change for the same number, 0, garbage or an unknown device", () => {
         assert.deepEqual(d, shadow());
     }
 });
+
+// ----- Flows within a device, view ranks, drag & drop -----
+const o2 = require("../dist/lib/deviceOrder.js");
+
+test("flows of a device sort by the name shown, naturally, per type", () => {
+    const dev = { senders: { audio: [
+        { id: "c", name: "Ch 10" }, { id: "a", name: "Ch 2" }, { id: "b", name: "zzz", alias: "Ch 1" },
+    ], video: [] }, receivers: { video: [{ id: "y", name: "B" }, { id: "x", name: "a" }] } };
+    o2.sortDeviceFlows(dev);
+    assert.deepEqual(dev.senders.audio.map(f => f.id), ["b", "a", "c"]);
+    assert.deepEqual(dev.receivers.video.map(f => f.id), ["x", "y"]);
+});
+
+test("view ranks: by name, and by essence then number", () => {
+    const devs = [
+        { id: "1", num: 1, displayLabel: "Zeta", senders: { audio: [{}] }, receivers: {} },
+        { id: "2", num: 2, displayLabel: "alpha", senders: { video: [{}] }, receivers: {} },
+        { id: "3", num: 3, displayLabel: "Beta", senders: {}, receivers: { data: [{}] } },
+        { id: "4", num: 4, displayLabel: "Gamma", senders: { audio: [{}] }, receivers: { video: [{}] } },
+    ];
+    const r = o2.viewRanks(devs);
+    assert.deepEqual(["1", "2", "3", "4"].map(id => r[id].name), [3, 0, 1, 2]);
+    assert.deepEqual(["1", "2", "3", "4"].map(id => r[id].type), [2, 0, 3, 1]);
+});
+
+const seq = (spec) => spec.split(" ").map(s => { const [id, n] = s.split(":"); return { id, num: Number(n) }; });
+
+test("a moved device takes a free number in the gap and touches nothing else", () => {
+    assert.deepEqual(o2.placeDevices(seq("A:10 B:20 C:30"), ["C"], "B"), { C: 11 });
+    assert.deepEqual(o2.placeDevices(seq("A:10 B:20 C:30"), ["A"], null), { A: 31 });
+    // already where it would go: nothing changes
+    assert.deepEqual(o2.placeDevices(seq("A:10 B:20 C:30"), ["B"], "C"), {});
+});
+
+test("without a gap the devices behind it move up only as far as needed", () => {
+    assert.deepEqual(o2.placeDevices(seq("A:1 B:2 C:3 D:4 E:9"), ["D"], "B"), { D: 2, B: 3, C: 4 });
+    assert.deepEqual(o2.placeDevices(seq("A:1 B:2 C:3"), ["C"], "A"), { C: 1, A: 2, B: 3 });
+});
+
+test("a node moves as a block and keeps its inner order", () => {
+    // node N = (N1, N2) from the end to the front
+    assert.deepEqual(o2.placeDevices(seq("A:1000 B:1001 N1:1002 N2:1003"), ["N1", "N2"], "A"),
+        { N1: 1, N2: 2 });
+    // behind B (30) the block needs numbers above 30, below C (40)
+    assert.deepEqual(o2.placeDevices(seq("A:10 N1:20 N2:21 B:30 C:40"), ["N1", "N2"], "C"), { N1: 31, N2: 32 });
+    // a block that is already in place keeps its numbers
+    assert.deepEqual(o2.placeDevices(seq("A:10 N1:20 N2:21 B:30"), ["N1", "N2"], "B"), {});
+});
+
+test("unnumbered devices in front of the block get numbers, ones behind stay", () => {
+    // B needs a number below A's 5; A keeps its own
+    assert.deepEqual(o2.placeDevices(seq("A:5 B:-1 C:-1"), ["A"], "C"), { B: 1 });
+    assert.deepEqual(o2.placeDevices(seq("A:5 B:-1 C:-1"), ["C"], "B"), { C: 6 });
+});
+
+test("a move that makes no sense changes nothing", () => {
+    assert.equal(o2.placeDevices(seq("A:1 B:2"), ["X"], null), null);
+    assert.equal(o2.placeDevices(seq("A:1 B:2"), ["A"], "A"), null);
+    assert.equal(o2.placeDevices(seq("A:1 B:2"), ["A"], "nope"), null);
+});

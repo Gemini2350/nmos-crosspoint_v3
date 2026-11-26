@@ -2,7 +2,7 @@ import { SyncObject } from "./SyncServer/syncObject";
 import { LoggedError, SyncLog } from "./syncLog";
 import { error } from "console";
 import { matchConnections } from "./connectionMatch";
-import { sortDevices } from "./deviceOrder";
+import { sortDevices, sortDeviceFlows, viewRanks, placeDevices } from "./deviceOrder";
 import { NmosRegistryConnector } from "./nmosConnector";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { DdnsService } from "./ddnsService";
@@ -200,7 +200,54 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
     }
 
     
+    /**
+     * Drag & drop on the Crosspoint page: moves devices (`ids`) or a whole
+     * node (`nodeId`) in front of a device or node (`beforeId`,
+     * `beforeNodeId`), behind one (`afterId`, `afterNodeId`), or to the end,
+     * by giving them, and as few others as possible, new sorting numbers.
+     * The order is the one every page shows.
+     */
+    private placeDevicesRequest(data:any): string {
+        const devs:any[] = Array.isArray(this.crosspointState?.devices) ? this.crosspointState.devices : [];
+        let block:string[] = [];
+        if(typeof data.nodeId === "string" && data.nodeId){
+            block = devs.filter((d:any) => d.nodeId === data.nodeId).map((d:any) => d.id);
+        }else if(Array.isArray(data.ids)){
+            block = data.ids.filter((id:any) => typeof id === "string");
+        }
+        // The target: in front of a device or a node, or behind one (then in
+        // front of whatever follows it once the block is taken out).
+        const rest = devs.filter((d:any) => !block.includes(d.id));
+        let before:string|null = null;
+        if(typeof data.beforeNodeId === "string" && data.beforeNodeId){
+            const first = rest.find((d:any) => d.nodeId === data.beforeNodeId);
+            if(!first){ return "unknown node"; }
+            before = first.id;
+        }else if(typeof data.beforeId === "string" && data.beforeId){
+            before = data.beforeId;
+        }else if((typeof data.afterNodeId === "string" && data.afterNodeId) || (typeof data.afterId === "string" && data.afterId)){
+            let last = -1;
+            rest.forEach((d:any, i:number) => {
+                if(data.afterNodeId ? d.nodeId === data.afterNodeId : d.id === data.afterId){ last = i; }
+            });
+            if(last < 0){ return "unknown target"; }
+            before = rest[last + 1] ? rest[last + 1].id : null;
+        }
+        const changes = placeDevices(devs.map((d:any) => ({ id: d.id, num: d.num })), block, before);
+        if(!changes){ return "nothing to move"; }
+        if(Object.keys(changes).length > 0){
+            this.worker.postMessage(JSON.stringify({ crosspointChanges: { action: "setdevicenums", nums: changes } }));
+            SyncLog.log("info", "Crosspoint", "Moved " + block.length + " device" + (block.length === 1 ? "" : "s") +
+                " (" + Object.keys(changes).length + " sorting number" + (Object.keys(changes).length === 1 ? "" : "s") + " changed).", { changes });
+        }
+        return "";
+    }
+
     crosspointApi(data:any){
+        if(data && data.action === "placedevices"){
+            const why = this.placeDevicesRequest(data);
+            return why ? Promise.reject({ status: 400, message: "Cannot move: " + why }) : Promise.resolve({});
+        }
         return new Promise((resolve, reject) => {
             // Intercept device-delete here so the Multicast Lease Manager can
             // release the freed senders' pairs back into the pool. The worker
@@ -1543,6 +1590,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // The matrix and the Details page list devices in this order. Sorted
         // here because the label it falls back to is only composed above.
         sortDevices(this.crosspointState.devices);
+        // Within a device: by type (shown in a fixed order) and the name shown.
+        for(const dev of this.crosspointState.devices){ sortDeviceFlows(dev); }
+        // The Crosspoint page's "Sort by Name / Type" orders by these.
+        const ranks = viewRanks(this.crosspointState.devices);
+        for(const dev of this.crosspointState.devices){ (dev as CrosspointDevice).sortRank = ranks[dev.id]; }
 
         // Pass 2: sender legs + codec, build {flowId → enriched-sender-info}
         // Also collects every ACTIVE sender per (leg index → multicast IP)
@@ -1925,6 +1977,9 @@ export interface CrosspointDevice {
     gmidLocked?:boolean,
     deviceUrl?:string,
     isVirtual?:boolean,
+    // Rank of the device when the Crosspoint page sorts by name or by type
+    // (deviceOrder.viewRanks); by number it keeps the order it is sent in.
+    sortRank?:{ name:number, type:number },
     // IS-08 Channel Map, names resolved (see enrichChannelMaps). `error` is
     // set when the last read failed; inputs/outputs are then the last good
     // read, or empty. `sharedWith`: other devices served by the same API.

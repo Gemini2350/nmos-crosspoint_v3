@@ -341,6 +341,19 @@ class CrosspointUpdateThread{
             }
         }
 
+        // Drag & drop on the Crosspoint page: the main thread worked out
+        // which devices get which number (deviceOrder.placeDevices).
+        if(change.action == "setdevicenums" && change.nums && typeof change.nums === "object"){
+            for(const devId of Object.keys(change.nums)){
+                const dev = this.crosspointShadow.devices[devId];
+                const num = Number.parseInt("" + change.nums[devId]);
+                if(!dev || !(num > 0 && Number.isSafeInteger(num)) || dev.num === num){ continue; }
+                dev.num = num;
+                changed = true;
+                if(num >= this.nextDeviceNum){ this.nextDeviceNum = num + 1; }
+            }
+        }
+
         if(change.action == "moveflow"){
             let newNum = Number.parseInt(""+change.newNum);
             let type = change.type;
