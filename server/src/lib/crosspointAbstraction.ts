@@ -1,3 +1,4 @@
+import { Bandwidth, BandwidthSum, emptySum, addStream, addUnknown, mergeSums, bandwidthOf, enabledLegs, onTheNetwork } from "./bandwidth";
 import { SyncObject } from "./SyncServer/syncObject";
 import { LoggedError, SyncLog } from "./syncLog";
 import { error } from "console";
@@ -1680,7 +1681,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             }
         }
 
-        // Pass 3: receivers + totals + per-device BCP-008 rollup
+        // Pass 3: receivers + totals + per-device BCP-008 rollup + bandwidth
+        let nodeSums:{ [nodeId:string]: { tx:BandwidthSum, rx:BandwidthSum } } = {};
         for(let dev of this.crosspointState.devices){
             if(dev.available) totals.devices.avail++;
             totals.devices.total++;
@@ -1693,6 +1695,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             // only counts sender flows, the receiver ROW badge receivers.
             let monTx = { worst: 0, count: 0 };
             let monRx = { worst: 0, count: 0 };
+            // Total bandwidth per leg of what the device sends and receives
+            // (bandwidth.ts). Only streams that are on: active, the device
+            // online, on the network (not MXL, not IS-07 events).
+            let bwTx:BandwidthSum = emptySum();
+            let bwRx:BandwidthSum = emptySum();
             const monTrack = (agg:{worst:number,count:number}, m:any) => {
                 if(m && typeof m.status === "number" && m.status >= 2){
                     agg.count++;
@@ -1706,6 +1713,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     if(s.available) totals.senders.avail++;
                     totals.senders.total++;
                     monTrack(monTx, (s as CrosspointFlow).monitor);
+                    if(s.active && s.available && onTheNetwork(s.capabilities?.transport)){
+                        let sId = (typeof s.id === "string" && s.id.startsWith("nmos_")) ? s.id.substring(5) : "";
+                        addStream(bwTx, s.bitrate, enabledLegs(this.nmosState?.senderActiveData?.[sId]?.transport_params,
+                            ((s as CrosspointFlow).legs || []).length || (this.nmosState?.senders?.[sId]?.interface_bindings || []).length));
+                    }
                 }
             }
 
@@ -1743,6 +1755,17 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     f.monitor   = this.buildMonitorStatus(nmosId);
                     f.capLimits = nmosId ? this.buildReceiverCapsSummary(nmosId) : "";
                     monTrack(monRx, f.monitor);
+                    // A receiver takes its connected sender's bitrate, on the
+                    // legs it has enabled itself. Taking from a sender the
+                    // registry does not have: counted, bitrate unknown.
+                    if(r.active && r.available && onTheNetwork(r.capabilities?.transport)){
+                        if(connected){
+                            addStream(bwRx, connected.bitrate, enabledLegs(this.nmosState?.receiverActiveData?.[nmosId]?.transport_params,
+                                Math.min(connected.legs.length || 2, (this.nmosState?.receivers?.[nmosId]?.interface_bindings || []).length || 1)));
+                        }else{
+                            addUnknown(bwRx);
+                        }
+                    }
                     if(r.available) totals.receivers.avail++;
                     totals.receivers.total++;
                 }
@@ -1750,7 +1773,18 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
             (dev as CrosspointDevice).monitorSummaryTx = monTx;
             (dev as CrosspointDevice).monitorSummaryRx = monRx;
+            (dev as CrosspointDevice).bandwidth = bandwidthOf(bwTx, bwRx);
+            const nodeId = (dev as CrosspointDevice).nodeId;
+            if(nodeId){
+                const n = nodeSums[nodeId] || { tx: emptySum(), rx: emptySum() };
+                nodeSums[nodeId] = { tx: mergeSums(n.tx, bwTx), rx: mergeSums(n.rx, bwRx) };
+            }
         }
+        // The node's total: the sum of its devices (the Details page shows it
+        // on the node's group header).
+        let nodeBandwidth:{ [nodeId:string]: Bandwidth } = {};
+        for(const id of Object.keys(nodeSums)){ nodeBandwidth[id] = bandwidthOf(nodeSums[id].tx, nodeSums[id].rx); }
+        (this.crosspointState as CrosspointState).nodeBandwidth = nodeBandwidth;
 
         (this.crosspointState as CrosspointState).totals = totals;
         (this.crosspointState as CrosspointState).detectedDevices = this.buildDetectedDevices();
@@ -2004,7 +2038,9 @@ export interface CrosspointDevice {
     monitorSummaryTx?:{ worst:number, count:number },
     // IS-13: the Node behind this device offers the Annotation API.
     annotatable?:boolean,
-    monitorSummaryRx?:{ worst:number, count:number }
+    monitorSummaryRx?:{ worst:number, count:number },
+    // What the device sends and receives, per leg (bandwidth.ts).
+    bandwidth?:Bandwidth
   }
 export interface CrosspointTotals {
     devices:   { avail:number, total:number },
@@ -2020,7 +2056,9 @@ export interface CrosspointState {
     // Every ACTIVE sender per (leg index → multicast IP). The Details page
     // live-edit conflict check looks typed-in addresses up here instead of
     // re-scanning all devices client-side.
-    activeLegIps?:{ [legIndex:number]: { [ip:string]: Array<{id:string,label:string}> } }
+    activeLegIps?:{ [legIndex:number]: { [ip:string]: Array<{id:string,label:string}> } },
+    // Per NMOS node id: the sum of its devices' bandwidth.
+    nodeBandwidth?:{ [nodeId:string]: Bandwidth }
 }
 
 

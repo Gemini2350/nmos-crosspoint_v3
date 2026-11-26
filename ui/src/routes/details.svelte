@@ -12,6 +12,7 @@
     import ScrollArea from "../lib/ScrollArea.svelte";
     import { getSearchTokens, tokenSearch } from "../lib/functions";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
+    import Bandwidth from "../lib/Bandwidth.svelte";
     import AudioMonitorPlayer from "../lib/AudioMonitor/AudioMonitorPlayer.svelte";
     import RenameDialog from "../lib/RenameDialog.svelte";
 
@@ -151,6 +152,8 @@
       isVirtual:boolean;
       // IS-08 Channel Map, names resolved by the server; null without one.
       channelMap:any;
+      // Total bandwidth it sends / receives (server-computed), or null.
+      bandwidth:any;
       senders:SenderRow[];
       receivers:ReceiverRow[];
     }
@@ -165,6 +168,7 @@
       grouped:boolean;     // true = render header + nested cards
       tx:number;           // aggregate sender count (header badge)
       rx:number;           // aggregate receiver count
+      bandwidth:any;       // the node's total bandwidth (server-computed)
       devices:DeviceRow[];
     }
     let nodeGroups:NodeGroup[] = [];
@@ -377,6 +381,7 @@
           deviceUrl: dev.deviceUrl || "",
           isVirtual: !!dev.isVirtual,
           channelMap: dev.channelMap || null,
+          bandwidth: dev.bandwidth || null,
           senders: senderRows,
           receivers: receiverRows
         });
@@ -395,7 +400,8 @@
         let key = row.nodeId || row.id;
         let grp = groupByKey[key];
         if(!grp){
-          grp = { key, label: row.nodeLabel || row.label, grouped:false, tx:0, rx:0, devices: [] };
+          grp = { key, label: row.nodeLabel || row.label, grouped:false, tx:0, rx:0,
+                  bandwidth: (row.nodeId && sourceState?.nodeBandwidth?.[row.nodeId]) || null, devices: [] };
           groupByKey[key] = grp;
           newGroups.push(grp);
         }
@@ -1134,6 +1140,7 @@
             {/if}
           </span>
           <span class="det-head-spacer"></span>
+          <Bandwidth bw={grp.bandwidth} />
           <span class="det-device-counts">{grp.devices.length} Devices · {grp.tx} TX · {grp.rx} RX</span>
         </div>
       {/if}
@@ -1189,6 +1196,7 @@
               {/if}
             </span>
             <span class="det-head-spacer"></span>
+            <Bandwidth bw={dev.bandwidth} />
             <span class="det-num" use:OverlayMenuService.tooltip
                   data-tooltip="Sorting number: devices are listed by it, in the crosspoint and here. A number in use swaps with that device; empty clears it.">
               <span class="det-num-label" aria-hidden="true">Sorting</span>

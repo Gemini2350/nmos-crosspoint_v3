@@ -137,6 +137,22 @@ $det-color-data:  theme('colors.blue.500');
         white-space: nowrap;
     }
 
+    // Total bandwidth (lib/Bandwidth.svelte): ↑ sending, ↓ receiving, per
+    // leg, left of the counts; a little brighter than them.
+    .det-bw {
+        display: inline-flex;
+        align-items: center;
+        flex: 0 0 auto;
+        gap: 12px;
+        margin-right: 6px;
+        font-family: 'Roboto Mono', monospace;
+        font-size: 0.78rem;
+        white-space: nowrap;
+        color: theme('colors.base-content / 88%');
+    }
+    .det-bw-item { display: inline-flex; align-items: center; gap: 4px; }
+    .det-bw-arrow { opacity: 0.55; }
+
     // Sorting number. The field reads "Sorting"; the number shows on hover
     // and while editing. Theme colours only, so it reads in both designs.
     .det-num {
