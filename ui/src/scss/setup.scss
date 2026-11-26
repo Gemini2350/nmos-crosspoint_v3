@@ -238,6 +238,69 @@
         .setup-head-toggle { margin-left: auto; }
     }
 
+    // Folding: the arrow in front of the title, the whole title row as the
+    // click target (with a faint hover), and a short summary on the right
+    // so a folded section still says how it stands.
+    .setup-fold-all {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin: -4px 0 2px;
+        font-size: 0.78rem;
+        button {
+            color: theme('colors.base-content / 65%');
+            &:hover { text-decoration: underline; }
+        }
+    }
+    .setup-section.setup-folded {
+        > :not(.setup-section-head) { display: none !important; }
+        > .setup-section-head { margin-bottom: 0; }
+    }
+    .setup-section-head.setup-head-fold {
+        cursor: pointer;
+        border-radius: 6px;
+        margin-left: -6px;
+        margin-right: -6px;
+        padding-left: 6px;
+        padding-right: 6px;
+        &:hover { background-color: theme('colors.base-content / 6%'); }
+    }
+    .setup-fold {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 16px;
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        color: inherit;
+        opacity: 0.6;
+        border-radius: 3px;
+        svg { width: 16px; height: 16px; transition: transform 0.15s; }
+        &[aria-expanded="true"] svg { transform: rotate(90deg); }
+        &:disabled { opacity: 0.25; cursor: default; }
+        &:focus-visible { outline: 2px solid theme('colors.primary'); outline-offset: 1px; }
+    }
+    .setup-fold-spacer { flex: 0 0 16px; width: 16px; }
+    .setup-summary {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        font-size: 0.78rem;
+        color: theme('colors.base-content / 58%');
+        code { font-family: 'Roboto Mono', monospace; font-size: 0.74rem; }
+        .setup-dot { margin: 0 2px 0 0; }
+        + .setup-head-toggle { margin-left: 10px; }
+    }
+    @media (max-width: 600px) {
+        .setup-summary { display: none; }
+        .setup-summary + .setup-head-toggle { margin-left: auto; }
+    }
+
     .setup-form {
         display: flex;
         flex-wrap: wrap;

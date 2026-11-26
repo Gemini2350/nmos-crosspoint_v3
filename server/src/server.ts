@@ -782,7 +782,8 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                     let defs = normalisePoolDefs(postData.multicastPools);
                     let errs = validatePools(next.multicastRange, defs, next.multicastDefaultPoolName);
                     if(errs.length > 0){
-                        reject({message: "Multicast DHCP: " + errs.join(" ")});
+                        // error.section: the Setup page opens that section.
+                        reject({message: "Multicast DHCP: " + errs.join(" "), error: {section: "multicast"}});
                         return;
                     }
                     next.multicastPools = defs;
@@ -905,7 +906,7 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                             // hidden fields are kept as they are.
                             if(postData.virtualNode.enabled){
                                 try{ next.virtualNode.registration = registrationFromInput(postData.virtualNode.registration); }
-                                catch(e:any){ reject({message: e.message}); return; }
+                                catch(e:any){ reject({message: e.message, error: {section: "virtual"}}); return; }
                             }else{
                                 next.virtualNode.registration = normaliseRegistration(postData.virtualNode.registration);
                             }
@@ -1230,7 +1231,7 @@ server.addRoute("POST", "ssoConfig","admin", (client: WebsocketClient, query:str
         try{
             block = ssoBlockFromInput(postData, users?.oidc, users);
         }catch(e:any){
-            reject({ status: 400, message: e?.message || "Invalid single sign-on settings." });
+            reject({ status: 400, message: e?.message || "Invalid single sign-on settings.", error: { section: "sso" } });
             return;
         }
         if(!users){ reject({ message: "No users.json loaded." }); return; }

@@ -4,7 +4,7 @@
     import { onDestroy, onMount } from "svelte";
     import sha256 from "js-sha256";
 
-    import { Icon, ExclamationTriangle, CheckCircle, Plus, Trash, ServerStack } from "svelte-hero-icons";
+    import { Icon, ExclamationTriangle, CheckCircle, Plus, Trash, ServerStack, ChevronRight } from "svelte-hero-icons";
     import HelpTip from "../lib/HelpTip.svelte";
     import Logo from "../lib/Logo.svelte";
 
@@ -254,6 +254,57 @@
     }
     // {token, probes:[{name,address,streams}]} from the probeState sync.
     let probeState:any = { token:"", probes:[] };
+
+    // ----- Folding sections -----
+    // Every section with settings below its title row folds. Which ones are
+    // open is remembered per browser (a convenience, nothing on the server);
+    // on a first visit they are all folded.
+    const FOLD_KEY = "nmos_crosspoint_setup_open";
+    const FOLD_IDS = ["registry", "gmid", "audio", "multicast", "virtual", "weblinks", "ddns", "sso", "login"];
+    function readFolds():{[id:string]:boolean}{
+      try{
+        const v = JSON.parse(localStorage.getItem(FOLD_KEY) || "{}");
+        return (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+      }catch(e){ return {}; }
+    }
+    let openSections:{[id:string]:boolean} = readFolds();
+    function setOpen(ids:string[], open:boolean){
+      const next = { ...openSections };
+      for(const id of ids){
+        if(open){ next[id] = true; }else{ delete next[id]; }
+      }
+      openSections = next;
+      try{ localStorage.setItem(FOLD_KEY, JSON.stringify(openSections)); }catch(e){}
+    }
+    // A click anywhere on a title row folds it, except on what has a click
+    // of its own there: the toggle, the "?" and its bubble. The arrow is a
+    // button, so the keyboard gets there too. A section that is switched
+    // off and hides its settings (virtual senders, single sign-on) has the
+    // arrow disabled.
+    function foldHead(node:HTMLElement, id:string){
+      let cur = id;
+      const onClick = (e:MouseEvent) => {
+        const t = e.target as HTMLElement;
+        if(t.closest("input, select, textarea, a, label, .help-tip, .help-tip-pop, button:not(.setup-fold)")){ return; }
+        const btn = node.querySelector(".setup-fold") as HTMLButtonElement | null;
+        if(!btn || btn.disabled){ return; }
+        setOpen([cur], !openSections[cur]);
+      };
+      node.addEventListener("click", onClick);
+      return {
+        update(v:string){ cur = v; },
+        destroy(){ node.removeEventListener("click", onClick); },
+      };
+    }
+    // Switching a section on opens it, so its settings are in view.
+    function openIfOn(id:string, e:Event){
+      if((e.currentTarget as HTMLInputElement).checked){ setOpen([id], true); }
+    }
+    // A save that is refused opens the section the reason is in.
+    function fail(id:string, msg:string){
+      saveError = msg;
+      setOpen([id], true);
+    }
     function regTotal(r:any):number{
       return Array.isArray(r?.connected) ? r.connected.length : 0;
     }
@@ -433,7 +484,7 @@
 
       let port = parseInt(formPort);
       if(isNaN(port) || port <= 0 || port > 65535){
-        saveError = "Port must be between 1 and 65535.";
+        fail("registry", "Port must be between 1 and 65535.");
         return;
       }
 
@@ -441,7 +492,7 @@
       for(let p of formProfiles){
         let pp = parseInt(""+p.port);
         if(isNaN(pp) || pp <= 0 || pp > 65535){
-          saveError = "Vendor \""+(p.name||p.id)+"\": Port must be between 1 and 65535.";
+          fail("weblinks", "Vendor \""+(p.name||p.id)+"\": Port must be between 1 and 65535.");
           return;
         }
       }
@@ -449,7 +500,7 @@
       // Multicast range. Basic CIDR sanity check (single shared pool now)
       let cidrRe = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
       if(formMulticastRange && !cidrRe.test(formMulticastRange.trim())){
-        saveError = "Multicast DHCP: the default pool must use CIDR notation, e.g. 239.30.0.0/16";
+        fail("multicast", "Multicast DHCP: the default pool must use CIDR notation, e.g. 239.30.0.0/16");
         return;
       }
       // Pools by bandwidth: the obvious mistakes here; overlaps between
@@ -459,33 +510,33 @@
       let namesSeen:string[] = formMulticastDefaultPoolName.trim() ? [formMulticastDefaultPoolName.trim().toLowerCase()] : [];
       for(let p of poolsOut){
         if(p.name){
-          if(namesSeen.includes(p.name.toLowerCase())){ saveError = "Multicast DHCP: two pools are named \"" + p.name + "\"."; return; }
+          if(namesSeen.includes(p.name.toLowerCase())){ fail("multicast", "Multicast DHCP: two pools are named \"" + p.name + "\"."); return; }
           namesSeen.push(p.name.toLowerCase());
         }
-        if(!(p.maxMbps > 0) || !isFinite(p.maxMbps)){ saveError = "Multicast DHCP: every pool needs a limit in Mbit/s above 0."; return; }
-        if(limitsSeen.includes(p.maxMbps)){ saveError = "Multicast DHCP: two pools have the limit " + p.maxMbps + " Mbit/s."; return; }
+        if(!(p.maxMbps > 0) || !isFinite(p.maxMbps)){ fail("multicast", "Multicast DHCP: every pool needs a limit in Mbit/s above 0."); return; }
+        if(limitsSeen.includes(p.maxMbps)){ fail("multicast", "Multicast DHCP: two pools have the limit " + p.maxMbps + " Mbit/s."); return; }
         limitsSeen.push(p.maxMbps);
-        if(!cidrRe.test(p.range)){ saveError = "Multicast DHCP: the pool up to " + p.maxMbps + " Mbit/s needs a CIDR range, e.g. 239.40.0.0/16"; return; }
+        if(!cidrRe.test(p.range)){ fail("multicast", "Multicast DHCP: the pool up to " + p.maxMbps + " Mbit/s needs a CIDR range, e.g. 239.40.0.0/16"); return; }
       }
 
       // DDNS validation
       let ddnsPort = parseInt(formDdnsPort);
       if(isNaN(ddnsPort) || ddnsPort <= 0 || ddnsPort > 65535){
-        saveError = "DDNS: Port must be between 1 and 65535.";
+        fail("ddns", "DDNS: Port must be between 1 and 65535.");
         return;
       }
       let ddnsTtl = parseInt(formDdnsTtl);
       if(isNaN(ddnsTtl) || ddnsTtl <= 0){
-        saveError = "DDNS: TTL must be a positive number of seconds.";
+        fail("ddns", "DDNS: TTL must be a positive number of seconds.");
         return;
       }
       if(formDdnsEnabled){
-        if(!formDdnsServer.trim()){ saveError = "DDNS: DNS server address is required when enabled."; return; }
-        if(!formDdnsZone.trim()){ saveError = "DDNS: Zone is required when enabled."; return; }
+        if(!formDdnsServer.trim()){ fail("ddns", "DDNS: DNS server address is required when enabled."); return; }
+        if(!formDdnsZone.trim()){ fail("ddns", "DDNS: Zone is required when enabled."); return; }
         // Unsigned mode ("none") needs no TSIG key at all.
         if(formDdnsKeyAlgorithm !== "none"){
-          if(!formDdnsKeyName.trim()){ saveError = "DDNS: TSIG key name is required when enabled."; return; }
-          if(!formDdnsKeySecretSet && !formDdnsKeySecret){ saveError = "DDNS: TSIG key secret is required when enabled."; return; }
+          if(!formDdnsKeyName.trim()){ fail("ddns", "DDNS: TSIG key name is required when enabled."); return; }
+          if(!formDdnsKeySecretSet && !formDdnsKeySecret){ fail("ddns", "DDNS: TSIG key secret is required when enabled."); return; }
         }
       }
 
@@ -573,6 +624,9 @@
       }).catch((e:any)=>{
         saving = false;
         saveError = (e && e.message) ? e.message : "Save failed.";
+        // The server names the section when the reason is in one.
+        const section = e?.error?.section;
+        if(typeof section === "string" && FOLD_IDS.includes(section)){ setOpen([section], true); }
       });
     }
 
@@ -970,6 +1024,10 @@
       {/if}
     </h2>
     <p class="setup-subtitle">Edit the most-used NMOS Crosspoint settings. Persists to <code>./config/settings.json</code>.</p>
+    <div class="setup-fold-all">
+      <button type="button" on:click={()=>setOpen(FOLD_IDS, true)}>Expand all</button>
+      <button type="button" on:click={()=>setOpen(FOLD_IDS, false)}>Collapse all</button>
+    </div>
 
     {#if serverState.restartRequired}
       <div class="alert alert-warning setup-alert">
@@ -1000,8 +1058,10 @@
     {/if}
 
 
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!openSections.registry}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"registry"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.registry}
+                aria-label="Show or hide NMOS Registry"><Icon src={ChevronRight} /></button>
         <h3>NMOS Registry</h3>
         <HelpTip label="About the NMOS registry">
           <p>How the server finds the NMOS registry. With discovery enabled it first
@@ -1010,6 +1070,17 @@
           <p>A static IP entered below always wins over any discovered registry.
           Leave the IP empty to rely on discovery alone.</p>
         </HelpTip>
+        <span class="setup-summary">
+          {#if registryStatusList.length === 0}
+            <span class="setup-dot setup-dot-warning"></span><span>no registry</span>
+          {:else}
+            {#each registryStatusList.slice(0, 1) as r}
+              <span class="setup-dot {regUp(r) > 0 && regUp(r) === regTotal(r) ? "setup-dot-success" : regUp(r) > 0 ? "setup-dot-warning" : "setup-dot-error"}"></span>
+              <code>{r.ip}:{r.port}</code>
+              <span>· {regUp(r)}/{regTotal(r) || 6} connected{registryStatusList.length > 1 ? " · +" + (registryStatusList.length - 1) : ""}</span>
+            {/each}
+          {/if}
+        </span>
       </div>
 
       <div class="setup-form">
@@ -1083,8 +1154,10 @@
     </section>
 
 
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!openSections.gmid}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"gmid"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.gmid}
+                aria-label="Show or hide Acceptable PTP GMID"><Icon src={ChevronRight} /></button>
         <h3>Acceptable PTP GMID</h3>
         <HelpTip label="About the PTP GMID">
           <p>Expected PTP Grand-Master ID. Devices whose node clock is locked to this GMID
@@ -1092,6 +1165,9 @@
           Details page, all others get a <span class="setup-dot setup-dot-warning"></span> yellow one.
           Leave empty to disable the comparison.</p>
         </HelpTip>
+        <span class="setup-summary">
+          {#if formGmid.trim()}<code>{formGmid.trim()}</code>{:else}<span>not set</span>{/if}
+        </span>
       </div>
 
       <div class="setup-form">
@@ -1106,6 +1182,7 @@
 
     <section class="setup-section">
       <div class="setup-section-head">
+        <span class="setup-fold-spacer"></span>
         <h3>Receiver Auto-Reconnect</h3>
         <HelpTip label="About receiver auto-reconnect">
           <p>Whenever a sender's SDP changes (multicast IP / port, or e.g. channel count,
@@ -1122,6 +1199,7 @@
 
     <section class="setup-section">
       <div class="setup-section-head">
+        <span class="setup-fold-spacer"></span>
         <h3>Crosspoint: Auto-Activate Sender</h3>
         <HelpTip label="About auto-activating senders">
           <p>When a connection is made on the Crosspoint page whose source sender is
@@ -1139,6 +1217,7 @@
 
     <section class="setup-section">
       <div class="setup-section-head">
+        <span class="setup-fold-spacer"></span>
         <h3>BCP-008 Status Monitoring</h3>
         <HelpTip label="About BCP-008 status monitoring">
           <p>Live health monitoring of senders and receivers via
@@ -1158,8 +1237,10 @@
     </section>
 
 
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!openSections.audio}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"audio"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.audio}
+                aria-label="Show or hide Audio Monitor (experimental)"><Icon src={ChevronRight} /></button>
         <h3>Audio Monitor (experimental)</h3>
         <HelpTip label="About the audio monitor">
           <p>Adds a 🎧 button next to each audio sender on the Details page.
@@ -1175,8 +1256,19 @@
           in the media VLAN); on the default bridge network the 🎧 button connects
           but stays silent. Alternatively use a probe (below).</p>
         </HelpTip>
+        {#if formAudioMonitorEnabled}
+          <span class="setup-summary">
+            {#if !probeState.probes || probeState.probes.length === 0}
+              <span class="setup-dot setup-dot-warning"></span><span>no probe</span>
+            {:else if probeState.probes.length === 1}
+              <span class="setup-dot setup-dot-success"></span><span>probe {probeState.probes[0].name}</span>
+            {:else}
+              <span class="setup-dot setup-dot-success"></span><span>{probeState.probes.length} probes</span>
+            {/if}
+          </span>
+        {/if}
         <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable Audio Monitor"
-               bind:checked={formAudioMonitorEnabled} on:change={markDirty} />
+               bind:checked={formAudioMonitorEnabled} on:change={(e)=>{ markDirty(); openIfOn("audio", e); }} />
       </div>
 
       <div class="setup-subhead">
@@ -1223,8 +1315,10 @@
     </section>
 
 
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!openSections.multicast}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"multicast"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.multicast}
+                aria-label="Show or hide Multicast DHCP"><Icon src={ChevronRight} /></button>
         <h3>Multicast DHCP</h3>
         <HelpTip label="About multicast DHCP">
           <p>The server reserves a pair of consecutive multicast addresses per <strong>active</strong> sender
@@ -1245,7 +1339,7 @@
           pools; <em>Renew from Pool</em> sorts every active sender in again.</p>
         </HelpTip>
         <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable Multicast DHCP"
-               bind:checked={formAutoMulticastEnabled} on:change={markDirty} />
+               bind:checked={formAutoMulticastEnabled} on:change={(e)=>{ markDirty(); openIfOn("multicast", e); }} />
       </div>
 
       <div class="setup-form">
@@ -1416,8 +1510,10 @@
     </section>
 
 
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!(formVirtualNodeEnabled && openSections.virtual)}>
+      <div class="setup-section-head" class:setup-head-fold={formVirtualNodeEnabled} use:foldHead={"virtual"}>
+        <button type="button" class="setup-fold" aria-expanded={!!(formVirtualNodeEnabled && openSections.virtual)} disabled={!(formVirtualNodeEnabled)}
+                aria-label="Show or hide Virtual Senders"><Icon src={ChevronRight} /></button>
         <h3>Virtual Senders</h3>
         <HelpTip label="About virtual senders">
           <p>Operator-defined senders for devices that don't speak NMOS themselves: paste their SDPs
@@ -1435,8 +1531,20 @@
           comes from the SDP exactly as you typed it; virtual senders are read-only over IS-05,
           so the multicast-edit pencil is hidden for them on the Details page.</p>
         </HelpTip>
+        {#if formVirtualNodeEnabled && serverState.virtualNode?.enabled && virtualStatus}
+          <span class="setup-summary">
+            {#if virtualStatus.state === "registered"}
+              <span class="setup-dot setup-dot-success"></span>
+              <span>registered · {virtualStatus.devices} {virtualStatus.devices === 1 ? "device" : "devices"}, {virtualStatus.senders} {virtualStatus.senders === 1 ? "sender" : "senders"}</span>
+            {:else if virtualStatus.state === "error"}
+              <span class="setup-dot setup-dot-error"></span><span>registration failed</span>
+            {:else if virtualStatus.state === "none"}
+              <span class="setup-dot setup-dot-warning"></span><span>no registry yet</span>
+            {/if}
+          </span>
+        {/if}
         <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable Virtual NMOS Node"
-               bind:checked={formVirtualNodeEnabled} on:change={markDirty} />
+               bind:checked={formVirtualNodeEnabled} on:change={(e)=>{ markDirty(); openIfOn("virtual", e); }} />
       </div>
 
       {#if formVirtualNodeEnabled}
@@ -1567,8 +1675,10 @@
     </section>
 
 
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!openSections.weblinks}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"weblinks"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.weblinks}
+                aria-label="Show or hide Device Web UI Link Setup"><Icon src={ChevronRight} /></button>
         <h3>Device Web UI Link Setup</h3>
         <HelpTip label="About device web UI links">
           <p>How the „Open device web UI" link on the Details page is built depends on the vendor.
@@ -1682,8 +1792,10 @@
     </section>
 
 
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!openSections.ddns}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"ddns"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.ddns}
+                aria-label="Show or hide Push Names to DNS (DDNS)"><Icon src={ChevronRight} /></button>
         <h3>Push Names to DNS (DDNS)</h3>
         <HelpTip label="About DDNS">
           <p>Publishes each NMOS node as an <strong>A record</strong> via standard
@@ -1704,7 +1816,7 @@
           button also removes its DNS record.</p>
         </HelpTip>
         <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable DDNS"
-               bind:checked={formDdnsEnabled} on:change={markDirty} />
+               bind:checked={formDdnsEnabled} on:change={(e)=>{ markDirty(); openIfOn("ddns", e); }} />
       </div>
 
       <div class="setup-form">
@@ -1802,8 +1914,10 @@
 
 
     {#if ssoAdmin && ssoForm}
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!(ssoForm.enabled && openSections.sso)}>
+      <div class="setup-section-head" class:setup-head-fold={ssoForm.enabled} use:foldHead={"sso"}>
+        <button type="button" class="setup-fold" aria-expanded={!!(ssoForm.enabled && openSections.sso)} disabled={!(ssoForm.enabled)}
+                aria-label="Show or hide Single sign-on (OpenID Connect)"><Icon src={ChevronRight} /></button>
         <h3>Single sign-on (OpenID Connect)</h3>
         <HelpTip label="About single sign-on">
           <p>Sign in with an OpenID Connect provider (Keycloak, Entra ID, Authentik, …)
@@ -1817,7 +1931,7 @@
         </HelpTip>
         <span class="sso-badge">ADMINS ONLY</span>
         <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable single sign-on"
-               bind:checked={ssoForm.enabled} on:change={ssoChanged} />
+               bind:checked={ssoForm.enabled} on:change={(e)=>{ ssoChanged(); openIfOn("sso", e); }} />
       </div>
 
       {#if ssoForm.enabled}
@@ -1957,8 +2071,10 @@
       {/if}
     </section>
     {:else if ssoStatus.enabled}
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!openSections.sso}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"sso"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.sso}
+                aria-label="Show or hide Single sign-on (OpenID Connect)"><Icon src={ChevronRight} /></button>
         <h3>Single sign-on (OpenID Connect)</h3>
         <span class="sso-badge">ADMINS ONLY</span>
       </div>
@@ -1972,8 +2088,10 @@
     {/if}
 
 
-    <section class="setup-section">
-      <div class="setup-section-head">
+    <section class="setup-section" class:setup-folded={!openSections.login}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"login"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.login}
+                aria-label="Show or hide Change Login and Password"><Icon src={ChevronRight} /></button>
         <h3>Change Login &amp; Password</h3>
         <HelpTip label="About login and password">
           <p>Updates the admin user stored in <code>./config/users.json</code>.
