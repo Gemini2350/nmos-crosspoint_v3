@@ -653,3 +653,139 @@ html[data-theme="light"] {
     }
 }
 
+
+// ----- IS-08 Channel Map -----
+// Logo green for the feature, one colour per input (set inline as --cm).
+.details-page {
+    .det-cm-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        margin-left: 10px;
+        padding: 1px 8px;
+        border-radius: 9px;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        color: #34d399;
+        background: color-mix(in oklab, #34d399 12%, transparent);
+        border: 1px solid color-mix(in oklab, #34d399 35%, transparent);
+        svg { width: 13px; height: 13px; }
+        &:hover, &.det-cm-pill-open { background: color-mix(in oklab, #34d399 24%, transparent); }
+        .det-cm-pill-warn {
+            margin-left: 2px;
+            padding: 0 4px;
+            border-radius: 6px;
+            background: theme('colors.amber.500');
+            color: #111;
+        }
+    }
+    // The name keeps its room; only the hint is cut short.
+    .det-flow-name:has(.det-cm-hint) .det-flow-name-text { flex-shrink: 0; }
+    .det-cm-hint {
+        flex: 0 1 auto;
+        min-width: 0;
+        margin-left: 10px;
+        font-size: 0.72rem;
+        color: theme('colors.base-content / 62%');
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        &:hover { color: theme('colors.base-content'); text-decoration: underline; }
+    }
+    .det-cm {
+        border-top: 1px solid theme('colors.base-300');
+        padding: 6px 16px 10px 16px;
+    }
+    .det-cm-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+        font-size: 0.64rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #34d399;
+        svg { width: 13px; height: 13px; }
+        .det-cm-time {
+            font-weight: 500;
+            letter-spacing: 0;
+            text-transform: none;
+            color: theme('colors.base-content / 50%');
+        }
+        .det-cm-spacer { flex: 1; }
+        .det-cm-btn { text-transform: none; letter-spacing: 0; }
+    }
+    .det-cm-error {
+        margin-bottom: 6px;
+        font-size: 0.78rem;
+        color: theme('colors.amber.500');
+    }
+    .det-cm-note {
+        margin-bottom: 6px;
+        font-size: 0.75rem;
+        color: theme('colors.base-content / 60%');
+    }
+    .det-cm-outputs {
+        display: grid;
+        grid-template-columns: minmax(130px, max-content) 1fr;
+        column-gap: 16px;
+        row-gap: 6px;
+        align-items: center;
+        font-size: 0.8rem;
+    }
+    .det-cm-out {
+        font-weight: 600;
+        small {
+            display: block;
+            font-weight: 400;
+            font-size: 0.68rem;
+            color: theme('colors.base-content / 55%');
+        }
+    }
+    .det-cm-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+    .det-cm-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 1px 7px 1px 3px;
+        border-radius: 5px;
+        font: 600 0.72rem/1.5 'Roboto Mono', monospace;
+        color: var(--cm);
+        background: color-mix(in oklab, var(--cm) 16%, transparent);
+        border: 1px solid color-mix(in oklab, var(--cm) 40%, transparent);
+        i {
+            font-style: normal;
+            font-weight: 500;
+            min-width: 15px;
+            text-align: center;
+            border-radius: 3px;
+            background: theme('colors.base-content / 10%');
+            color: theme('colors.base-content / 70%');
+        }
+        &.det-cm-chip-mute { --cm: #8b95a5; }
+    }
+    .det-cm-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 14px;
+        margin-top: 8px;
+        font-size: 0.7rem;
+        color: theme('colors.base-content / 75%');
+        span::before {
+            content: "";
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            margin-right: 5px;
+            border-radius: 2px;
+            background: var(--cm);
+            vertical-align: -1px;
+        }
+    }
+}

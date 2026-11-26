@@ -6,6 +6,7 @@
 import * as WebSocket from "ws";
 import { annotationHref, annotationHrefs, annotationPath, buildLabelPatch, annotationErrorText, AnnotationKind } from "./annotation";
 import { EndpointMemory, tryEndpoints, deviceRequest, allUnreachable } from "./deviceEndpoints";
+import { channelMapHrefs } from "./is08";
 import { SettleTimer } from "./settleTimer";
 import { failedBecause } from "./deviceError";
 import * as dns from "dns";
@@ -848,6 +849,7 @@ export class NmosRegistryConnector {
             const src = this.nmosState[type][id]?.["_sourceRegistry"];
             if(src === registryUrl || (!src && soleRegistry)){
                 delete this.nmosState[type][id];
+                if(type === "devices"){ delete this.nmosState.channelmapping[id]; }
                 removed.push(id);
             }
         }
@@ -932,8 +934,11 @@ export class NmosRegistryConnector {
                                     f(g.path, postData);
                                 })
 
+                                // This item changed at all, its version included.
+                                let itemChanged = isNew;
                                 if(!isNew){
                                     let diff = jsonpatch.compare(this.nmosState[type][g.path], postData);
+                                    itemChanged = diff.length > 0;
                                     if(diff.length == 0){
                                         // nothing
                                     }else if(diff.length == 1 &&  diff[0].op == "replace" && diff[0].path == "/version"){
@@ -948,11 +953,15 @@ export class NmosRegistryConnector {
                                     
                                 }
 
-                                if((changes || isNew) && type == "devices"){
-                                    this.loadChannelMaping(postData);
-                                }
-
                                 this.nmosState[type][g.path] = postData;
+
+                                // IS-08 notifies nothing: a device's Channel
+                                // Map is read when it appears or changes in
+                                // the registry, a new version alone included.
+                                // Per item: `changes` covers the whole batch.
+                                if(itemChanged && type == "devices"){
+                                    this.readChannelMap(g.path);
+                                }
 
                                 // DNS Push: whenever a node's label or href
                                 // changes, schedule a push. Debounced inside
@@ -986,6 +995,7 @@ export class NmosRegistryConnector {
                         try {
                             if(this.nmosState[type][g.path]){
                                 delete this.nmosState[type][g.path];
+                                if(type === "devices"){ delete this.nmosState.channelmapping[g.path]; }
                                 // DNS Push: a node that's gone from the
                                 // registry should not keep a stale DNS entry.
                                 if(type === "nodes"){
@@ -1052,57 +1062,60 @@ export class NmosRegistryConnector {
 
     }
 
-    async loadChannelMaping(postData:any){
-        let cmLoaded = false;
-        // TODO: other versions
-        let cmHrefs:string[] = (Array.isArray(postData?.controls) ? postData.controls : [])
-            .filter((c:any)=>c && c.type == "urn:x-nmos:control:cm-ctrl/v1.0" && typeof c.href === "string")
-            .map((c:any)=>c.href);
-        if(cmHrefs.length > 0){
-            {
-                try{
-                    // Every href is the same Channel Mapping API: the first
-                    // that answers is read.
-                    let { io, map } = await this.viaDevice("IS-08", postData.id, cmHrefs, async (href)=>{
-                        let io = await axios.get(joinHref(href, "io"), deviceRequest(10000));
-                        let map = await axios.get(joinHref(href, "map/active"), deviceRequest(10000));
-                        return { io, map };
-                    });
+    // IS-08 reads in flight per device; a trigger meanwhile reads once more.
+    private channelMapReading: Map<string, boolean> = new Map();
 
-                    for(let k in io.data.outputs){
-
-                        let data = io.data.outputs[k];
-                        if(data.source_id == null){
-                            data["receivers"] = [];
-
-                            
-                            for(let inId of io.data.outputs[k].caps.routable_inputs){
-                                try{
-                                    if(io.data.inputs[inId].parent.type = "receiver"){
-                                        data["receivers"].push(io.data.inputs[inId].parent.id)
-                                    }
-                                }catch(e){}
-                            }
-                            
-                            if(data.receivers.length > 0){
-                                this.nmosState.channelmapping[k] = data;
-                            }
-                        }
-                    }
-
-                
-                    cmLoaded = true;
-                    
-
-                }catch(e){
-                    //console.log(e);
-                }
-            }
+    /**
+     * IS-08: read a device's Channel Mapping API (/io and /map/active) and keep
+     * the answers as they came, under the device id in nmosState.channelmapping.
+     * The crosspoint turns them into the Channel Map on the Details page.
+     * IS-08 v1.0 notifies nothing, so this runs when the device appears or
+     * changes in the registry and when the Details page asks, never on a timer.
+     * A failed read keeps the last map and says why.
+     */
+    async readChannelMap(deviceId:string): Promise<void>{
+        if(this.channelMapReading.has(deviceId)){
+            this.channelMapReading.set(deviceId, true);
+            return;
         }
-
-        this.scheduleSyncNmos();
-        this.updateCrosspoint();
-
+        this.channelMapReading.set(deviceId, false);
+        try{
+            const device:any = this.nmosState.devices?.[deviceId];
+            const hrefs = channelMapHrefs(device?.controls);
+            if(hrefs.length == 0){
+                if(this.nmosState.channelmapping[deviceId]){
+                    delete this.nmosState.channelmapping[deviceId];
+                    this.scheduleSyncNmos();
+                    this.updateCrosspoint();
+                }
+                return;
+            }
+            let entry:any;
+            try{
+                let used = "";
+                const r = await this.viaDevice("IS-08", deviceId, hrefs, async (href)=>{
+                    used = href;
+                    const io = await axios.get(joinHref(href, "io"), deviceRequest(10000));
+                    const active = await axios.get(joinHref(href, "map/active"), deviceRequest(10000));
+                    return { io: io.data, active: active.data };
+                });
+                entry = { href: used, io: r.io, active: r.active, readAt: Date.now(), error: "" };
+            }catch(e:any){
+                const why = allUnreachable(e) ? "Channel Mapping API unreachable"
+                    : "Channel Mapping API " + failedBecause(e?.response?.status, e?.response?.data, e?.code);
+                SyncLog.log("warn", "NMOS", "IS-08 of " + (device?.label || deviceId) + ": " + why, { hrefs, tried: e?.tried });
+                entry = { ...(this.nmosState.channelmapping[deviceId] || {}), readAt: Date.now(), error: why };
+            }
+            // Gone from the registry while we read: nothing to keep.
+            if(!this.nmosState.devices?.[deviceId]) return;
+            this.nmosState.channelmapping[deviceId] = entry;
+            this.scheduleSyncNmos();
+            this.updateCrosspoint();
+        }finally{
+            const again = this.channelMapReading.get(deviceId) === true;
+            this.channelMapReading.delete(deviceId);
+            if(again){ this.readChannelMap(deviceId); }
+        }
     }
 
 

@@ -6,7 +6,7 @@
     import { Icon, MagnifyingGlass, RectangleGroup, Pencil, ChevronRight,
        VideoCamera, Microphone, DocumentText,
        CodeBracketSquare, ArrowTopRightOnSquare,
-       Clock, ChevronDoubleDown, ChevronDoubleUp
+       Clock, ChevronDoubleDown, ChevronDoubleUp, ArrowsRightLeft
      } from "svelte-hero-icons";
 
     import ScrollArea from "../lib/ScrollArea.svelte";
@@ -90,6 +90,8 @@
       transport:string;
       // BCP-007-03 MXL sender: domain + flow id instead of legs.
       mxl:{ domainId:string, flowId:string } | null;
+      // IS-08: where its channels come from, in runs (server-computed).
+      channelSources:any[];
     }
     interface ReceiverRow {
       id:string;
@@ -110,6 +112,8 @@
       // isMxl with null when nothing is connected yet.
       isMxl:boolean;
       mxl:{ domainId:string, flowId:string } | null;
+      // IS-08: which output channels its channels feed (server-computed).
+      channelTargets:any[];
     }
     interface DeviceRow {
       id:string;
@@ -145,6 +149,8 @@
       // (Forget would just trigger an immediate re-register; multicast
       // editing is rejected with 405).
       isVirtual:boolean;
+      // IS-08 Channel Map, names resolved by the server; null without one.
+      channelMap:any;
       senders:SenderRow[];
       receivers:ReceiverRow[];
     }
@@ -275,7 +281,8 @@
             sdp: (typeof s.sdp === "string") ? s.sdp : "",
             isVirtual: !!s.isVirtual,
             transport: s.capabilities?.transport || "",
-            mxl: s.capabilities?.transport === "mxl" ? (s.mxl || { domainId:"", flowId:"" }) : null
+            mxl: s.capabilities?.transport === "mxl" ? (s.mxl || { domainId:"", flowId:"" }) : null,
+            channelSources: Array.isArray(s.channelSources) ? s.channelSources : []
           };
 
           if(searchTokens.length > 0){
@@ -325,7 +332,8 @@
             bitrate: r.bitrate,
             legs: Array.isArray(r.legs) ? r.legs : [],
             isMxl: r.capabilities?.transport === "mxl",
-            mxl: r.mxl || null
+            mxl: r.mxl || null,
+            channelTargets: Array.isArray(r.channelTargets) ? r.channelTargets : []
           };
 
           if(searchTokens.length > 0){
@@ -378,6 +386,7 @@
           gmidLocked: !!dev.gmidLocked,
           deviceUrl: dev.deviceUrl || "",
           isVirtual: !!dev.isVirtual,
+          channelMap: dev.channelMap || null,
           senders: senderRows,
           receivers: receiverRows
         });
@@ -525,6 +534,47 @@
       filter = filter;
       saveFilter();
     }
+
+    // ----- IS-08 Channel Map -----
+    // The server sends it complete (names resolved, runs and ranges worked
+    // out). Here only: which maps are open, short tags and colours for the
+    // inputs, and the text the rows show.
+    let openChannelMaps:string[] = [];
+    function toggleChannelMap(dev:DeviceRow){
+      if(openChannelMaps.includes(dev.id)){
+        openChannelMaps = openChannelMaps.filter((d) => d !== dev.id);
+        return;
+      }
+      openChannelMaps = [...openChannelMaps, dev.id];
+      if(!(filter.expanded.devices || []).includes(dev.id)){ toggleDevice(dev.id); }
+    }
+    function showChannelMap(dev:DeviceRow){
+      if(!openChannelMaps.includes(dev.id)){ toggleChannelMap(dev); }
+    }
+    function rereadChannelMap(dev:DeviceRow){
+      ServerConnector.post("channelMapRead", { id: dev.id }).catch(()=>{});
+    }
+    const CM_COLORS = ["#a78bfa", "#38bdf8", "#f59e0b", "#f472b6", "#34d399", "#fb923c", "#60a5fa", "#e879f9"];
+    function cmTag(i:number){ return i < 26 ? String.fromCharCode(65 + i) : "I" + (i + 1); }
+    function cmColor(i:number){ return CM_COLORS[i % CM_COLORS.length]; }
+    function cmInputIndex(cm:any, id:string|null){
+      return (cm?.inputs || []).findIndex((x:any) => x.id === id);
+    }
+    function cmRange(a:number, b:number){ return a === b ? "" + a : a + "–" + b; }
+    function cmSourcesText(segs:any[]){
+      return segs.map((s:any) => s.input === null ? "muted " + cmRange(s.outFrom, s.outTo) : s.name + " " + cmRange(s.from, s.to)).join(" · ");
+    }
+    function cmSourcesTip(segs:any[]){
+      return segs.map((s:any) => "Channel " + cmRange(s.outFrom, s.outTo) + (s.input === null ? ": muted" : " ← " + s.name + " " + cmRange(s.from, s.to))).join("\n");
+    }
+    function cmTargetsText(ts:any[]){
+      return ts.map((t:any) => t.name + " " + t.ranges.map((r:any) => cmRange(r[0], r[1])).join(", ")).join(" · ");
+    }
+    function cmOutputKind(o:any){
+      const n = o.channels.length + " ch";
+      return o.kind === "sender" ? "Sender · " + n : o.kind === "source" ? "Source · " + n : "Local output · " + n;
+    }
+    function cmTime(ms:number){ return ms ? new Date(ms).toLocaleTimeString() : ""; }
 
     // Expand / collapse every device at once (button next to the filters).
     // "Expand all" also unfolds collapsed node groups; "Collapse all" folds
@@ -1126,6 +1176,14 @@
                 <Icon src={Clock}></Icon>
               </span>
             {/if}
+            {#if dev.channelMap}
+              <button class="det-cm-pill" class:det-cm-pill-open={isExpanded && openChannelMaps.includes(dev.id)}
+                      on:click|stopPropagation={()=>toggleChannelMap(dev)}
+                      use:OverlayMenuService.tooltip
+                      data-tooltip={dev.channelMap.error ? "IS-08 Channel Map — last read failed: " + dev.channelMap.error : "IS-08 Channel Map: which input channels feed which output channels"}>
+                <Icon src={ArrowsRightLeft}></Icon>Channel Map{#if dev.channelMap.error}<span class="det-cm-pill-warn">!</span>{/if}
+              </button>
+            {/if}
             <span class="det-head-actions det-hover">
               <button on:click|stopPropagation={()=>openLabelEditor(dev.id, "device", dev.name, dev.alias)} class="det-icon-btn"
                       use:OverlayMenuService.tooltip data-tooltip="Rename">
@@ -1196,6 +1254,10 @@
                           <span class="det-flow-name-text">{flow.alias}</span>
                         {:else}
                           <span class="det-flow-name-text" use:OverlayMenuService.tooltip data-tooltip="{flow.name}">{flow.alias}</span>
+                        {/if}
+                        {#if flow.channelSources.length > 0}
+                          <button class="det-cm-hint" on:click={()=>showChannelMap(dev)}
+                                  use:OverlayMenuService.tooltip data-tooltip={cmSourcesTip(flow.channelSources)}>◂ {cmSourcesText(flow.channelSources)}</button>
                         {/if}
                         {#if flow.isVirtual}
                           <span class="det-virtual-badge"
@@ -1362,6 +1424,10 @@
                         {:else}
                           <span class="det-flow-name-text" use:OverlayMenuService.tooltip data-tooltip="{recv.name}">{recv.alias}</span>
                         {/if}
+                        {#if recv.channelTargets.length > 0}
+                          <button class="det-cm-hint" on:click={()=>showChannelMap(dev)}
+                                  use:OverlayMenuService.tooltip data-tooltip={"Its channels feed: " + cmTargetsText(recv.channelTargets)}>▸ {cmTargetsText(recv.channelTargets)}</button>
+                        {/if}
                         <button on:click={()=>openLabelEditor(recv.id, "receiver", recv.name, recv.alias)} class="det-icon-btn det-hover"
                                 use:OverlayMenuService.tooltip data-tooltip="Rename">
                           <Icon src={Pencil}></Icon>
@@ -1415,6 +1481,51 @@
                 {/each}
                 </tbody>
               </table>
+            {/if}
+
+            {#if dev.channelMap && openChannelMaps.includes(dev.id)}
+              {@const cm = dev.channelMap}
+              <div class="det-cm">
+                <div class="det-cm-head">
+                  <Icon src={ArrowsRightLeft}></Icon><span>Channel Map · IS-08</span>
+                  {#if cm.readAt}<span class="det-cm-time">read {cmTime(cm.readAt)}</span>{/if}
+                  <span class="det-cm-spacer"></span>
+                  <button class="btn btn-xs det-cm-btn" on:click={()=>rereadChannelMap(dev)}>Re-read</button>
+                </div>
+                {#if cm.error}
+                  <div class="det-cm-error">{cm.error}{cm.outputs.length > 0 ? " — showing the last map read." : ""}</div>
+                {/if}
+                {#if cm.sharedWith.length > 0}
+                  <div class="det-cm-note">The same Channel Mapping API also serves {cm.sharedWith.join(", ")}.</div>
+                {/if}
+                {#if cm.outputs.length > 0}
+                  <div class="det-cm-outputs">
+                    {#each cm.outputs as o (o.id)}
+                      <div class="det-cm-out">{o.name}<small>{cmOutputKind(o)}{o.deviceName ? " · " + o.deviceName : ""}</small></div>
+                      <div class="det-cm-chips">
+                        {#each o.channels as c, i}
+                          {@const k = cmInputIndex(cm, c.input)}
+                          {#if k < 0}
+                            <span class="det-cm-chip det-cm-chip-mute" use:OverlayMenuService.tooltip
+                                  data-tooltip={(c.label || "Channel " + (i + 1)) + ": muted"}><i>{i + 1}</i>—</span>
+                          {:else}
+                            <span class="det-cm-chip" style="--cm:{cmColor(k)}" use:OverlayMenuService.tooltip
+                                  data-tooltip={(c.label || "Channel " + (i + 1)) + " ← " + cm.inputs[k].name + " " + (cm.inputs[k].channels[c.inputChannel - 1] || "channel " + c.inputChannel)}><i>{i + 1}</i>{cmTag(k)}·{c.inputChannel}</span>
+                          {/if}
+                        {/each}
+                      </div>
+                    {/each}
+                  </div>
+                  <div class="det-cm-legend">
+                    {#each cm.inputs as inp, k (inp.id)}
+                      <span style="--cm:{cmColor(k)}" use:OverlayMenuService.tooltip
+                            data-tooltip={inp.deviceName ? "On the device: " + inp.deviceName : inp.name}>{cmTag(k)} = {inp.name} ({inp.channels.length} ch{inp.kind === "local" ? ", local input" : ""})</span>
+                    {/each}
+                  </div>
+                {:else if !cm.error}
+                  <div class="det-cm-note">The device lists no outputs.</div>
+                {/if}
+              </div>
             {/if}
 
           {/if}

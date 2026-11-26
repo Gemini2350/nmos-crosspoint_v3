@@ -9,6 +9,7 @@ import { DdnsService } from "./ddnsService";
 import { Bcp008Monitor } from "./bcp008Monitor";
 import { flowCapAttrs, capSignature, acceptedSignatures, capsSummary } from "./receiverCaps";
 import { clashingOwners } from "./senderAlias";
+import { buildChannelMapView, outputSegments, receiverTargets, ChannelMapLookup, ChannelMapInput, ChannelMapOutput, ChannelMapSegment, ChannelMapTarget } from "./is08";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -336,6 +337,16 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
      * device's own label is the one to show, and it arrives through IS-04.
      * `id` is a crosspoint id — "node_<node id>" or "nmos_<resource id>".
      */
+    /** IS-08: read a device's Channel Map again (the Details page's
+     *  "Re-read"). `id` is the crosspoint device id, "nmos_<device id>". */
+    async readChannelMap(id:string): Promise<any> {
+        const conn = NmosRegistryConnector.instance;
+        if(!conn) throw new Error("NMOS connection not running.");
+        if(!id.startsWith("nmos_")) throw new Error("Not an NMOS device: " + id);
+        await conn.readChannelMap(id.substring(5));
+        return { message: 200 };
+    }
+
     async annotate(id:string, label:string|null): Promise<any> {
         const conn = NmosRegistryConnector.instance;
         if(!conn) throw new Error("NMOS connection not running.");
@@ -1377,6 +1388,80 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         return out;
     }
 
+    /**
+     * IS-08: the Channel Map of every device that has one, built from the raw
+     * /io and /map/active the connector keeps (nmosState.channelmapping), with
+     * names resolved as the Details page shows them, aliases included. Sender
+     * rows get where their channels come from, receiver rows where theirs go.
+     */
+    private enrichChannelMaps(){
+        const st:any = this.nmosState;
+        const maps:any = st?.channelmapping || {};
+        const flowsOf = (dev:any, side:string): any[] => Object.values(dev?.[side] || {}).flat() as any[];
+        const nmosIdOf = (f:any): string => (f && typeof f.id === "string" && f.id.startsWith("nmos_")) ? f.id.substring(5) : "";
+
+        // Display names of all flows, by NMOS id, and the senders of each source.
+        const flowName: { [nmosId:string]: string } = {};
+        for(const dev of this.crosspointState.devices){
+            for(const f of [...flowsOf(dev, "senders"), ...flowsOf(dev, "receivers")]){
+                const id = nmosIdOf(f);
+                if(id) flowName[id] = f.alias || f.name || "";
+            }
+        }
+        const sendersOfSource: { [sourceId:string]: Array<{ id:string, name:string }> } = {};
+        for(const sid of Object.keys(st?.senders || {})){
+            const src = st.flows?.[st.senders[sid]?.flow_id]?.source_id;
+            if(src) (sendersOfSource[src] ||= []).push({ id: sid, name: flowName[sid] || st.senders[sid]?.label || sid });
+        }
+        // One API instance may serve several devices of a node (IS-08 allows it).
+        const devicesByHref: { [href:string]: string[] } = {};
+        for(const devId of Object.keys(maps)){
+            const h = maps[devId]?.href;
+            if(h) (devicesByHref[h] ||= []).push(devId);
+        }
+
+        for(const dev of this.crosspointState.devices){
+            const d = dev as CrosspointDevice;
+            const senders = flowsOf(dev, "senders"), receivers = flowsOf(dev, "receivers");
+            for(const f of senders) delete f.channelSources;
+            for(const f of receivers) delete f.channelTargets;
+            const devId = nmosIdOf(dev);
+            const raw = devId ? maps[devId] : null;
+            if(!raw || !st?.devices?.[devId]){ delete d.channelMap; continue; }
+
+            const lookup: ChannelMapLookup = {
+                receiverName: (id) => flowName[id] || st.receivers?.[id]?.label,
+                sourceSenders: (id) => sendersOfSource[id] || [],
+                sourceLabel: (id) => st.sources?.[id]?.label,
+                receiverOfSource: (id) => {
+                    for(const rid of (st.devices[devId]?.receivers || [])){
+                        const sub = st.receivers?.[rid]?.subscription;
+                        const src = sub?.sender_id ? st.flows?.[st.senders?.[sub.sender_id]?.flow_id]?.source_id : null;
+                        if(src && src === id) return { id: rid, name: flowName[rid] || st.receivers[rid]?.label || rid };
+                    }
+                    return undefined;
+                },
+            };
+            const view = buildChannelMapView(raw.io, raw.active, lookup);
+            const outputs = view.outputs.map((o) => ({ ...o, segments: outputSegments(view, o) }));
+            d.channelMap = {
+                readAt: raw.readAt || 0,
+                error: raw.error || "",
+                sharedWith: (devicesByHref[raw.href] || []).filter((x) => x !== devId).map((x) => st.devices?.[x]?.label || x),
+                inputs: view.inputs,
+                outputs,
+            };
+            for(const f of senders){
+                const o = outputs.find((o) => o.senderIds.includes(nmosIdOf(f)));
+                if(o) f.channelSources = o.segments;
+            }
+            for(const f of receivers){
+                const t = receiverTargets(view, nmosIdOf(f));
+                if(t.length > 0) f.channelTargets = t;
+            }
+        }
+    }
+
     private enrichCrosspointState(){
         if(!this.crosspointState || !Array.isArray(this.crosspointState.devices)) return;
 
@@ -1624,6 +1709,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // is switched off (vs. grey "device doesn't support it" hearts).
         (this.crosspointState as any).bcp008Enabled = this.settings?.bcp008?.enabled !== false;
 
+        try{ this.enrichChannelMaps(); }catch(e:any){
+            SyncLog.log("warn", "Crosspoint", "IS-08 Channel Map not built: " + (e?.message || e));
+        }
+
         // Drop cache entries for devices that no longer exist. Both caches
         // are keyed by crosspoint device id and were only ever written —
         // forgotten devices and old nmosgrp_<md5> keys (the hash changes
@@ -1764,6 +1853,10 @@ export interface CrosspointFlow {
     // IS-13: the Node behind this flow offers the Annotation API, so the
     // label can be changed on the device itself.
     annotatable?:boolean,
+    // IS-08, from the device's Channel Map. Sender: where its channels come
+    // from, in runs. Receiver: which output channels its channels feed.
+    channelSources?:ChannelMapSegment[],
+    channelTargets?:ChannelMapTarget[],
     // Receiver-only: identity + display label of the currently-connected
     // sender (mirrored from the sender side so the Details page can show
     // "← <Device> / <Sender>" without a second lookup).
@@ -1832,6 +1925,16 @@ export interface CrosspointDevice {
     gmidLocked?:boolean,
     deviceUrl?:string,
     isVirtual?:boolean,
+    // IS-08 Channel Map, names resolved (see enrichChannelMaps). `error` is
+    // set when the last read failed; inputs/outputs are then the last good
+    // read, or empty. `sharedWith`: other devices served by the same API.
+    channelMap?:{
+        readAt:number,
+        error:string,
+        sharedWith:string[],
+        inputs:ChannelMapInput[],
+        outputs:Array<ChannelMapOutput & { segments:ChannelMapSegment[] }>,
+    },
     // Final display name + tooltip — single source of truth for every UI
     // page (see composeDeviceLabel). UI renders these verbatim.
     displayLabel?:string,

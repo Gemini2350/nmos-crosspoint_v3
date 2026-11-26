@@ -1232,6 +1232,16 @@ server.addRoute("POST", "changealias","global", (client: WebsocketClient, query:
     });
 });
 
+// IS-08: read a device's Channel Map again.
+server.addRoute("POST", "channelMapRead","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        crosspoint
+            .readChannelMap("" + (postData?.id || ""))
+            .then((m) => resolve(m))
+            .catch((e:any) => reject({ message: e?.message || "IS-08 read failed" }));
+    });
+});
+
 // IS-13: set or reset a label on the device itself. `label` null = reset.
 server.addRoute("POST", "annotate","global", (client: WebsocketClient, query:string[], postData: any) => {
     return new Promise((resolve, reject) => {
