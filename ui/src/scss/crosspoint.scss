@@ -359,7 +359,8 @@ $cp-border: 1px solid transparent;
         // In a 32px row the tag has 6px below the glyph: further down it
         // would sit on the line to the next row.
         tbody td.cp-line-stick .cp-type .cp-mxl-tag { bottom: -5px; }
-        thead th .cp-type { position: relative; left: 1.5px; }
+        // Every sender glyph opens the sender dialog.
+        thead th .cp-type { position: relative; left: 1.5px; cursor: pointer; }
 
         // ----- BCP-008 state IS the colour of the essence glyph -----
         //   green   healthy
@@ -1949,4 +1950,156 @@ html[data-theme="light"] .crosspoint {
         pointer-events: none;
         z-index: 13;
     }
+}
+
+
+// ----- Sender dialog (SenderDialog.svelte) -----
+// A <dialog> outside the .crosspoint root, so nothing here is nested under it.
+.sd-box {
+    width: min(760px, calc(100vw - 32px));
+    max-width: 760px;
+}
+.sd-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-right: 40px;   // keep clear of the ✕ button
+    h3 { font-size: 1.15rem; font-weight: 700; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+.sd-active {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    // Green while the sender is active, like the power symbol in the matrix.
+    .toggle:checked { --tglbg: #15803d; border-color: #15803d; background-color: #fff; }
+}
+.sd-sub { font-size: 13px; opacity: 0.65; margin: 3px 0 12px; }
+.sd-tabs {
+    display: inline-flex;
+    flex-wrap: wrap;
+    border: 1px solid theme('colors.base-content / 18%');
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+    margin-bottom: 14px;
+    button {
+        font-size: 13px;
+        padding: 4px 14px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        &.on { background-color: theme('colors.base-content / 12%'); font-weight: 600; }
+    }
+    i.cp-monitor-dot { width: 8px; height: 8px; }
+    i.sd-tab-staged { width: 8px; height: 8px; border-radius: 50%; background-color: #f59e0b; display: inline-block; }
+}
+.sd-h { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; }
+.sd-legs {
+    display: grid;
+    grid-template-columns: auto 170px 84px auto;
+    justify-content: start;
+    gap: 8px 12px;
+    align-items: center;
+    font-size: 13px;
+    input {
+        font: inherit;
+        font-variant-numeric: tabular-nums;
+        padding: 5px 8px;
+        border-radius: 6px;
+        border: 1px solid theme('colors.base-content / 25%');
+        background: transparent;
+        width: 100%;
+        &.sd-warn { border-color: #f59e0b; }
+    }
+    .sd-src { font-variant-numeric: tabular-nums; opacity: 0.75; }
+    .sd-conflict { color: #f59e0b; font-size: 12px; margin-top: -4px; }
+}
+.sd-info {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 3px 12px;
+    align-items: baseline;
+    font-size: 13px;
+    margin-top: 14px;
+    .sd-v { min-width: 0; overflow-wrap: anywhere; }
+    .sd-v-dim  { opacity: 0.6; }
+    .sd-v-warn { color: #f59e0b; }
+    .sd-v-err  { color: #e21e1e; }
+    .sd-v-mono { font-variant-numeric: tabular-nums; }
+}
+.sd-note { font-size: 12px; opacity: 0.6; margin-top: 10px; }
+.sd-error { color: #e21e1e; font-size: 13px; margin-top: 10px; white-space: pre-line; }
+.sd-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.sd-copied { background-color: #15803d; border-color: #15803d; color: #fff; }
+.sd-pre {
+    font: 12px/1.45 'Roboto Mono', ui-monospace, monospace;
+    background-color: theme('colors.base-content / 6%');
+    border-radius: 8px;
+    padding: 10px 12px;
+    max-height: 360px;
+    overflow: auto;
+    white-space: pre;
+}
+// IS-08: output channels (rows) x the device's input channels (columns).
+.sd-cm-scroll { overflow-x: auto; max-height: 60vh; overflow-y: auto; padding-bottom: 4px; }
+.sd-cm {
+    display: grid;
+    gap: 4px;
+    align-items: center;
+    justify-content: start;
+    font-size: 11.5px;
+    .sd-cm-in {
+        color: var(--c);
+        border-bottom: 2px solid var(--c);
+        font-weight: 700;
+        font-size: 12.5px;
+        padding-bottom: 3px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+    }
+    .sd-cm-num { text-align: center; opacity: 0.55; font-variant-numeric: tabular-nums; }
+    .sd-cm-row { opacity: 0.6; text-align: right; padding-right: 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+}
+.sd-cell {
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    justify-self: center;
+    background-color: theme('colors.base-content / 9%');
+    cursor: pointer;
+    box-sizing: border-box;
+    &:hover:not(:disabled) { background-color: theme('colors.base-content / 22%'); }
+    &.sd-cell-on  { background-color: var(--c); }
+    &.sd-cell-new { background-color: var(--c); outline: 2.5px solid #f59e0b; outline-offset: 1px; }
+    &.sd-cell-old { background-color: transparent; border: 2px dashed #f59e0b; }
+    &.sd-cell-no  {
+        background: repeating-linear-gradient(45deg, theme('colors.base-content / 14%') 0 2px, transparent 2px 5px);
+        cursor: not-allowed;
+    }
+}
+.sd-cm-foot {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+    .sd-cm-staged { color: #f59e0b; font-weight: 700; font-size: 13px; margin-right: auto; }
+    .sd-cm-none { color: inherit; opacity: 0.5; font-weight: 400; }
+    .sd-cm-select {
+        font-size: 13px;
+        height: 2rem;
+        padding: 0 8px;
+        border-radius: 8px;
+        border: 1px solid theme('colors.base-content / 20%');
+        background-color: theme('colors.base-200');
+    }
+    .sd-take { background-color: #f87171; border-color: #f87171; color: #fff; }
+    .sd-take:disabled { opacity: 0.45; }
 }

@@ -348,9 +348,9 @@
     }
 
     // Who made it, below everything else.
+    // No rule above About: the line under the Save buttons was one too many.
     .setup-about {
-        border-top: 2px solid theme('colors.base-content / 18%');
-        margin-top: 16px;
+        margin-top: 22px;
         padding-top: 12px;
 
         h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 8px; }

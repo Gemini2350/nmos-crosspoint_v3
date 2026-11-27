@@ -6,9 +6,9 @@
 import * as WebSocket from "ws";
 import { annotationHref, annotationHrefs, annotationPath, buildLabelPatch, annotationErrorText, AnnotationKind } from "./annotation";
 import { EndpointMemory, tryEndpoints, deviceRequest, allUnreachable } from "./deviceEndpoints";
-import { channelMapHrefs } from "./is08";
+import { channelMapHrefs, activationBody } from "./is08";
 import { SettleTimer } from "./settleTimer";
-import { failedBecause } from "./deviceError";
+import { failedBecause, deviceErrorText } from "./deviceError";
 import * as dns from "dns";
 import axios from "axios";
 import { SyncObject } from "./SyncServer/syncObject";
@@ -1119,6 +1119,37 @@ export class NmosRegistryConnector {
     }
 
 
+
+    /**
+     * IS-08: one immediate activation (POST /map/activations) with the
+     * channels that change. A refusal carries the device's own text
+     * ({code, error, debug}). The map is read again afterwards whatever the
+     * outcome: IS-08 has no notifications, and /map/active reflects a
+     * completed activation.
+     */
+    async activateChannelMap(deviceId:string, action:any): Promise<void>{
+        const device:any = this.nmosState.devices?.[deviceId];
+        const hrefs = channelMapHrefs(device?.controls);
+        if(hrefs.length == 0){ throw new Error("This device does not offer IS-08 Channel Mapping."); }
+        const body = activationBody(action);
+        const name = device?.label || deviceId;
+        let href = "";
+        try{
+            const r:any = await this.viaDevice("IS-08", deviceId, hrefs, (base)=>{
+                href = joinHref(base, "map/activations");
+                return axios.post(href, body, deviceRequest(10000));
+            });
+            SyncLog.log("success", "IS-08", "Channel Map of " + name + " switched", { href, data: body, status: r?.status, response: r?.data });
+        }catch(e:any){
+            const text = deviceErrorText(e?.response?.data);
+            const msg = allUnreachable(e) ? "Channel Mapping API unreachable"
+                : "The device refused the Channel Map" + (e?.response?.status ? " (" + e.response.status + ")" : "") + ": " + (text || e?.message || e);
+            SyncLog.log("error", "IS-08", msg + " — " + name, { href, data: body, status: e?.response?.status, error: e?.response?.data });
+            throw new Error(msg);
+        }finally{
+            this.readChannelMap(deviceId).catch(()=>{});
+        }
+    }
 
     // Pending manifest fetches keyed by sender id — collapses the burst of
     // grains a registry restart produces into one fetch per sender.

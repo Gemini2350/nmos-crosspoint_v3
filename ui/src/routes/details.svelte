@@ -16,6 +16,8 @@
     import EventValue from "../lib/EventValue.svelte";
     import AudioMonitorPlayer from "../lib/AudioMonitor/AudioMonitorPlayer.svelte";
     import RenameDialog from "../lib/RenameDialog.svelte";
+    import { legacyCopy, downloadText, fileSafe } from "../lib/clipboard";
+    import { cmTag, cmColor } from "../lib/channelMap";
 
 
     // IS-07 (Event & Tally) travels over WebSocket or MQTT: no transport file.
@@ -580,9 +582,6 @@
     function rereadChannelMap(dev:DeviceRow){
       ServerConnector.post("channelMapRead", { id: dev.id }).catch(()=>{});
     }
-    const CM_COLORS = ["#a78bfa", "#38bdf8", "#f59e0b", "#f472b6", "#34d399", "#fb923c", "#60a5fa", "#e879f9"];
-    function cmTag(i:number){ return i < 26 ? String.fromCharCode(65 + i) : "I" + (i + 1); }
-    function cmColor(i:number){ return CM_COLORS[i % CM_COLORS.length]; }
     function cmInputIndex(cm:any, id:string|null){
       return (cm?.inputs || []).findIndex((x:any) => x.id === id);
     }
@@ -1026,50 +1025,12 @@
      *  and it works on plain HTTP where the clipboard API is unavailable. */
     function downloadSdp(){
       try{
-        const safe = (sdpModalTitle || "sender").replace(/[^A-Za-z0-9._-]+/g, "_").replace(/^_+|_+$/g, "") || "sender";
-        const blob = new Blob([sdpModalContent], { type: "application/sdp" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = safe + ".sdp";
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        // Revoke late: Safari needs the URL alive while the download starts.
-        setTimeout(()=>{ try{ URL.revokeObjectURL(url); }catch(e){} }, 4000);
+        downloadText(fileSafe(sdpModalTitle) + ".sdp", sdpModalContent, "application/sdp");
       }catch(e){
         ServerConnector.addFeedback({ level:"error", message:"Could not save the SDP: " + ((e as any)?.message || e) });
       }
     }
 
-    // The helper textarea goes INTO the open dialog: a modal <dialog> makes
-    // everything outside it inert, so a textarea on <body> could not be
-    // focused or selected — execCommand still said true and copied nothing.
-    // Success is only claimed when the whole text really was selected.
-    function legacyCopy(text:string):boolean{
-      let ta:HTMLTextAreaElement | null = null;
-      const back = document.activeElement as HTMLElement | null;
-      try{
-        const host = (back && back.closest("dialog[open]")) || document.querySelector("dialog[open]") || document.body;
-        ta = document.createElement("textarea");
-        ta.value = text;
-        // Keep it off-screen but still selectable.
-        ta.style.position = "fixed";
-        ta.style.top = "-1000px";
-        ta.style.left = "-1000px";
-        ta.setAttribute("readonly", "");
-        host.appendChild(ta);
-        ta.focus();
-        ta.select();
-        ta.setSelectionRange(0, text.length);
-        if(document.activeElement !== ta || ta.selectionStart !== 0 || ta.selectionEnd !== text.length){ return false; }
-        return document.execCommand("copy");
-      }catch(e){ return false; }
-      finally{
-        if(ta && ta.parentNode){ ta.parentNode.removeChild(ta); }
-        try{ back?.focus(); }catch(e){}
-      }
-    }
     let sdpCopiedTimer:any = null;
     function flashCopied(){
       sdpCopied = true;

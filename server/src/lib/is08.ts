@@ -11,7 +11,9 @@
  * buildChannelMapView turns /io and /map/active into what the Details page
  * shows: inputs and outputs with names resolved to the senders and receivers
  * the operator knows, and per output the runs of channels that come from one
- * input. Display only; nothing here talks to a device.
+ * input. checkOutputMap and mapAction check a change of one output against
+ * the device's capabilities and build the body of its activation (step 3,
+ * switching). Nothing here talks to a device.
  */
 
 export const CM_CTRL_TYPE = "urn:x-nmos:control:cm-ctrl/v1.0";
@@ -49,6 +51,11 @@ export interface ChannelMapInput {
     /** The receiver whose channels these are, when known. */
     receiverId: string | null;
     channels: string[];
+    /** caps.reordering: false = the channels keep their order and spacing
+     *  within an output (one fixed offset). */
+    reordering: boolean;
+    /** caps.block_size: channels route in whole blocks of this size. */
+    blockSize: number;
 }
 
 export interface ChannelMapChannel {
@@ -68,6 +75,11 @@ export interface ChannelMapOutput {
     sourceId: string | null;
     senderIds: string[];
     channels: ChannelMapChannel[];
+    /** caps.routable_inputs without its null entry: the inputs that may feed
+     *  this output; null = any input. */
+    routable: string[] | null;
+    /** Channels may be unrouted (silent): routable_inputs null, or listing null. */
+    mayMute: boolean;
 }
 
 export interface ChannelMapView {
@@ -131,7 +143,10 @@ export function buildChannelMapView(io: any, active: any, lookup: ChannelMapLook
             }
         }
         if (!name) name = deviceName;
-        return { id, name, deviceName: deviceName === name ? "" : deviceName, kind, receiverId, channels: channelLabels(e) };
+        const caps = (e.caps && typeof e.caps === "object") ? e.caps : {};
+        const blockSize = Number.isInteger(caps.block_size) && caps.block_size >= 1 ? caps.block_size : 1;
+        return { id, name, deviceName: deviceName === name ? "" : deviceName, kind, receiverId, channels: channelLabels(e),
+                 reordering: caps.reordering !== false, blockSize };
     });
     const inputIds = new Set(inputs.map(i => i.id));
 
@@ -156,7 +171,11 @@ export function buildChannelMapView(io: any, active: any, lookup: ChannelMapLook
             const idx = (input !== null && Number.isInteger(m.channel_index) && m.channel_index >= 0) ? m.channel_index + 1 : null;
             return { label, input: idx === null ? null : input, inputChannel: idx };
         });
-        return { id, name, deviceName: deviceName === name ? "" : deviceName, kind, sourceId, senderIds: senders.map(s => s.id), channels };
+        const ri = e.caps?.routable_inputs;
+        const routable = Array.isArray(ri) ? ri.filter((x: any) => typeof x === "string") : null;
+        const mayMute = !Array.isArray(ri) || ri.includes(null);
+        return { id, name, deviceName: deviceName === name ? "" : deviceName, kind, sourceId, senderIds: senders.map(s => s.id), channels,
+                 routable, mayMute };
     });
 
     return { inputs, outputs };
@@ -209,4 +228,98 @@ export function receiverTargets(view: ChannelMapView, receiverId: string): Chann
         if (chans.length > 0) out.push({ output: o.id, name: o.name, ranges: toRanges(chans) });
     }
     return out;
+}
+
+/** One output channel as the operator wants it: an input and its channel
+ *  (1-based), or both null for unrouted (silent). */
+export interface WantedChannel {
+    input: string | null;
+    channel: number | null;
+}
+
+function ranges(nums: number[]): string {
+    return toRanges(nums).map(([a, b]) => a === b ? "" + a : a + "–" + b).join(", ");
+}
+
+/**
+ * What is wrong with this map for one output, measured against the device's
+ * own capabilities (IS-08 v1.0, Behaviour): the inputs it may route
+ * (routable_inputs), unrouted channels (null in routable_inputs), whole
+ * blocks (block_size, aligned to multiples of it) and a fixed offset when an
+ * input cannot reorder. Only channels that change are held against
+ * routable_inputs, so a map the device reports itself never blocks a change
+ * elsewhere. [] = fine; the device still has the last word.
+ */
+export function checkOutputMap(view: ChannelMapView, outputId: string, wanted: WantedChannel[]): string[] {
+    const out = view.outputs.find(o => o.id === outputId);
+    if (!out) return ["Output " + outputId + " is not in the Channel Map."];
+    if (!Array.isArray(wanted) || wanted.length !== out.channels.length) {
+        return [out.name + " has " + out.channels.length + " channels, " + (Array.isArray(wanted) ? wanted.length : 0) + " were given."];
+    }
+    const errors: string[] = [];
+    const inputs = new Map(view.inputs.map(i => [i.id, i] as [string, ChannelMapInput]));
+    const muted: number[] = [];
+    wanted.forEach((w, i) => {
+        const n = i + 1;
+        const cur = out.channels[i];
+        if ((w.input === null) !== (w.channel === null)) { errors.push("Channel " + n + ": an input needs a channel, and the other way round."); return; }
+        const changed = w.input !== cur.input || w.channel !== cur.inputChannel;
+        if (w.input === null) { if (changed && !out.mayMute) muted.push(n); return; }
+        const inp = inputs.get(w.input);
+        if (!inp) { errors.push("Channel " + n + ": input " + w.input + " is not in the Channel Map."); return; }
+        if (!Number.isInteger(w.channel) || (w.channel as number) < 1 || (w.channel as number) > inp.channels.length) {
+            errors.push("Channel " + n + ": " + inp.name + " has no channel " + w.channel + "."); return;
+        }
+        if (changed && out.routable && !out.routable.includes(inp.id)) {
+            errors.push(inp.name + " cannot feed " + out.name + ": the device does not route that input to this output.");
+        }
+    });
+    if (muted.length > 0) errors.push(out.name + " cannot have silent channels (" + ranges(muted) + "): the device needs an input on every channel.");
+    if (errors.length > 0) return Array.from(new Set(errors));
+
+    for (const inp of view.inputs) {
+        const used = wanted.map((w, i) => ({ out: i, in: (w.channel as number) - 1, w })).filter(x => x.w.input === inp.id);
+        if (used.length === 0) continue;
+        if (inp.blockSize > 1) {
+            const have = new Set(used.map(u => u.in));
+            const blocks = new Set(used.map(u => Math.floor(u.in / inp.blockSize)));
+            for (const b of Array.from(blocks).sort((x, y) => x - y)) {
+                const from = b * inp.blockSize, to = Math.min(from + inp.blockSize, inp.channels.length) - 1;
+                for (let c = from; c <= to; c++) {
+                    if (!have.has(c)) {
+                        errors.push(inp.name + " routes in blocks of " + inp.blockSize + ": channels " + (from + 1) + "–" + (to + 1) + " go to " + out.name + " together.");
+                        break;
+                    }
+                }
+            }
+        }
+        if (!inp.reordering) {
+            const offsets = new Set(used.map(u => u.out - u.in));
+            if (offsets.size > 1) errors.push(inp.name + " cannot reorder: its channels keep their order and spacing in " + out.name + ".");
+        }
+    }
+    return errors;
+}
+
+/**
+ * The `action` of a POST /map/activations for one output: only the channels
+ * that change (IS-08: a client sends the subset to update), keyed by the
+ * 0-based channel index as a string, unrouted as {input: null,
+ * channel_index: null}. null when nothing changes.
+ */
+export function mapAction(view: ChannelMapView, outputId: string, wanted: WantedChannel[]): any | null {
+    const out = view.outputs.find(o => o.id === outputId);
+    if (!out) return null;
+    const entries: any = {};
+    out.channels.forEach((c, i) => {
+        const w = wanted[i];
+        if (!w || (w.input === c.input && w.channel === c.inputChannel)) return;
+        entries[String(i)] = w.input === null ? { input: null, channel_index: null } : { input: w.input, channel_index: (w.channel as number) - 1 };
+    });
+    return Object.keys(entries).length > 0 ? { [out.id]: entries } : null;
+}
+
+/** The body of an immediate activation (IS-08 activation schema). */
+export function activationBody(action: any): any {
+    return { activation: { mode: "activate_immediate", requested_time: null }, action };
 }

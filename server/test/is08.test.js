@@ -114,6 +114,73 @@ test("ranges", () => {
 test("a broken answer gives an empty view, not an exception", () => {
     assert.deepEqual(c.buildChannelMapView(null, null, lookup), { inputs: [], outputs: [] });
     assert.deepEqual(c.buildChannelMapView({ inputs: { x: {} }, outputs: { y: { source_id: 5 } } }, {}, lookup),
-        { inputs: [{ id: "x", name: "x", deviceName: "", kind: "local", receiverId: null, channels: [] }],
-          outputs: [{ id: "y", name: "y", deviceName: "", kind: "local", sourceId: null, senderIds: [], channels: [] }] });
+        { inputs: [{ id: "x", name: "x", deviceName: "", kind: "local", receiverId: null, channels: [], reordering: true, blockSize: 1 }],
+          outputs: [{ id: "y", name: "y", deviceName: "", kind: "local", sourceId: null, senderIds: [], channels: [], routable: null, mayMute: true }] });
+});
+
+// ----- Step 3: switching -----
+const W = (pairs) => pairs.map((p) => p === null ? { input: null, channel: null } : { input: p[0], channel: p[1] });
+const now = [["inA", 1], ["inA", 2], ["inB", 1], ["inB", 2], ["inA", 5], ["inA", 6], null, null];
+
+test("caps are part of the view: routable inputs, silent channels, block size, reordering", () => {
+    const v = c.buildChannelMapView(io, active, lookup);
+    assert.deepEqual(v.outputs.map(o => [o.id, o.routable, o.mayMute]), [["mix", null, true], ["hp", ["inA", "inB"], true]]);
+    assert.deepEqual(v.inputs.map(i => [i.id, i.reordering, i.blockSize]), [["inA", true, 1], ["inB", true, 1], ["ana", true, 1], ["far", true, 1]]);
+    const strict = c.buildChannelMapView({ inputs: io.inputs, outputs: { hp: { ...io.outputs.hp, caps: { routable_inputs: ["inA"] } } } }, active, lookup);
+    assert.deepEqual([strict.outputs[0].routable, strict.outputs[0].mayMute], [["inA"], false]);
+});
+
+test("only the channels that change go into the activation, unrouted as two nulls", () => {
+    const v = c.buildChannelMapView(io, active, lookup);
+    const want = W([["inA", 1], ["inA", 2], ["inB", 3], ["inB", 4], ["inA", 5], ["inA", 6], ["ana", 1], null]);
+    assert.deepEqual(c.checkOutputMap(v, "mix", want), []);
+    assert.deepEqual(c.mapAction(v, "mix", want), { mix: {
+        2: { input: "inB", channel_index: 2 }, 3: { input: "inB", channel_index: 3 }, 6: { input: "ana", channel_index: 0 } } });
+    const mute = W([null, ...now.slice(1)]);
+    assert.deepEqual(c.mapAction(v, "mix", mute), { mix: { 0: { input: null, channel_index: null } } });
+    assert.equal(c.mapAction(v, "mix", W(now)), null);
+    assert.deepEqual(c.activationBody({ x: {} }), { activation: { mode: "activate_immediate", requested_time: null }, action: { x: {} } });
+});
+
+test("routable_inputs: an input the output does not take, and silence where the device forbids it", () => {
+    const v = c.buildChannelMapView(io, active, lookup);
+    assert.deepEqual(c.checkOutputMap(v, "hp", W([["ana", 1], ["inA", 2]])),
+        ["Analog In cannot feed Headphones: the device does not route that input to this output."]);
+    // The device's own current map is never held against a change elsewhere.
+    const strict = c.buildChannelMapView({ inputs: io.inputs, outputs: { hp: { ...io.outputs.hp, caps: { routable_inputs: ["inB"] } } } }, active, lookup);
+    assert.deepEqual(c.checkOutputMap(strict, "hp", W([["inA", 1], ["inB", 2]])), []);
+    assert.deepEqual(c.checkOutputMap(strict, "hp", W([["inA", 1], null])),
+        ["Headphones cannot have silent channels (2): the device needs an input on every channel."]);
+});
+
+test("block size: whole blocks, aligned to multiples of the size", () => {
+    const blocky = { inputs: { ...io.inputs, inA: { ...io.inputs.inA, caps: { reordering: true, block_size: 2 } } }, outputs: io.outputs };
+    const v = c.buildChannelMapView(blocky, active, lookup);
+    assert.deepEqual(c.checkOutputMap(v, "mix", W(now)), []);
+    assert.deepEqual(c.checkOutputMap(v, "mix", W([["inA", 1], ["inB", 2], ["inB", 1], ["inB", 2], ["inA", 5], ["inA", 6], null, null])),
+        ["RX Studio A routes in blocks of 2: channels 1–2 go to TX Mix together."]);
+    // Channels 2-3 straddle two blocks: both blocks are incomplete.
+    assert.equal(c.checkOutputMap(v, "mix", W([["inA", 2], ["inA", 3], ["inB", 1], ["inB", 2], null, null, null, null])).length, 2);
+});
+
+test("no reordering: one fixed offset per input within an output", () => {
+    const fixed = { inputs: { ...io.inputs, inB: { ...io.inputs.inB, caps: { reordering: false, block_size: 1 } } }, outputs: io.outputs };
+    const v = c.buildChannelMapView(fixed, active, lookup);
+    assert.deepEqual(c.checkOutputMap(v, "mix", W(now)), []);
+    assert.deepEqual(c.checkOutputMap(v, "mix", W([["inA", 1], ["inA", 2], ["inB", 2], ["inB", 1], ["inA", 5], ["inA", 6], null, null])),
+        ["RX Studio B cannot reorder: its channels keep their order and spacing in TX Mix."]);
+    // Shifted as a whole is fine.
+    assert.deepEqual(c.checkOutputMap(v, "mix", W([["inA", 1], ["inA", 2], ["inB", 3], ["inB", 4], ["inA", 5], ["inA", 6], null, null])), []);
+});
+
+test("malformed requests: wrong length, half-null, unknown input, channel out of range", () => {
+    const v = c.buildChannelMapView(io, active, lookup);
+    assert.match(c.checkOutputMap(v, "mix", W([["inA", 1]]))[0], /has 8 channels, 1 were given/);
+    assert.match(c.checkOutputMap(v, "nope", W(now))[0], /not in the Channel Map/);
+    const bad = W(now); bad[0] = { input: "inA", channel: null };
+    assert.match(c.checkOutputMap(v, "mix", bad)[0], /needs a channel/);
+    const unknown = W(now); unknown[0] = { input: "zzz", channel: 1 };
+    assert.match(c.checkOutputMap(v, "mix", unknown)[0], /input zzz is not in the Channel Map/);
+    const far = W(now); far[0] = { input: "ana", channel: 5 };
+    assert.match(c.checkOutputMap(v, "mix", far)[0], /Analog In has no channel 5/);
 });

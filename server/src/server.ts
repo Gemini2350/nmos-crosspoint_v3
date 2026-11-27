@@ -1433,6 +1433,16 @@ server.addRoute("POST", "channelMapRead","global", (client: WebsocketClient, que
     });
 });
 
+// IS-08 step 3: switch one output of a device's Channel Map.
+server.addRoute("POST", "channelMapTake","global", (client: WebsocketClient, query:string[], postData: any) => {
+    return new Promise((resolve, reject) => {
+        crosspoint
+            .takeChannelMap("" + (postData?.id || ""), "" + (postData?.output || ""), postData?.channels)
+            .then((m) => resolve(m))
+            .catch((e:any) => reject({ message: e?.message || "IS-08 switch failed" }));
+    });
+});
+
 // IS-13: set or reset a label on the device itself. `label` null = reset.
 server.addRoute("POST", "annotate","global", (client: WebsocketClient, query:string[], postData: any) => {
     return new Promise((resolve, reject) => {

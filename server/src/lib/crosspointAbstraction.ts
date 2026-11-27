@@ -12,7 +12,7 @@ import { Is07Monitor } from "./is07Monitor";
 import { flowCapAttrs, capSignature, acceptedSignatures, capsSummary } from "./receiverCaps";
 import { clashingOwners } from "./senderAlias";
 import { senderCard, SenderCard } from "./senderCard";
-import { buildChannelMapView, outputSegments, receiverTargets, ChannelMapLookup, ChannelMapInput, ChannelMapOutput, ChannelMapSegment, ChannelMapTarget } from "./is08";
+import { buildChannelMapView, outputSegments, receiverTargets, checkOutputMap, mapAction, WantedChannel, ChannelMapLookup, ChannelMapInput, ChannelMapOutput, ChannelMapSegment, ChannelMapTarget } from "./is08";
 
 import { setTimeout as sleep } from 'node:timers/promises'
 
@@ -404,6 +404,30 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         if(!id.startsWith("nmos_")) throw new Error("Not an NMOS device: " + id);
         await conn.readChannelMap(id.substring(5));
         return { message: 200 };
+    }
+
+    /** IS-08 step 3: switch one output of a device's Channel Map. `wanted`
+     *  is the whole output, one {input, channel} per channel (1-based,
+     *  both null = silent). Checked against the device's capabilities first
+     *  (is08.checkOutputMap); only the channels that change are sent, as one
+     *  immediate activation. The map is read again afterwards either way. */
+    async takeChannelMap(id:string, outputId:string, wanted:any): Promise<any> {
+        const conn = NmosRegistryConnector.instance;
+        if(!conn) throw new Error("NMOS connection not running.");
+        if(!id.startsWith("nmos_")) throw new Error("Not an NMOS device: " + id);
+        const cm:any = (this.crosspointState?.devices || []).find((d:any) => d && d.id === id)?.channelMap;
+        if(!cm || !Array.isArray(cm.outputs)) throw new Error("This device has no Channel Map.");
+        const list:WantedChannel[] = Array.isArray(wanted) ? wanted.map((w:any) => ({
+            input: typeof w?.input === "string" ? w.input : null,
+            channel: Number.isInteger(w?.channel) ? w.channel : null,
+        })) : [];
+        const view = { inputs: cm.inputs || [], outputs: cm.outputs };
+        const errors = checkOutputMap(view, outputId, list);
+        if(errors.length > 0) throw new Error(errors.join("\n"));
+        const action = mapAction(view, outputId, list);
+        if(!action) return { message: 200, data: { changed: 0 } };
+        await conn.activateChannelMap(id.substring(5), action);
+        return { message: 200, data: { changed: Object.keys(action[outputId] || {}).length } };
     }
 
     async annotate(id:string, label:string|null): Promise<any> {
@@ -1950,6 +1974,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // Lets the matrix hide the status hearts entirely when the feature
         // is switched off (vs. grey "device doesn't support it" hearts).
         (this.crosspointState as any).bcp008Enabled = this.settings?.bcp008?.enabled !== false;
+        // Multicast DHCP on: an emptied address in the sender dialog falls
+        // back to the sender's reserved pool address (setMulticast).
+        (this.crosspointState as any).multicastDhcp = !!MulticastLeaseManager.instance?.isEnabled();
 
         try{ this.enrichChannelMaps(); }catch(e:any){
             SyncLog.log("warn", "Crosspoint", "IS-08 Channel Map not built: " + (e?.message || e));

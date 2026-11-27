@@ -9,6 +9,9 @@
     import { getSearchTokens, tokenSearch, midSplit, transportFamily, transportsCompatible } from "../lib/functions";
     import MidLabel from "../lib/MidLabel.svelte";
     import RenameDialog from "../lib/RenameDialog.svelte";
+    import SenderDialog from "../lib/SenderDialog.svelte";
+    import Bcp008Panel from "../lib/Bcp008Panel.svelte";
+    import { monitorStateName, monitorClassVal, monitorMsg } from "../lib/bcp008";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     
       interface CrosspointConnect {
@@ -1779,12 +1782,6 @@
 
     // BCP-008 status helpers. Colour always reflects the CURRENT state —
     // the transition counters are history and only shown as numbers.
-    function monitorStateName(v:number){
-      return v === 1 ? "Healthy" : v === 2 ? "Partially healthy" : v === 3 ? "Unhealthy" : "Inactive";
-    }
-    function monitorClassVal(v:number){
-      return v === 1 ? "cp-status-ok" : v === 2 ? "cp-status-warn" : v === 3 ? "cp-status-err" : "cp-status-inactive";
-    }
     function monitorClass(m:any){ return monitorClassVal(m.status); }
 
     /** BCP-008 state, carried by the COLOUR of the essence glyph (see the
@@ -1838,14 +1835,9 @@
       return t;
     }
 
-    // A BCP-008 statusMessage / overallStatusMessage is retained by the device
-    // until the next counter reset, so on a recovered status it describes a
-    // PAST condition. Devices word that themselves ("Previously: no essence
-    // …"), so we show the message verbatim — prefixing it here produced
-    // "previous: Previously: …".
-    function monitorMsg(status:number, message:string){
-      return message || "";
-    }
+    // A sender's glyph opens the sender dialog (BCP-008, stream, SDP, IS-08);
+    // a receiver's opens the status modal below.
+    let senderDialog:SenderDialog;
 
     // Status modal (click on the symbol): full breakdown + counter reset.
     let monitorModal:any;
@@ -2116,7 +2108,7 @@
                                 --></span><!--
                               --><span class={"cp-type cp-type-"+flow.type + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                                     on:mouseenter={placeCard}
-                                    on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if transportFamily(flow.capabilities?.transport) === "mxl"}<span class="cp-mxl-tag">MXL</span>{/if}{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
+                                    on:click|stopPropagation={()=>senderDialog.open(flow)}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if transportFamily(flow.capabilities?.transport) === "mxl"}<span class="cp-mxl-tag">MXL</span>{/if}{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
                                 --><span class="cp-detail cp-card"><span class="cp-card-title">{flow.alias}</span>{#if flow.card}<span class={"cp-card-state cp-card-" + flow.card.tone}>{flow.card.state}</span>{#each flow.card.rows as r}<span class="cp-card-k">{r.k}</span><span class={"cp-card-v" + (r.tone ? " cp-card-" + r.tone : "")}>{r.v}</span>{/each}{:else}<span class="cp-card-state">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{/if}{#if eventFlows[flow.id]}<span class="cp-card-k">Value</span><span class="cp-card-v">{liveDetail(eventFlows[flow.id])}</span>{/if}</span><!--
                               --></span><!--
                                                           --></th>
@@ -2282,6 +2274,8 @@
     </div>
   </dialog>
 
+  <SenderDialog bind:this={senderDialog} state={sourceState} {bcp008On} />
+
   <dialog bind:this={monitorModal} class="modal">
       <div class="modal-box">
         <form method="dialog">
@@ -2291,52 +2285,7 @@
           {@const m = monitorModalFlow.monitor}
           <h3 class="font-bold text-lg cp-monitor-title">Status – {monitorModalFlow.alias || monitorModalFlow.name || monitorModalFlow.id}
             <span class={"cp-monitor-state " + monitorClassVal(m.status)}>{monitorStateName(m.status)}</span></h3>
-          <div class="cp-monitor-counter">Overall counter: {m.counter || 0}</div>
-          {#if m.message}<p class="cp-monitor-message">{monitorMsg(m.status, m.message)}</p>{/if}
-          <table class="cp-monitor-table">
-            <thead><tr><td>Domain</td><td>State</td><td>Message</td><td>Transitions</td></tr></thead>
-            <tbody>
-              {#each (m.domains || []) as d}
-                <tr>
-                  <td>{d.label}</td>
-                  <td><span class={"cp-monitor-dot " + monitorClassVal(d.status)}
-                        use:OverlayMenuService.tooltip data-tooltip={monitorStateName(d.status)}></span></td>
-                  <td class="cp-monitor-domain-message">{monitorMsg(d.status, d.message)}</td>
-                  <td>{d.counter}</td>
-                </tr>
-                <!-- BCP-008 4p10 belongs to the sync domain, so it sits right
-                     under it: the clock the device says it is locked to. Only
-                     shown when the device reports one. -->
-                {#if d.label === "Sync" && m.syncSource}
-                  <tr class="cp-monitor-subrow">
-                    <td></td>
-                    <td></td>
-                    <td colspan="2" class="cp-monitor-sync">Source: <span class="cp-monitor-sync-id">{m.syncSource}</span></td>
-                  </tr>
-                {/if}
-              {/each}
-            </tbody>
-          </table>
-          <div class="cp-monitor-packets" class:cp-monitor-packets-grid={monitorModalCounters !== null}>
-            {#if monitorModalCounters === null}
-              <span class="cp-monitor-packets-loading">Reading packet counters…</span>
-            {:else}
-              <!-- One counter per line, and ONE grid for all groups: a device
-                   that reports four lost-packet and two late-packet counters
-                   wrote them into one run-on line before, and a grid per group
-                   left the numbers of the two groups a few pixels apart. Group
-                   label only on the group's first line. -->
-              {#each monitorModalCounters as g, gi}
-                {#if g.counters.length === 0}
-                  <span class="cp-monitor-packets-label" class:cp-monitor-packets-gap={gi > 0}>{g.label}</span><span class="cp-monitor-packets-name" class:cp-monitor-packets-gap={gi > 0}></span><span class="cp-monitor-packets-num" class:cp-monitor-packets-gap={gi > 0}>0</span>
-                {:else}
-                  {#each g.counters as c, i}
-                    <span class="cp-monitor-packets-label" class:cp-monitor-packets-gap={gi > 0 && i === 0}>{i === 0 ? g.label : ""}</span><span class="cp-monitor-packets-name" class:cp-monitor-packets-gap={gi > 0 && i === 0}>{c.name}</span><span class="cp-monitor-packets-num" class:cp-monitor-packets-gap={gi > 0 && i === 0}>{c.value}</span>
-                  {/each}
-                {/if}
-              {/each}
-            {/if}
-          </div>
+          <Bcp008Panel monitor={m} counters={monitorModalCounters} />
         {:else}
           <h3 class="font-bold text-lg">Status</h3>
         {/if}
