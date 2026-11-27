@@ -8,6 +8,7 @@ import { NmosRegistryConnector } from "./nmosConnector";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { DdnsService } from "./ddnsService";
 import { Bcp008Monitor } from "./bcp008Monitor";
+import { Is07Monitor } from "./is07Monitor";
 import { flowCapAttrs, capSignature, acceptedSignatures, capsSummary } from "./receiverCaps";
 import { clashingOwners } from "./senderAlias";
 import { buildChannelMapView, outputSegments, receiverTargets, ChannelMapLookup, ChannelMapInput, ChannelMapOutput, ChannelMapSegment, ChannelMapTarget } from "./is08";
@@ -91,6 +92,15 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         new Bcp008Monitor();
         Bcp008Monitor.instance.onChange = () => { try{ this.republishEnriched(); }catch(e){} };
         try{ Bcp008Monitor.instance.setEnabled(this.settings?.bcp008?.enabled !== false); }catch(e){}
+
+        // IS-07 Event & Tally monitor (Setup: off by default). Its values go
+        // out on a SyncObject of their own: a temperature or a tally changes
+        // far more often than anything in the crosspoint state, and the
+        // crosspoint diff need not be computed for each.
+        this.syncEvents = new SyncObject("eventState", { enabled:false, summary:"", level:"", connections:[], notes:[], flows:{} });
+        new Is07Monitor();
+        Is07Monitor.instance.onChange = () => { try{ this.publishEventState(); }catch(e){} };
+        try{ Is07Monitor.instance.setEnabled(this.settings?.eventMonitor?.enabled === true); }catch(e){}
 
         this.syncCrosspoint = new SyncObject("crosspoint", this.crosspointState);
         this.update();
@@ -980,6 +990,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // Reconcile IS-12 monitoring connections against the registry
         // (new ncp devices get a WebSocket, vanished ones are torn down).
         try{ Bcp008Monitor.instance?.updateFromNmos(state); }catch(e){}
+        // IS-07 monitor: WebSocket servers and brokers follow the senders.
+        try{ Is07Monitor.instance?.updateFromNmos(state); }catch(e){}
         this.update(true);
     }
 
@@ -1028,6 +1040,98 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             this.enrichCrosspointState();
             this.syncCrosspoint.setState(this.crosspointState);
         }catch(e){}
+        try{ this.publishEventState(); }catch(e){}
+    }
+
+    syncEvents: SyncObject;
+
+    /** Switches the IS-07 monitor on or off (Setup). */
+    setEventMonitor(enabled:boolean){
+        try{ Is07Monitor.instance?.setEnabled(enabled); }catch(e){}
+        try{ this.publishEventState(); }catch(e){}
+    }
+
+    /** "WS 10.0.0.5:8870" or "MQTT 10.0.0.9:1883" for an IS-07 sender, from
+     *  its IS-05 /active; null before /active was read. */
+    private buildIs07Endpoint(nmosId:string): { tag:string, host:string, tip:string } | null {
+        if(!nmosId) return null;
+        try{
+            const sender = this.nmosState?.senders?.[nmosId];
+            const tp = this.nmosState?.senderActiveData?.[nmosId]?.transport_params?.[0];
+            if(!sender || !tp) return null;
+            const named = (v:any) => v !== undefined && v !== null && v !== "" && v !== "auto";
+            const flow = this.nmosState?.flows?.[sender.flow_id];
+            const source = named(tp.ext_is_07_source_id) ? tp.ext_is_07_source_id : (flow?.source_id || "");
+            if(String(sender.transport).endsWith(":websocket")){
+                if(!named(tp.connection_uri)) return null;
+                let host = "" + tp.connection_uri;
+                try{ host = new URL(host).host; }catch(e){}
+                return { tag:"WS", host, tip: "IS-07 over WebSocket\n" + tp.connection_uri + (source ? "\nSource " + source : "") + (tp.connection_authorization === true ? "\nNeeds authorization (IS-10)" : "") };
+            }
+            if(!named(tp.destination_host)) return null;
+            const h = "" + tp.destination_host;
+            const host = (h.includes(":") && !h.startsWith("[") ? "[" + h + "]" : h) + (named(tp.destination_port) ? ":" + tp.destination_port : "");
+            return { tag:"MQTT", host, tip: "IS-07 over MQTT\n" + (tp.broker_protocol === "secure-mqtt" ? "mqtts://" : "mqtt://") + host
+                + (named(tp.broker_topic) ? "\nTopic " + tp.broker_topic : "")
+                + (named(tp.connection_status_broker_topic) ? "\nStatus topic " + tp.connection_status_broker_topic : "") };
+        }catch(e){ return null; }
+    }
+
+    /**
+     * The IS-07 monitor's state for the UI: per flow the value to show
+     * (receivers show their sender's), and for the Setup page a summary, one
+     * row per connection and the senders not read. Everything is worded here;
+     * the pages only render it (and the time of `since` in local time).
+     */
+    publishEventState(){
+        const mon = Is07Monitor.instance;
+        const enabled = !!(mon && mon.isEnabled());
+        const out:any = { enabled, summary:"", level:"", connections:[], notes:[], flows:{} };
+        if(enabled && mon){
+            const devices:any[] = (this.crosspointState as any)?.devices || [];
+            const aliasOf:{ [id:string]:string } = {};
+            const entryOf:{ [id:string]:any } = {};
+            for(const dev of devices){
+                for(const type of Object.keys(dev.senders || {})){
+                    for(const s of (dev.senders as any)[type] || []){
+                        if(!s || typeof s.id !== "string" || !s.id.startsWith("nmos_")) continue;
+                        aliasOf[s.id] = s.alias || s.name || "";
+                        const nmosId = s.id.substring(5);
+                        const flowType = this.nmosState?.flows?.[this.nmosState?.senders?.[nmosId]?.flow_id]?.event_type || "";
+                        const v = mon.senderValue(nmosId, flowType);
+                        if(!v) continue;
+                        const e = {
+                            text: v.display.text,
+                            kind: v.display.kind,
+                            stale: v.stale,
+                            since: v.since,
+                            tip: (s.alias || s.name || "") + " · " + (v.eventType || "event") + "\n" + v.display.detail + "\n" + v.via
+                                + (v.stale ? "\nNot live: " + v.stale : ""),
+                        };
+                        entryOf[s.id] = e;
+                        out.flows[s.id] = e;
+                    }
+                }
+            }
+            for(const dev of devices){
+                for(const type of Object.keys(dev.receivers || {})){
+                    for(const r of (dev.receivers as any)[type] || []){
+                        if(!r || !r.active || !r.connectedFlow || !entryOf[r.connectedFlow]) continue;
+                        const e = entryOf[r.connectedFlow];
+                        out.flows[r.id] = { ...e, tip: "From " + (aliasOf[r.connectedFlow] || "sender") + "\n" + e.tip.split("\n").slice(1).join("\n") };
+                    }
+                }
+            }
+            const c = mon.counts();
+            out.summary = c.total === 0 ? "no IS-07 senders" : (c.live + " of " + c.total + (c.total === 1 ? " source" : " sources") + " live");
+            out.connections = mon.connections();
+            out.level = c.total === 0 ? "" : (out.connections.some((x:any) => x.level === "error") ? "error" : (c.live > 0 ? "success" : "warning"));
+            const nr = mon.notRead();
+            const name = (nmosId:string) => aliasOf["nmos_" + nmosId] || this.nmosState?.senders?.[nmosId]?.label || nmosId;
+            for(const id of nr.off){ out.notes.push({ level:"warning", text: name(id) + ": sender switched off, nothing to read" }); }
+            for(const sk of nr.skipped){ out.notes.push({ level:"warning", text: name(sk.senderId) + ": not read, " + sk.reason }); }
+        }
+        this.syncEvents.setState(out);
     }
 
     // ---- uuid → "Node - Device - TX Label" for the log -------------------
@@ -1085,6 +1189,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             this.enrichCrosspointState();
             this.rebuildIdNameMap();
             this.syncCrosspoint.setState(this.crosspointState);
+            // Receivers may have changed sender: their values follow.
+            try{ this.publishEventState(); }catch(e){}
             try{ if(this.onStateUpdated){ this.onStateUpdated(); } }catch(e){}
         }
 
@@ -1604,7 +1710,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // only two active senders on the SAME leg index clash.
         let activeLegIps: { [legIndex:number]: { [ip:string]: Array<{id:string,label:string,nmosId:string}> } } = {};
         let activeLegRefs: Array<{ leg:CrosspointFlowLeg, flowId:string, nmosId:string }> = [];
-        let senderInfoById: { [id:string]: { legs:CrosspointFlowLeg[], mxl:any, codec:string, format:string, bitrate:CrosspointFlowBitrate, label:string } } = {};
+        let senderInfoById: { [id:string]: { legs:CrosspointFlowLeg[], mxl:any, is07:any, codec:string, format:string, bitrate:CrosspointFlowBitrate, label:string } } = {};
         // Distinct flow signatures of all MXL senders → their attributes.
         // Receivers' caps are evaluated once per signature, not per sender.
         let mxlSenderSigs: { [sig:string]: { [cap:string]: any } } = {};
@@ -1619,8 +1725,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     if(!s) continue;
                     let nmosId = (typeof s.id === "string" && s.id.startsWith("nmos_")) ? s.id.substring(5) : "";
                     const isMxl = s.capabilities?.transport === "mxl";
-                    // MXL has no legs: no addresses, no ports, no interface bindings.
-                    let legs = (nmosId && !isMxl) ? this.buildLegsFromNmos(nmosId) : [];
+                    const isEventSender = s.capabilities?.transport === "websocket" || s.capabilities?.transport === "mqtt";
+                    // MXL has no legs: no addresses, no ports, no interface
+                    // bindings. Nor has IS-07: its endpoint is a WebSocket
+                    // server or a broker (flow.is07).
+                    let legs = (nmosId && !isMxl && !isEventSender) ? this.buildLegsFromNmos(nmosId) : [];
                     let codec = nmosId ? this.buildCodecFromManifest(nmosId) : "";
                     if(!codec && s.capabilities?.mediaTypes){
                         codec = this.mediaTypesToCodec(s.capabilities.mediaTypes);
@@ -1630,6 +1739,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     sf.legs = legs;
                     sf.codec = codec;
                     sf.mxl = isMxl ? this.buildMxlFromNmos(nmosId) : null;
+                    sf.is07 = isEventSender ? this.buildIs07Endpoint(nmosId) : null;
                     const isEvent = s.capabilities?.transport === "websocket" || s.capabilities?.transport === "mqtt";
                     if((isMxl || isEvent) && nmosId){
                         const attrs = this.flowCapAttrs(nmosId);
@@ -1659,6 +1769,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     senderInfoById[s.id] = {
                         legs,
                         mxl:     sf.mxl,
+                        is07:    sf.is07 || null,
                         codec,
                         format:  s.format || "",
                         bitrate: s.bitrate,
@@ -1732,6 +1843,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     let f = r as CrosspointFlow;
                     let nmosId = (typeof r.id === "string" && r.id.startsWith("nmos_")) ? r.id.substring(5) : "";
                     f.mxl = connected ? (connected.mxl || null) : null;
+                    // IS-07: the WebSocket server or broker it reads from,
+                    // which is its sender's.
+                    f.is07 = (connected && connected.is07) ? connected.is07 : null;
                     f.annotatable = !!(dev as CrosspointDevice).annotatable;
                     // BCP-004-01 for MXL receivers — BCP-007-03 requires a
                     // Controller to evaluate them. RTP receivers keep the
@@ -1940,6 +2054,9 @@ export interface CrosspointFlow {
     // BCP-007-03: an MXL flow has no addresses, it has a domain and a flow
     // id (sender: its /active; receiver: those of the connected sender).
     mxl?:{ domainId:string, flowId:string } | null,
+    // IS-07: where the events are -- "WS" and the WebSocket server, or
+    // "MQTT" and the broker (sender: its /active; receiver: its sender's).
+    is07?:{ tag:string, host:string, tip:string } | null,
     // BCP-004-01 compatibility, computed here so the UI only compares:
     // sender — signature of the flow attributes receivers' caps test against;
     // receiver — the signatures its caps accept (only set where evaluated).

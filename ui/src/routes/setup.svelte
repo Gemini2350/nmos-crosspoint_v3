@@ -67,6 +67,7 @@
       autoMulticast: { enabled: boolean, reconnectReceiversOnSenderChange?: boolean };
       autoActivateInactiveSender: boolean;
       audioMonitor: { enabled: boolean };
+      eventMonitor: { enabled: boolean };
       bcp008: { enabled: boolean };
       // pool = the single-range counter; per-cat fields kept for back-compat
       multicastStats: { pool?: LeaseStat, pools?: PoolStat[], audio?: LeaseStat, video?: LeaseStat };
@@ -86,6 +87,7 @@
       autoMulticast: { enabled: false, reconnectReceiversOnSenderChange: false },
       autoActivateInactiveSender: false,
       audioMonitor: { enabled: false },
+      eventMonitor: { enabled: false },
       bcp008: { enabled: true },
       multicastStats: { pool:{used:0,total:0} },
       ddns: { enabled:false, server:"", port:53, zone:"", ttl:300, keyName:"", keySecret:"", keySecretSet:false, keyAlgorithm:"hmac-sha256" },
@@ -108,7 +110,11 @@
     let formReconnectReceivers:boolean = false;
     let formAutoActivateSender:boolean = false;
     let formAudioMonitorEnabled:boolean = false;
+    let formEventMonitorEnabled:boolean = false;
     let formBcp008Enabled:boolean = true;
+    // IS-07 monitor status as the server words it (publishEventState).
+    let eventState:any = { enabled:false, summary:"", level:"", connections:[], notes:[] };
+    let syncEvents:Subject<any>;
     let formDnssdEnabled:boolean = true;
     let formDnssdDomain:string = "";
     let formMulticastRange:string = "";
@@ -260,7 +266,7 @@
     // open is remembered per browser (a convenience, nothing on the server);
     // on a first visit they are all folded.
     const FOLD_KEY = "nmos_crosspoint_setup_open";
-    const FOLD_IDS = ["registry", "gmid", "audio", "multicast", "virtual", "weblinks", "ddns", "sso", "login"];
+    const FOLD_IDS = ["registry", "gmid", "events", "audio", "multicast", "virtual", "weblinks", "ddns", "sso", "login"];
     function readFolds():{[id:string]:boolean}{
       try{
         const v = JSON.parse(localStorage.getItem(FOLD_KEY) || "{}");
@@ -347,6 +353,7 @@
             ));
             formAutoActivateSender   = !!obj.autoActivateInactiveSender;
             formAudioMonitorEnabled  = !!(obj.audioMonitor && obj.audioMonitor.enabled);
+            formEventMonitorEnabled  = !!(obj.eventMonitor && obj.eventMonitor.enabled);
             formBcp008Enabled        = !(obj.bcp008 && obj.bcp008.enabled === false);
             formDnssdEnabled         = !(obj.registryDiscovery && obj.registryDiscovery.unicastDnssd === false);
             formDnssdDomain          = (obj.registryDiscovery && typeof obj.registryDiscovery.domain === "string") ? obj.registryDiscovery.domain : "";
@@ -401,6 +408,9 @@
         registryStatusList = (obj && Array.isArray(obj.registries)) ? obj.registries : [];
         dnssdStatus = (obj && obj.dnssd) ? obj.dnssd : { enabled: true, override: "", domains: [] };
       });
+      // IS-07 Event & Tally monitor: summary and one row per connection.
+      syncEvents = ServerConnector.sync("eventState");
+      syncEvents.subscribe((obj:any)=>{ if(obj){ eventState = obj; } });
       // Connected multicast probes + the shared token for starting one.
       syncProbeState = ServerConnector.sync("probeState");
       syncProbeState.subscribe((obj:any)=>{
@@ -427,6 +437,8 @@
       try{syncConnState && syncConnState.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("nmosConnectionState");}catch(e){}
       try{syncProbeState && syncProbeState.unsubscribe();}catch(e){}
+      try{syncEvents && syncEvents.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("eventState");}catch(e){}
       try{syncSso && syncSso.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("ssoStatus");}catch(e){}
       try{ServerConnector.unsync("probeState");}catch(e){}
@@ -451,6 +463,7 @@
       ));
       formAutoActivateSender   = !!serverState.autoActivateInactiveSender;
       formAudioMonitorEnabled  = !!(serverState.audioMonitor && serverState.audioMonitor.enabled);
+      formEventMonitorEnabled  = !!(serverState.eventMonitor && serverState.eventMonitor.enabled);
       formBcp008Enabled        = !(serverState.bcp008 && serverState.bcp008.enabled === false);
       formDnssdEnabled         = !((serverState as any).registryDiscovery && (serverState as any).registryDiscovery.unicastDnssd === false);
       formDnssdDomain          = ((serverState as any).registryDiscovery && typeof (serverState as any).registryDiscovery.domain === "string") ? (serverState as any).registryDiscovery.domain : "";
@@ -555,6 +568,7 @@
         },
         autoActivateInactiveSender: formAutoActivateSender,
         audioMonitor: { enabled: formAudioMonitorEnabled },
+        eventMonitor: { enabled: formEventMonitorEnabled },
         bcp008: { enabled: formBcp008Enabled },
         registryDiscovery: { unicastDnssd: formDnssdEnabled, domain: formDnssdDomain.trim() },
         ddns: {
@@ -1229,6 +1243,55 @@
         </HelpTip>
         <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable BCP-008 Status Monitoring"
                bind:checked={formBcp008Enabled} on:change={markDirty} />
+      </div>
+    </section>
+
+
+    <section class="setup-section" class:setup-folded={!openSections.events}>
+      <div class="setup-section-head setup-head-fold" use:foldHead={"events"}>
+        <button type="button" class="setup-fold" aria-expanded={!!openSections.events}
+                aria-label="Show or hide Event & Tally Monitor (IS-07)"><Icon src={ChevronRight} /></button>
+        <h3>Event &amp; Tally Monitor (IS-07)</h3>
+        <HelpTip label="About the event and tally monitor">
+          <p>Reads the current value of every <strong>AMWA IS-07</strong> sender
+          (tally, GPI, sensors, states) and shows it on the Crosspoint and Details
+          pages: a dot for on/off, numbers with their unit, enum values with their
+          label. A receiver shows the value of the sender it takes.</p>
+          <p>WebSocket senders: one connection per server, with the health
+          messages IS-07 asks for every 5&nbsp;s. MQTT senders: one connection
+          per broker. Values arrive as pushes, nothing is polled. A value whose
+          connection is lost or whose sender went away is greyed out.</p>
+          <p>Read-only: nothing is switched. Senders that need authorization
+          (IS-10) are not read.</p>
+        </HelpTip>
+        {#if eventState.enabled && eventState.summary}
+          <span class="setup-summary">
+            {#if eventState.level}<span class={"setup-dot setup-dot-" + eventState.level}></span>{/if}<span>{eventState.summary}</span>
+          </span>
+        {/if}
+        <input type="checkbox" class="toggle setup-head-toggle" aria-label="Enable Event & Tally Monitor"
+               bind:checked={formEventMonitorEnabled} on:change={(e)=>{ markDirty(); openIfOn("events", e); }} />
+      </div>
+      <p class="setup-section-text">Reads the current value of every IS-07 sender (WebSocket and MQTT) and shows it on the Crosspoint and Details pages. Read-only: nothing is switched.</p>
+      <div class="setup-registry-status">
+        {#if !eventState.enabled}
+          <div class="setup-registry-row"><span>Switched off: nothing is read.</span></div>
+        {:else if eventState.connections.length === 0 && eventState.notes.length === 0}
+          <div class="setup-registry-row"><span>No IS-07 senders in the registry.</span></div>
+        {:else}
+          {#each eventState.connections as c}
+            <div class="setup-registry-row">
+              <span class={"setup-dot setup-dot-" + c.level}></span>
+              <span>{c.label} · {c.detail}</span>
+            </div>
+          {/each}
+          {#each eventState.notes as n}
+            <div class="setup-registry-row">
+              <span class={"setup-dot setup-dot-" + n.level}></span>
+              <span>{n.text}</span>
+            </div>
+          {/each}
+        {/if}
       </div>
     </section>
 

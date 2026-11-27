@@ -428,6 +428,13 @@
         font-size: 0.85rem;
     }
 
+    // A sentence saying what a section does, where it has no form.
+    .setup-section-text {
+        margin: 6px 0 10px 0;
+        font-size: 0.85rem;
+        color: theme('colors.base-content / 75%');
+    }
+
     // Live registry status under the NMOS Registry form: one line per
     // known registry with source and query-subscription health.
     .setup-registry-status {

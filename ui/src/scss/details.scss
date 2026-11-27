@@ -491,6 +491,38 @@ $det-color-data:  theme('colors.blue.500');
         font-size: 12px;
     }
 
+    // IS-07 value (lib/EventValue.svelte) after the event type: a quiet
+    // pill, a dot for on/off, green when on. Stale (connection lost, sender
+    // gone): greyed and italic, the reason in the tooltip.
+    .ev-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        max-width: 180px;
+        padding: 0 7px;
+        border-radius: 9px;
+        font-family: 'Roboto Mono', ui-monospace, monospace;
+        font-size: 12px;
+        line-height: 18px;
+        vertical-align: middle;
+        white-space: nowrap;
+        background: theme('colors.base-content / 8%');
+        color: theme('colors.base-content / 88%');
+        cursor: default;
+    }
+    .ev-text { overflow: hidden; text-overflow: ellipsis; }
+    .ev-dot {
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        border: 1.5px solid theme('colors.slate.400');
+    }
+    .ev-on { color: theme('colors.green.400'); }
+    .ev-on .ev-dot { background: theme('colors.green.600'); border-color: theme('colors.green.600'); }
+    .ev-off { color: theme('colors.slate.400'); }
+    .ev-stale { opacity: 0.5; font-style: italic; }
+
     // "Virtual" badge next to the sender name.
     .det-virtual-badge {
         font-size: 0.68rem;
@@ -627,6 +659,8 @@ $det-color-data:  theme('colors.blue.500');
 }
 
 html[data-theme="light"] {
+    .ev-on { color: theme('colors.green.700'); }
+    .ev-off { color: theme('colors.slate.500'); }
     .details-page {
         .det-card { background-color: theme('colors.base-100'); }
         .det-card-head { background-color: theme('colors.base-100');

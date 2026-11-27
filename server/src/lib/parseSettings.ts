@@ -228,6 +228,16 @@ export function parseSettings(settings:any){
         settings.audioMonitor.enabled = false;
     }
 
+    // ----- IS-07 Event & Tally monitor -----
+    // When enabled, the crosspoint reads every IS-07 sender (WebSocket
+    // servers, MQTT brokers) and shows the current values. Off by default.
+    if(!settings.eventMonitor || typeof settings.eventMonitor !== "object"){
+        settings.eventMonitor = { enabled: false };
+    }
+    if(typeof settings.eventMonitor.enabled !== "boolean"){
+        settings.eventMonitor.enabled = false;
+    }
+
     // ----- Multicast probe (crosspoint_probe companion container) -----
     // A probe on a media-network host connects to ws://<crosspoint>/probe
     // with this shared token and forwards multicast RTP as unicast, so the

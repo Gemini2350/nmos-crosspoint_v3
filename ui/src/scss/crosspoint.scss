@@ -758,6 +758,46 @@ $cp-border: 1px solid transparent;
             opacity: 1;
         }
 
+        // IS-07: the sender's current value at the END of the label, just
+        // before the glyph -- down the column in the header, like the name.
+        // The label keeps room for it, so the name shortens first (in the
+        // middle, as always). Logical sides: the same rule serves the
+        // vertical header and the horizontal rows.
+        tbody tr.cp-flow td.cp-line-stick .cp-label.cp-has-live,
+        thead th.cp-flow .cp-label.cp-has-live {
+            padding-inline-end: 100px;
+        }
+        .cp-live {
+            position: absolute;
+            inset-inline-end: 34px;
+            inset-block: 0;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            max-inline-size: 62px;
+            font-family: 'Roboto Mono', ui-monospace, monospace;
+            font-size: 10.5px;
+            font-weight: 500;
+            color: theme('colors.slate.200');
+        }
+        .cp-live-text {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            min-inline-size: 0;
+        }
+        .cp-live-dot {
+            flex: 0 0 auto;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            border: 1.5px solid theme('colors.slate.400');
+        }
+        .cp-live-on { color: theme('colors.green.400'); font-weight: 700; }
+        .cp-live-on .cp-live-dot { background: theme('colors.green.600'); border-color: theme('colors.green.600'); }
+        .cp-live-off { color: theme('colors.slate.400'); }
+        .cp-live-stale { opacity: 0.5; font-style: italic; }
+
         // A click on a cell that belongs to a folded node does NOT switch —
         // it unfolds. Hovering says so with a plus. It hangs on the dot, not
         // on the cell: the cell's ::before and ::after are the crosshair
@@ -1680,6 +1720,9 @@ html[data-theme="light"] {
 
 html[data-theme="light"] .crosspoint {
     .cp-container .cp-type .cp-mxl-tag { color: #1b4098; }
+    .cp-live { color: theme('colors.slate.700'); }
+    .cp-live-on { color: theme('colors.green.700'); }
+    .cp-live-off { color: theme('colors.slate.500'); }
     .filter-nav .cp-show > .cp-show-menu {
         background-color: theme('colors.base-100');
         box-shadow: 0 6px 20px rgba(0,0,0,0.18);

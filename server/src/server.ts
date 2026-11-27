@@ -429,6 +429,7 @@ server.addSyncObject("nmos","global",nmosConnector.syncNmos);
 server.addSyncObject("nmosConnectionState","global",nmosConnector.syncConnectionState);
 
 server.addSyncObject("crosspoint","global",crosspoint.syncCrosspoint);
+server.addSyncObject("eventState","global",crosspoint.syncEvents);
 
 
 const uiConfigSync: SyncObject = new SyncObject("uiconfig", uiConfig);
@@ -560,6 +561,11 @@ function getSetupConfigState() {
         enabled: !!(settings.audioMonitor && settings.audioMonitor.enabled)
     };
 
+    // IS-07 Event & Tally monitor: read the event senders' current values.
+    let eventMonitorCfg = {
+        enabled: !!(settings.eventMonitor && settings.eventMonitor.enabled)
+    };
+
     return {
         registry,
         registryDiscovery,
@@ -569,6 +575,7 @@ function getSetupConfigState() {
         virtualDevices,
         virtualNode,
         audioMonitor: audioMonitorCfg,
+        eventMonitor: eventMonitorCfg,
         bcp008: bcp008Cfg,
         multicastRange,
         multicastPools,
@@ -916,6 +923,9 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                 if(postData.bcp008 && typeof postData.bcp008 === "object" && typeof postData.bcp008.enabled === "boolean"){
                     next.bcp008 = { enabled: postData.bcp008.enabled };
                 }
+                if(postData.eventMonitor && typeof postData.eventMonitor === "object" && typeof postData.eventMonitor.enabled === "boolean"){
+                    next.eventMonitor = { enabled: postData.eventMonitor.enabled };
+                }
                 if(postData.audioMonitor && typeof postData.audioMonitor === "object" && typeof postData.audioMonitor.enabled === "boolean"){
             if(next.bcp008 && typeof next.bcp008.enabled === "boolean"){
                 settings.bcp008 = { enabled: next.bcp008.enabled };
@@ -1071,6 +1081,12 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             settings.audioMonitor = { enabled: !!(next.audioMonitor && next.audioMonitor.enabled) };
             if(audioMonWas && !settings.audioMonitor.enabled){
                 try{ audioMonitor.shutdownAll().catch(()=>{}); }catch(e){}
+            }
+            // IS-07 Event & Tally monitor. Live-apply: opens or closes the
+            // WebSocket and MQTT connections without a restart.
+            if(next.eventMonitor && typeof next.eventMonitor.enabled === "boolean"){
+                settings.eventMonitor = { enabled: next.eventMonitor.enabled };
+                try{ crosspoint.setEventMonitor(next.eventMonitor.enabled); }catch(e){}
             }
             // Strip the obsolete in-memory field too so the next settings.json
             // write doesn't carry it forward.

@@ -13,6 +13,7 @@
     import { getSearchTokens, tokenSearch } from "../lib/functions";
     import OverlayMenuService from "../lib/OverlayMenu/OverlayMenuService";
     import Bandwidth from "../lib/Bandwidth.svelte";
+    import EventValue from "../lib/EventValue.svelte";
     import AudioMonitorPlayer from "../lib/AudioMonitor/AudioMonitorPlayer.svelte";
     import RenameDialog from "../lib/RenameDialog.svelte";
 
@@ -72,6 +73,10 @@
     let sourceState:any = { devices: [] };
 
     let sync:Subject<any>;
+    // IS-07 values per flow id (server: publishEventState), empty while the
+    // Event & Tally monitor is off.
+    let syncEvents:Subject<any>;
+    let eventFlows:any = {};
     let syncSetup:Subject<any>;
 
 
@@ -101,6 +106,8 @@
       // sender has a destination address, so only it gets the edit pencil.
       transport:string;
       // BCP-007-03 MXL sender: domain + flow id instead of legs.
+      // IS-07: "WS"/"MQTT" and the server or broker, null otherwise.
+      is07:{ tag:string, host:string, tip:string } | null;
       mxl:{ domainId:string, flowId:string } | null;
       // IS-08: where its channels come from, in runs (server-computed).
       channelSources:any[];
@@ -122,6 +129,7 @@
       legs: Array<{ index:number, dstIp:string, dstPort:string|number, srcIp:string, dup?:boolean, dupText?:string }>;
       // MXL receiver: what it reads (copied from the connected sender), or
       // isMxl with null when nothing is connected yet.
+      is07:{ tag:string, host:string, tip:string } | null;
       isMxl:boolean;
       // Transport family ("rtp", "mxl", "websocket", "mqtt"), "" when unknown.
       transport:string;
@@ -299,6 +307,7 @@
             isVirtual: !!s.isVirtual,
             transport: s.capabilities?.transport || "",
             mxl: s.capabilities?.transport === "mxl" ? (s.mxl || { domainId:"", flowId:"" }) : null,
+            is07: s.is07 || null,
             channelSources: Array.isArray(s.channelSources) ? s.channelSources : []
           };
 
@@ -315,7 +324,7 @@
             }
           }
           if(ipTokens.length > 0){
-            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ") + (row.mxl ? " " + row.mxl.flowId + " " + row.mxl.domainId : "");
+            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ") + (row.mxl ? " " + row.mxl.flowId + " " + row.mxl.domainId : "") + (row.is07 ? " " + row.is07.host : "");
             if(!tokenSearch(ipStr, ipTokens)){
               return;
             }
@@ -346,6 +355,7 @@
             legs: Array.isArray(r.legs) ? r.legs : [],
             transport: r.capabilities?.transport || "",
             isMxl: r.capabilities?.transport === "mxl",
+            is07: r.is07 || null,
             mxl: r.mxl || null,
             channelTargets: Array.isArray(r.channelTargets) ? r.channelTargets : []
           };
@@ -363,7 +373,7 @@
             }
           }
           if(ipTokens.length > 0){
-            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ") + (row.mxl ? " " + row.mxl.flowId + " " + row.mxl.domainId : "");
+            let ipStr = row.legs.map(l=>l.dstIp+" "+l.srcIp).join(" ") + (row.mxl ? " " + row.mxl.flowId + " " + row.mxl.domainId : "") + (row.is07 ? " " + row.is07.host : "");
             if(!tokenSearch(ipStr, ipTokens)){
               return;
             }
@@ -502,6 +512,10 @@
         sourceState = obj;
         scheduleRebuild();
       });
+      syncEvents = ServerConnector.sync("eventState")
+      syncEvents.subscribe((obj:any)=>{
+        eventFlows = (obj && obj.flows) ? obj.flows : {};
+      });
       syncSetup = ServerConnector.sync("setupConfig")
       syncSetup.subscribe((obj:any)=>{
         if(obj && typeof obj.acceptableGmid === "string"){
@@ -528,6 +542,8 @@
       try{sync && sync.unsubscribe();}catch(e){}
       try{ServerConnector.unsync("crosspoint");}catch(e){}
       try{syncSetup && syncSetup.unsubscribe();}catch(e){}
+      try{syncEvents && syncEvents.unsubscribe();}catch(e){}
+      try{ServerConnector.unsync("eventState");}catch(e){}
       try{ServerConnector.unsync("setupConfig");}catch(e){}
     });
 
@@ -1295,7 +1311,9 @@
                     <td class="det-cell-media">
                       <div class="det-media-line">
                         <span class="det-media-text" use:OverlayMenuService.tooltip data-tooltip={mediaText(flow)}>{mediaText(flow)}</span>
-                        {#if flow.active}
+                        {#if flow.active && eventFlows[flow.id]}
+                          <span class="det-media-bitrate">· <EventValue ev={eventFlows[flow.id]} /></span>
+                        {:else if flow.active}
                           <span class="det-media-bitrate">· {renderBitrate(flow.bitrate)}</span>
                         {:else}
                           <span class="det-media-inactive">· inactive</span>
@@ -1311,6 +1329,13 @@
                           <span class="det-mxl-tag">MXL</span>
                           <span class="det-mxl-id">{flow.mxl.flowId ? flow.mxl.flowId.substring(0, 8) : "no flow"}</span>
                           <span class="det-media-muted">@ {flow.mxl.domainId ? flow.mxl.domainId.substring(0, 8) : "auto"}</span>
+                        </div>
+                      {:else if flow.is07}
+                        <!-- IS-07: a WebSocket server or an MQTT broker, set on
+                             the device, not here. -->
+                        <div class="det-mxl" use:OverlayMenuService.tooltip data-tooltip={flow.is07.tip}>
+                          <span class="det-mxl-tag">{flow.is07.tag}</span>
+                          <span class="det-mxl-id">{flow.is07.host}</span>
                         </div>
                       {:else if flow.legs.length === 0}
                         <span class="det-media-muted">—</span>
@@ -1457,7 +1482,9 @@
                     <td class="det-cell-media">
                       <div class="det-media-line">
                         <span class="det-media-text" use:OverlayMenuService.tooltip data-tooltip={mediaText(recv)}>{mediaText(recv)}</span>
-                        {#if recv.active}
+                        {#if recv.active && eventFlows[recv.id]}
+                          <span class="det-media-bitrate">· <EventValue ev={eventFlows[recv.id]} /></span>
+                        {:else if recv.active}
                           <span class="det-media-bitrate">· {renderBitrate(recv.bitrate)}</span>
                         {:else}
                           <span class="det-media-inactive">· inactive</span>
@@ -1475,6 +1502,11 @@
                           {:else}
                             <span class="det-media-muted">—</span>
                           {/if}
+                        </div>
+                      {:else if recv.is07}
+                        <div class="det-mxl" use:OverlayMenuService.tooltip data-tooltip={recv.is07.tip}>
+                          <span class="det-mxl-tag">{recv.is07.tag}</span>
+                          <span class="det-mxl-id">{recv.is07.host}</span>
                         </div>
                       {:else if recv.legs.length === 0}
                         <span class="det-media-muted">—</span>

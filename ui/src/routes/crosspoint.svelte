@@ -53,6 +53,20 @@
     let searchExpandedSenders:string[] = [];
   
     let sync:Subject<any> ;
+    // IS-07 values per flow id (server: publishEventState), empty while the
+    // Event & Tally monitor is off.
+    let syncEvents:Subject<any>;
+    let eventFlows:any = {};
+    function liveClass(ev:any):string{
+      return "cp-live cp-live-" + ev.kind + (ev.stale ? " cp-live-stale" : "");
+    }
+    // The hover pill's value line; the time of the last change in local time.
+    function liveDetail(ev:any):string{
+      let t = ev.text;
+      if(ev.stale){ t += " · not live"; }
+      else if(ev.since){ try{ t += " · since " + new Date(ev.since).toLocaleTimeString(); }catch(e){} }
+      return t;
+    }
 
     let flowTypes = ["video", "audio", "data", "mqtt", "websocket", "audiochannel", "unknown"];
 
@@ -368,6 +382,8 @@
         }
       }catch(e){}
 
+      syncEvents = ServerConnector.sync("eventState");
+      syncEvents.subscribe((obj:any)=>{ eventFlows = (obj && obj.flows) ? obj.flows : {}; });
       sync = ServerConnector.sync("crosspoint");
       sync.subscribe((obj:any)=>{
         sourceState = obj;
@@ -1131,6 +1147,8 @@
       // a page nobody was watching.
       try{ sync.unsubscribe(); }catch(e){}
       try{ ServerConnector.unsync("crosspoint"); }catch(e){}
+      try{ syncEvents && syncEvents.unsubscribe(); }catch(e){}
+      try{ ServerConnector.unsync("eventState"); }catch(e){}
     });
 
  
@@ -2064,16 +2082,17 @@
                           {#each dev.senders[type] as flow}
                             <th class="cp-flow" class:cp-grp={inStrip}><!--
                               --><span class="cp-expand"></span><!--
-                              --><span class="cp-label {(flow.hidden?"hidden":"")}" use:nameTooltip={flow.alias}><MidLabel text={flow.alias} /><!--
+                              --><span class="cp-label {(flow.hidden?"hidden":"")}" class:cp-has-live={!!eventFlows[flow.id]} use:nameTooltip={flow.alias}><MidLabel text={flow.alias} /><!--
                                 --><span class="cp-edit">
                                   <span on:click={()=>editFlowLabel(flow, "sender")} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                                   <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
                                   <span on:click={()=>activate(dev,flow, flow.active)} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip data-tooltip="toggle activate"><Icon src={Link}></Icon></span>
                                 </span><!--
+                                -->{#if eventFlows[flow.id]}<span class={liveClass(eventFlows[flow.id])}>{#if eventFlows[flow.id].kind !== "val"}<span class="cp-live-dot"></span>{/if}<span class="cp-live-text">{eventFlows[flow.id].text}</span></span>{/if}<!--
                                 --></span><!--
                               --><span class={"cp-type cp-type-"+flow.type + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                                     on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if transportFamily(flow.capabilities?.transport) === "mxl"}<span class="cp-mxl-tag">MXL</span>{/if}{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                                --><span class="cp-detail"><span class="cp-detail-main">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
+                                --><span class="cp-detail"><span class="cp-detail-main">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{#if eventFlows[flow.id]}<span class="cp-detail-msg">{liveDetail(eventFlows[flow.id])}</span>{/if}{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                               --></span><!--
                                                           --></th>
                           {/each}
@@ -2155,17 +2174,18 @@
                     <tr class="cp-flow" class:cp-grp={inStrip}>
                       <td class="cp-line-stick">
                         <span class="cp-expand"></span><!--
-                        --><span class="cp-label {(flow.hidden?"hidden":"")}" use:nameTooltip={flow.alias}><MidLabel text={flow.alias} /><!--
+                        --><span class="cp-label {(flow.hidden?"hidden":"")}" class:cp-has-live={!!eventFlows[flow.id]} use:nameTooltip={flow.alias}><MidLabel text={flow.alias} /><!--
                         --><span class="cp-edit">
                           <span on:click={()=>editFlowLabel(flow, "receiver")} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                           <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip  data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
                           <span on:click={()=>connect(null, null, dev,flow)} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip  data-tooltip="disconnect"><Icon src={Link}></Icon></span>
                         </span><!--
+                        -->{#if eventFlows[flow.id]}<span class={liveClass(eventFlows[flow.id])}>{#if eventFlows[flow.id].kind !== "val"}<span class="cp-live-dot"></span>{/if}<span class="cp-live-text">{eventFlows[flow.id].text}</span></span>{/if}<!--
                         --></span><!--
                         --><span class={"cp-type cp-type-"+flow.type + " " + getDisconnectClass(dev,flow) + " " + (flow.active ? "active" : "") + monitorRing(flow)}
                               on:mouseenter={placeDetail}
                               on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type, false)}></Icon>{#if transportFamily(flow.capabilities?.transport) === "mxl"}<span class="cp-mxl-tag">MXL</span>{/if}{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                          --><span class="cp-detail cp-detail-caps"><span class="cp-detail-head">Accepts</span>{#each capLines(flow.capLimits) as line}<span class="cp-detail-main">{line}</span>{/each}{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
+                          --><span class="cp-detail cp-detail-caps"><span class="cp-detail-head">Accepts</span>{#each capLines(flow.capLimits) as line}<span class="cp-detail-main">{line}</span>{/each}{#if eventFlows[flow.id]}<span class="cp-detail-msg">{liveDetail(eventFlows[flow.id])}</span>{/if}{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
                         --></span><!--
                                               --></td>
 
