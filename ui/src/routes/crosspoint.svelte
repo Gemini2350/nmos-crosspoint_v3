@@ -5,7 +5,7 @@
       import { afterUpdate, onDestroy, onMount } from "svelte";
       import { createEventDispatcher } from 'svelte';
 
-      import { Icon, ChevronRight, ChevronDoubleUp, ChevronDoubleDown, ChevronDown, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
+      import { Icon, ChevronRight, ChevronDoubleUp, ChevronDoubleDown, ChevronDown, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, Power, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
     import { getSearchTokens, tokenSearch, midSplit, transportFamily, transportsCompatible } from "../lib/functions";
     import MidLabel from "../lib/MidLabel.svelte";
     import RenameDialog from "../lib/RenameDialog.svelte";
@@ -1738,6 +1738,16 @@
     function capLines(caps:any):string[]{
       return (typeof caps === "string" && caps.length > 0) ? caps.split("\n") : ["no capabilities published"];
     }
+    // A sender's card (senderCard.ts, built by the backend) opens below the
+    // glyph and to the right; near the right edge of the matrix it opens to
+    // the left instead, so it stays in view.
+    function placeCard(e:MouseEvent){
+      const card = (e.currentTarget as HTMLElement).querySelector(".cp-card") as HTMLElement | null;
+      const box = (e.currentTarget as HTMLElement).closest(".cp-container")?.getBoundingClientRect();
+      if(!card || !box){ return; }
+      card.classList.remove("cp-card-left");
+      card.classList.toggle("cp-card-left", card.getBoundingClientRect().right > box.right - 4);
+    }
     // The pill opens right of the glyph and downwards; near the bottom of
     // the matrix it opens upwards instead, so its last lines stay in view.
     function placeDetail(e:MouseEvent){
@@ -2086,13 +2096,14 @@
                                 --><span class="cp-edit">
                                   <span on:click={()=>editFlowLabel(flow, "sender")} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                                   <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
-                                  <span on:click={()=>activate(dev,flow, flow.active)} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip data-tooltip="toggle activate"><Icon src={Link}></Icon></span>
+                                  <span on:click={()=>activate(dev,flow, flow.active)} class="cp-button cp-button-power" class:cp-power-off={!flow.active} use:OverlayMenuService.tooltip data-tooltip={flow.active ? "Active – click to deactivate" : "Inactive – click to activate"}><Icon src={Power}></Icon></span>
                                 </span><!--
                                 -->{#if eventFlows[flow.id]}<span class={liveClass(eventFlows[flow.id])}>{#if eventFlows[flow.id].kind !== "val"}<span class="cp-live-dot"></span>{/if}<span class="cp-live-text">{eventFlows[flow.id].text}</span></span>{/if}<!--
                                 --></span><!--
                               --><span class={"cp-type cp-type-"+flow.type + " " + (flow.active ? "active" : "") + monitorRing(flow)}
+                                    on:mouseenter={placeCard}
                                     on:click|stopPropagation={()=>{ if(bcp008On && flow.monitor){ openMonitorModal(flow); } }}><Icon src={getFlowTypeIcon(flow.type)}></Icon>{#if transportFamily(flow.capabilities?.transport) === "mxl"}<span class="cp-mxl-tag">MXL</span>{/if}{#if bcp008On && flow.monitor && (flow.monitor.counter || 0) > 0}<span class="cp-status-count">{flow.monitor.counter}</span>{/if}<!--
-                                --><span class="cp-detail"><span class="cp-detail-main">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{#if eventFlows[flow.id]}<span class="cp-detail-msg">{liveDetail(eventFlows[flow.id])}</span>{/if}{#if typeDetailState(flow)}<span class="cp-detail-state">{typeDetailState(flow)}</span>{/if}{#if typeDetailMessage(flow)}<span class="cp-detail-msg">{typeDetailMessage(flow)}</span>{/if}</span><!--
+                                --><span class="cp-detail cp-card"><span class="cp-card-title">{flow.alias}</span>{#if flow.card}<span class={"cp-card-state cp-card-" + flow.card.tone}>{flow.card.state}</span>{#each flow.card.rows as r}<span class="cp-card-k">{r.k}</span><span class={"cp-card-v" + (r.tone ? " cp-card-" + r.tone : "")}>{r.v}</span>{/each}{:else}<span class="cp-card-state">{flow.format ? shortFormat(flow.format) : (flow.available ? "Unknown format": "Unavailable")}</span>{/if}{#if eventFlows[flow.id]}<span class="cp-card-k">Value</span><span class="cp-card-v">{liveDetail(eventFlows[flow.id])}</span>{/if}</span><!--
                               --></span><!--
                                                           --></th>
                           {/each}

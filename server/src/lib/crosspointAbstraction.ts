@@ -11,6 +11,7 @@ import { Bcp008Monitor } from "./bcp008Monitor";
 import { Is07Monitor } from "./is07Monitor";
 import { flowCapAttrs, capSignature, acceptedSignatures, capsSummary } from "./receiverCaps";
 import { clashingOwners } from "./senderAlias";
+import { senderCard, SenderCard } from "./senderCard";
 import { buildChannelMapView, outputSegments, receiverTargets, ChannelMapLookup, ChannelMapInput, ChannelMapOutput, ChannelMapSegment, ChannelMapTarget } from "./is08";
 
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -1717,6 +1718,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // The same for IS-07 senders (WebSocket, MQTT), whose receivers say
         // in caps.event_types which events they take.
         let eventSenderSigs: { [sig:string]: { [cap:string]: any } } = {};
+        // Every sender, for its hover card (pass 4, once the receivers that
+        // take it are known).
+        let cardSenders: CrosspointFlow[] = [];
         for(let dev of this.crosspointState.devices){
             let nodeLabel = nodeLabelByDev[dev.id] || "";
             let devIsVirtual = isVirtualByDev[dev.id] === true;
@@ -1748,6 +1752,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     }
                     // BCP-008-02 sender health (device-computed worst-of-all).
                     sf.monitor = this.buildMonitorStatus(nmosId);
+                    cardSenders.push(sf);
                     // Mark virtual-sender flows so the Details page can skip
                     // the multicast / port edit and Forget controls — those
                     // would either be rejected (IS-05 returns 405 on /staged
@@ -1798,6 +1803,8 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
         // Pass 3: receivers + totals + per-device BCP-008 rollup + bandwidth
         let nodeSums:{ [nodeId:string]: { tx:BandwidthSum, rx:BandwidthSum } } = {};
+        // Who takes each sender right now: "<Device> / <Receiver>".
+        let receiversOf:{ [senderFlowId:string]: string[] } = {};
         for(let dev of this.crosspointState.devices){
             if(dev.available) totals.devices.avail++;
             totals.devices.total++;
@@ -1840,6 +1847,10 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                 for(let r of (dev.receivers as any)[type] || []){
                     if(!r) continue;
                     let connected = r.connectedFlow ? senderInfoById[r.connectedFlow] : null;
+                    if(r.connectedFlow){
+                        const dl = (dev as CrosspointDevice).displayLabel || dev.alias || dev.name || "";
+                        (receiversOf[r.connectedFlow] = receiversOf[r.connectedFlow] || []).push((dl ? dl + " / " : "") + (r.alias || r.name));
+                    }
                     let f = r as CrosspointFlow;
                     let nmosId = (typeof r.id === "string" && r.id.startsWith("nmos_")) ? r.id.substring(5) : "";
                     f.mxl = connected ? (connected.mxl || null) : null;
@@ -1908,6 +1919,23 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         let nodeBandwidth:{ [nodeId:string]: Bandwidth } = {};
         for(const id of Object.keys(nodeSums)){ nodeBandwidth[id] = bandwidthOf(nodeSums[id].tx, nodeSums[id].rx); }
         (this.crosspointState as CrosspointState).nodeBandwidth = nodeBandwidth;
+
+        // Pass 4: the hover card of every sender (senderCard.ts).
+        const bcp008Enabled = this.settings?.bcp008?.enabled !== false;
+        for(const sf of cardSenders){
+            try{
+                sf.card = senderCard({
+                    available: !!sf.available, active: !!sf.active,
+                    transport: sf.capabilities?.transport || "",
+                    format: sf.format || "", codec: sf.codec || "", bitrate: sf.bitrate,
+                    manifestOk: !!sf.manifestOk,
+                    legs: sf.legs || [], mxl: sf.mxl || null, is07: sf.is07 || null,
+                    receivers: receiversOf[sf.id] || [],
+                    bcp008Enabled,
+                    monitor: sf.monitor || null,
+                });
+            }catch(e){ sf.card = undefined; }
+        }
 
         (this.crosspointState as CrosspointState).totals = totals;
         (this.crosspointState as CrosspointState).detectedDevices = this.buildDetectedDevices();
@@ -2057,6 +2085,9 @@ export interface CrosspointFlow {
     // IS-07: where the events are -- "WS" and the WebSocket server, or
     // "MQTT" and the broker (sender: its /active; receiver: its sender's).
     is07?:{ tag:string, host:string, tip:string } | null,
+    // Sender: the hover card in the matrix (senderCard.ts) -- state, format,
+    // addresses, the receivers taking it, BCP-008 health or that none is read.
+    card?:SenderCard,
     // BCP-004-01 compatibility, computed here so the UI only compares:
     // sender — signature of the flow attributes receivers' caps test against;
     // receiver — the signatures its caps accept (only set where evaluated).

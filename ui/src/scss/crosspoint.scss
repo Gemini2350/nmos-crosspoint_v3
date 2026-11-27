@@ -522,6 +522,14 @@ $cp-border: 1px solid transparent;
                 background-color:theme('colors.red.800');
 
             }
+            // Activate / deactivate a sender: a power symbol that shows the
+            // state -- green while it sends, grey while it is off. The red
+            // link stays the receiver's "disconnect".
+            &.cp-button-power { background-color: theme('colors.green.700'); }
+            &.cp-button-power.cp-power-off {
+                background-color: theme('colors.neutral-600');
+                svg { color: theme('colors.neutral-300'); }
+            }
 
         }
 
@@ -961,6 +969,9 @@ $cp-border: 1px solid transparent;
                 position: sticky;
                 top: 0px;
                 &:hover { z-index: 13; }
+                // A sender's info card is open: above the crosshair strips
+                // too (z 30), which otherwise tint straight through it.
+                &:has(.cp-type:hover) { z-index: 31; }
                 // ABOVE the label column (z 10): thead is painted before tbody,
                 // so with equal values the receiver names drew over the sender
                 // header while scrolling — sender and receiver names on top of
@@ -1104,33 +1115,51 @@ $cp-border: 1px solid transparent;
                 // vertical ellipsis does not render) and left a seam in the
                 // grey backing.
 
+                // Sender info card (senderCard.ts): opens BELOW the glyph,
+                // into the matrix, in normal horizontal writing. Read
+                // vertically, the old pill held three lines at most; the card
+                // holds state, format, addresses, receivers and health, as a
+                // small table of label and value. Near the right edge of the
+                // matrix it opens to the left (placeCard).
                 .cp-type {
-                    .cp-detail {
-                        // Vertical variant of the auto-growing pill: the text
-                        // runs upwards from the icon, capped just below the
-                        // header height (232px) so it can't poke out the top.
-                        height:max-content;
-                        min-height:168px;
-                        max-height:200px;
-                        // Wide enough for two lines: in vertical writing mode
-                        // they stack along the WIDTH, and at a fixed 24px the
-                        // state line was cut off.
-                        width:max-content;
-                        min-width:$cp-size;
-                        max-width:78px;      /* three lines: format, state, message */
-                        padding:6px 3px;
-
-                        bottom:26px;
-                        left:0px;
-
+                    .cp-detail.cp-card {
+                        display:none;
+                        grid-template-columns: auto auto;
+                        column-gap: 12px;
+                        row-gap: 2px;
+                        align-items: baseline;
+                        writing-mode: horizontal-tb;
+                        text-align: left;
+                        width: max-content;
+                        min-width: 230px;
+                        max-width: 420px;
+                        height: auto;
+                        padding: 7px 10px 8px;
+                        top: 24px;
+                        bottom: unset;
+                        left: 0px;
                         right: unset;
-                        top:unset;
+                        font-size: 12.5px;
+                        line-height: 1.35;
+                        z-index: 60;
+                        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 
+                        &.cp-card-left { left: unset; right: 0px; }
 
-                        writing-mode: vertical-rl;
-                        text-orientation: mixed;
-
+                        .cp-card-title { grid-column: 1 / -1; font-weight: 700; font-size: 13px; margin-bottom: 1px;
+                                         overflow: hidden; text-overflow: ellipsis; }
+                        .cp-card-state { grid-column: 1 / -1; font-weight: 700; margin-bottom: 3px; }
+                        .cp-card-k { font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; opacity: 0.55; }
+                        .cp-card-v { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+                        .cp-card-on   { color: theme('colors.neutral-200'); }
+                        .cp-card-off  { color: theme('colors.neutral-400'); }
+                        .cp-card-ok   { color: $cp-color-green; }
+                        .cp-card-warn { color: $cp-color-warn; }
+                        .cp-card-err  { color: $cp-color-red; }
+                        .cp-card-dim  { opacity: 0.6; }
+                        .cp-card-mono { font-variant-numeric: tabular-nums; }
                     }
+                    &:hover .cp-detail.cp-card { display: grid; }
                 }
 
 
@@ -1551,6 +1580,11 @@ html[data-theme="light"] {
                 }
                 &.cp-button-disconnect {
                     background-color:theme('colors.red.800');
+                }
+                &.cp-button-power { background-color: theme('colors.green.700'); }
+                &.cp-button-power.cp-power-off {
+                    background-color: theme('colors.neutral-600');
+                    svg { color: theme('colors.neutral-300'); }
                 }
     
             }
