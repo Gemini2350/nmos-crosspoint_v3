@@ -25,7 +25,7 @@ import * as jsonpatch from 'fast-json-patch';
 
 import * as sdpTransform from 'sdp-transform';
 import { CrosspointAbstraction, CrosspointConnectionSenderInfo } from "./crosspointAbstraction";
-import { MxlEndpoint, SR_CTRL_TYPES, TRANSPORT_MXL, selectControlHrefs, transportKind, joinHref, mxlEndpointFromActive, resolvedMxlEndpoint, buildMxlReceiverPatch, buildMxlDisconnectPatch, buildRtpTransportParams, buildSenderEnablePatch, usesMulticastLease, hasRtpDestination } from "./nmosConnectionPatch";
+import { MxlEndpoint, SR_CTRL_TYPES, TRANSPORT_MXL, selectControlHrefs, transportKind, joinHref, mxlEndpointFromActive, resolvedMxlEndpoint, buildMxlReceiverPatch, buildMxlDisconnectPatch, buildRtpTransportParams, buildSenderEnablePatch, usesMulticastLease, hasRtpDestination, isIs07Kind, is07EndpointFromActive, buildIs07ReceiverPatch, buildIs07DisconnectPatch } from "./nmosConnectionPatch";
 import { MulticastLeaseManager } from "./multicastLeaseManager";
 import { sameStream } from "./senderAlias";
 import { LeaseRetryGate } from "./leaseRetry";
@@ -1994,6 +1994,22 @@ export class NmosRegistryConnector {
                     info.error = "Can not read MXL flow from sender: " + (e?.message || e?.code);
                     return info;
                 }
+            }else if(isIs07Kind(transportKind(sender.transport))){
+                // IS-07 has no transport file either: where the events are
+                // (a WebSocket server, or a broker and topic) is in /active.
+                try{
+                    let hrefs = this.is05Hrefs(device);
+                    if(hrefs.length == 0){
+                        info.error = "Event sender advertises no IS-05 control";
+                        return info;
+                    }
+                    let active:any = await this.viaDevice("IS-05", sender.device_id, hrefs,
+                        (href)=>axios.get(joinHref(href, "single/senders/" + senderId + "/active"), deviceRequest(10000)));
+                    info.is07 = is07EndpointFromActive(transportKind(sender.transport), active.data, this.is07Fallback(senderId));
+                }catch(e:any){
+                    info.error = "Can not read the event endpoint from sender: " + (e?.message || e?.code);
+                    return info;
+                }
             }else{
             try{
                 let sdp = await axios.get(sender.manifest_href)
@@ -2018,6 +2034,33 @@ export class NmosRegistryConnector {
         info.active = sender.subscription.active;
 
         return info
+    }
+
+    /** A receiver's IS-05 /constraints, null when it cannot be read. */
+    private async readReceiverConstraints(device:any, receiver:any, receiverId:string):Promise<any>{
+        try{
+            let hrefs = this.is05Hrefs(device);
+            if(hrefs.length > 0){
+                return (await this.viaDevice("IS-05", receiver.device_id, hrefs,
+                    (href)=>axios.get(joinHref(href, "single/receivers/" + receiverId + "/constraints"), deviceRequest(10000)))).data;
+            }
+        }catch(e){}
+        return null;
+    }
+
+    /** What IS-04 says about an event sender: the source of its flow and
+     *  its device's Events API (urn:x-nmos:control:events). */
+    is07Fallback(senderId:string):{ sourceId?:string, eventsHref?:string }{
+        let out:{ sourceId?:string, eventsHref?:string } = {};
+        try{
+            let sender = this.nmosState.senders[senderId];
+            let flow = this.nmosState.flows[sender.flow_id];
+            if(flow && flow.source_id){ out.sourceId = "" + flow.source_id; }
+            let device = this.nmosState.devices[sender.device_id];
+            let ctl = (device?.controls || []).find((c:any) => typeof c?.type === "string" && c.type.startsWith("urn:x-nmos:control:events") && typeof c.href === "string");
+            if(ctl){ out.eventsHref = ctl.href; }
+        }catch(e){}
+        return out;
     }
 
     async makeConnection(receiverId:string, senderInfo: CrosspointConnectionSenderInfo){
@@ -2118,16 +2161,8 @@ export class NmosRegistryConnector {
                     SyncLog.log("warning", "NMOS Connect", "An MXL receiver can only take an MXL sender, got transport: " + (senderInfo.transport || "unknown"));
                     throw new Error("An MXL receiver can only take an MXL sender.");
                 }
-                let constraints:any = null;
-                try{
-                    let hrefs = this.is05Hrefs(device);
-                    if(hrefs.length > 0){
-                        constraints = (await this.viaDevice("IS-05", receiver.device_id, hrefs,
-                            (href)=>axios.get(joinHref(href, "single/receivers/" + receiverId + "/constraints"), deviceRequest(10000)))).data;
-                    }
-                }catch(e){
-                    // No constraints to read: the device answers for the domain itself.
-                }
+                // No constraints to read: the device answers for the domain itself.
+                let constraints = await this.readReceiverConstraints(device, receiver, receiverId);
                 try{
                     patch = buildMxlReceiverPatch(patch.sender_id ?? null, senderInfo.mxl, constraints);
                 }catch(e:any){
@@ -2137,13 +2172,29 @@ export class NmosRegistryConnector {
                     throw Object.assign(new LoggedError(e.message, id), {refused:true});
                 }
             }
+        }else if(isIs07Kind(transportKind(receiver.transport))){
+            // IS-07: the receiver is pointed at the sender's WebSocket server
+            // or broker and topic, with no transport file.
+            let rxKind = transportKind(receiver.transport);
+            if(senderInfo.senderId == "disconnect"){
+                patch = buildIs07DisconnectPatch();
+            }else{
+                if(senderInfo.transport != rxKind || !senderInfo.is07){
+                    let msg = "A " + rxKind + " event receiver can only take a " + rxKind + " event sender, got transport: " + (senderInfo.transport || "unknown");
+                    let id = SyncLog.log("warning", "NMOS Connect", msg, {receiverId, sender:senderInfo.senderId});
+                    throw Object.assign(new LoggedError(msg, id), {refused:true});
+                }
+                let constraints = await this.readReceiverConstraints(device, receiver, receiverId);
+                patch = buildIs07ReceiverPatch(patch.sender_id ?? null, senderInfo.is07, constraints, (receiver.interface_bindings || []).length);
+            }
         }else{
         let receiverLegCount = receiver.interface_bindings.length;
         if(senderInfo.senderId == "disconnect" || senderInfo.transport == "rtp.mcast" || senderInfo.transport == "rtp"){
             patch.transport_params = buildRtpTransportParams(receiverLegCount, sdpLegs, senderInfo.senderId == "disconnect");
-        }else if(senderInfo.transport == "websocket" || senderInfo.transport == "mqtt"){
-            // TODO Websocket / MQTT
-            for(let i = 0; i < receiverLegCount; i++){ patch.transport_params.push({}); }
+        }else if(isIs07Kind(senderInfo.transport)){
+            // An event sender has nothing an RTP receiver could join.
+            SyncLog.log("warning", "NMOS Connect", "A " + senderInfo.transport + " event sender cannot feed a " + (transportKind(receiver.transport) || "non-IS-07") + " receiver.");
+            throw new Error("An event sender can only feed an event receiver of the same transport.");
         }else if(senderInfo.transport == "mxl"){
             // An MXL flow lives in shared memory on a host; a network
             // receiver has nothing to join.

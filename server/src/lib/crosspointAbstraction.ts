@@ -1608,6 +1608,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
         // Distinct flow signatures of all MXL senders → their attributes.
         // Receivers' caps are evaluated once per signature, not per sender.
         let mxlSenderSigs: { [sig:string]: { [cap:string]: any } } = {};
+        // The same for IS-07 senders (WebSocket, MQTT), whose receivers say
+        // in caps.event_types which events they take.
+        let eventSenderSigs: { [sig:string]: { [cap:string]: any } } = {};
         for(let dev of this.crosspointState.devices){
             let nodeLabel = nodeLabelByDev[dev.id] || "";
             let devIsVirtual = isVirtualByDev[dev.id] === true;
@@ -1627,10 +1630,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     sf.legs = legs;
                     sf.codec = codec;
                     sf.mxl = isMxl ? this.buildMxlFromNmos(nmosId) : null;
-                    if(isMxl && nmosId){
+                    const isEvent = s.capabilities?.transport === "websocket" || s.capabilities?.transport === "mqtt";
+                    if((isMxl || isEvent) && nmosId){
                         const attrs = this.flowCapAttrs(nmosId);
                         sf.capSig = capSignature(attrs);
-                        mxlSenderSigs[sf.capSig] = attrs;
+                        (isMxl ? mxlSenderSigs : eventSenderSigs)[sf.capSig] = attrs;
                     }
                     // BCP-008-02 sender health (device-computed worst-of-all).
                     sf.monitor = this.buildMonitorStatus(nmosId);
@@ -1734,6 +1738,11 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                     // type + transport check for now.
                     if(f.capabilities?.transport === "mxl" && nmosId){
                         f.capOk = this.receiverAcceptedSigs(nmosId, mxlSenderSigs);
+                    }
+                    // IS-07 receivers too: their event_types (with the
+                    // wildcards IS-07 allows) say which events they take.
+                    if((f.capabilities?.transport === "websocket" || f.capabilities?.transport === "mqtt") && nmosId){
+                        f.capOk = this.receiverAcceptedSigs(nmosId, eventSenderSigs);
                     }
                     if(connected){
                         f.legs    = connected.legs;
@@ -2077,6 +2086,7 @@ export interface CrosspointShadowFlow {
 function senderReady(info: CrosspointConnectionSenderInfo | null): boolean {
     if(!info){ return false; }
     if(info.transport == "mxl"){ return !!info.mxl; }
+    if(info.transport == "websocket" || info.transport == "mqtt"){ return !!info.is07; }
     return !!info.manifestFile && /\r?\nm=/.test(info.manifestFile);
 }
 
@@ -2091,6 +2101,9 @@ export interface CrosspointConnectionSenderInfo {
     mxl?:{flowId:string, domainId:string}
     // Whether that /active has the MXL sender switched on.
     mxlEnabled?:boolean
+    // IS-07: the parameters a receiver is staged with (WebSocket server or
+    // broker and topic), from the sender's IS-05 /active.
+    is07?:{ [param:string]: any }
 }
 
 export interface CrosspointShadowDevice {

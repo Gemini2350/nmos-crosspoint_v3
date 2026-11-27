@@ -180,13 +180,49 @@ export function matchSenderByMxlFlow(receiverActive: any, senderActiveData: { [i
 }
 
 /**
+ * The sender an IS-07 receiver takes, found by what it reads. WebSocket: the
+ * sender's connection_uri, and its source when the receiver names one (one
+ * WebSocket server often serves every source of a device). MQTT: the sender's
+ * broker_topic, on the same broker when both name it. "" when none matches or
+ * two do.
+ */
+export function matchSenderByEventEndpoint(receiverActive: any, senderActiveData: { [id: string]: any }, senders: { [id: string]: any }, family: TransportFamily): string {
+    const rx = receiverActive?.transport_params?.[0];
+    if (!rx) return "";
+    const named = (v: any) => v !== undefined && v !== null && v !== "" && v !== "auto";
+    if (family === "websocket" && !named(rx.connection_uri)) return "";
+    if (family === "mqtt" && !named(rx.broker_topic)) return "";
+    let found = "";
+    for (const id of Object.keys(senderActiveData || {})) {
+        const sender = senders ? senders[id] : null;
+        if (!sender || transportFamily(sender.transport) !== family) continue;
+        const active = senderActiveData[id];
+        const tx = active?.transport_params?.[0];
+        if (!tx || active.master_enable === false) continue;
+        let hit = false;
+        if (family === "websocket") {
+            hit = sameAddress(tx.connection_uri, rx.connection_uri) &&
+                (!named(rx.ext_is_07_source_id) || !named(tx.ext_is_07_source_id) || sameAddress(tx.ext_is_07_source_id, rx.ext_is_07_source_id));
+        } else {
+            hit = sameAddress(tx.broker_topic, rx.broker_topic) &&
+                (!named(rx.source_host) || !named(tx.destination_host) || sameAddress(tx.destination_host, rx.source_host));
+        }
+        if (!hit) continue;
+        if (found) return "";
+        found = id;
+    }
+    return found;
+}
+
+/**
  * The sender a receiver is connected to, "" when none.
  *
  * Only a running receiver (IS-04 `subscription.active`) has one. It is the
  * sender the IS-04 subscription names, else the one its IS-05 /active names,
  * else the one sending to the addresses an RTP receiver joins
- * (matchSenderByAddress) or writing the flow an MXL receiver reads
- * (matchSenderByMxlFlow).
+ * (matchSenderByAddress), writing the flow an MXL receiver reads
+ * (matchSenderByMxlFlow) or serving the events an IS-07 receiver reads
+ * (matchSenderByEventEndpoint).
  */
 export function connectedSenderId(receiver: any, receiverActive: any, senderActiveData: { [id: string]: any }, senders: { [id: string]: any }): string {
     const sub = receiver?.subscription;
@@ -194,19 +230,20 @@ export function connectedSenderId(receiver: any, receiverActive: any, senderActi
     if (sub.sender_id) return "" + sub.sender_id;
     if (receiverActive?.sender_id) return "" + receiverActive.sender_id;
     const family = transportFamily(receiver?.transport);
-    if (family !== "rtp" && family !== "mxl") return "";
+    if (family === "") return "";
     // IS-05 says it is switched off: nothing is joined, whatever IS-04 says.
     if (receiverActive && receiverActive.master_enable === false) return "";
     if (family === "mxl") return matchSenderByMxlFlow(receiverActive, senderActiveData, senders);
+    if (family === "websocket" || family === "mqtt") return matchSenderByEventEndpoint(receiverActive, senderActiveData, senders, family);
     return matchSenderByAddress(receiverActive, senderActiveData, senders);
 }
 
-/** A receiver whose sender only its IS-05 /active can tell: running, RTP or
- *  MXL, and not naming the sender in IS-04. */
+/** A receiver whose sender only its IS-05 /active can tell: running, of a
+ *  known transport, and not naming the sender in IS-04. */
 export function receiverNeedsActive(receiver: any): boolean {
     const sub = receiver?.subscription;
     const family = transportFamily(receiver?.transport);
-    return !!(sub && sub.active && !sub.sender_id && (family === "rtp" || family === "mxl"));
+    return !!(sub && sub.active && !sub.sender_id && family !== "");
 }
 
 /** A receiver whose IS-05 /active is kept: one receiverNeedsActive names,

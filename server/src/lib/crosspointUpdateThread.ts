@@ -1,6 +1,6 @@
 import { CrosspointDevice, CrosspointFlow, CrosspointShadowState, CrosspointState, CrosspointShadowDevice } from "./crosspointAbstraction";
 import { ComplexCompare, ShortenNames } from "./functions";
-import { TRANSPORT_MXL } from "./nmosConnectionPatch";
+import { TRANSPORT_MXL, isIs07Kind, transportKind } from "./nmosConnectionPatch";
 import { transportFamily, senderIsRedundant, receiverIsRedundant, connectedSenderId } from "./transport";
 import { moveDeviceNum } from "./deviceOrder";
 import { sameStream } from "./senderAlias";
@@ -979,9 +979,11 @@ class CrosspointUpdateThread{
                                         this.nmosState.senderActiveData?.[nmosId],
                                         this.nmosState.sendersManifestDetail?.[nmosId]);
                                     source.capabilities.transport = transportFamily(this.nmosState.senders[nmosId].transport);
-                                    if(this.nmosState.senders[nmosId].transport == TRANSPORT_MXL){
+                                    if(this.nmosState.senders[nmosId].transport == TRANSPORT_MXL ||
+                                       isIs07Kind(transportKind(this.nmosState.senders[nmosId].transport))){
                                         // No transport file to fetch (manifest_href is null);
-                                        // the flow is read from the sender's IS-05 /active.
+                                        // the flow (MXL) or the event endpoint (IS-07)
+                                        // is read from the sender's IS-05 /active.
                                         source.manifestOk = true;
                                     }
                                     source.capabilities.mediaTypes.push(this.nmosState.flows[this.nmosState.senders[nmosId].flow_id].media_type);
@@ -1341,8 +1343,13 @@ class CrosspointUpdateThread{
               if (flow.media_type == 'video/smpte291') {
                 info += 'smpte291';
               }
+              else if (flow.event_type) {
+                // IS-07: what the events are (e.g. "number/temperature/C"),
+                // whichever transport carries them.
+                info += flow.event_type;
+              }
               else if (flow.media_type == 'application/json') {
-                info += 'websocket';
+                info += 'events';
               }
               else{
                 info += flow.media_type || '';

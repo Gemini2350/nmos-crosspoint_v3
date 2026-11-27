@@ -199,3 +199,121 @@ export function tryNextControl(e: any): boolean {
     if (e && e.response) return false;
     return UNREACHABLE.has(e && e.code);
 }
+
+export const TRANSPORT_WEBSOCKET = "urn:x-nmos:transport:websocket";
+export const TRANSPORT_MQTT = "urn:x-nmos:transport:mqtt";
+
+/** Whether a short transport name (transportKind) is one of IS-07's. */
+export function isIs07Kind(kind: string): boolean {
+    return kind === "websocket" || kind === "mqtt";
+}
+
+/** The parameters an IS-07 receiver is staged with, in the receiver's names. */
+export type Is07Endpoint = { [param: string]: any };
+
+/** What IS-04 says about a sender, for values its /active leaves out. */
+export interface Is07Fallback {
+    // The sender's source (IS-04 sender → flow → source_id).
+    sourceId?: string,
+    // The device's Events API href (urn:x-nmos:control:events).
+    eventsHref?: string,
+}
+
+function resolvedValue(v: any): boolean {
+    return v !== undefined && v !== null && v !== "" && v !== "auto";
+}
+
+/**
+ * The IS-07 parameters a receiver needs, from the sender's IS-05 /active.
+ *
+ * IS-07 has no transport file ("Neither of these transport types require a
+ * transport file (manifest_href)"). WebSocket: the receiver connects to the
+ * sender's connection_uri and subscribes to the source ext_is_07_source_id
+ * names. MQTT: the broker the sender publishes to (destination_host/port) is
+ * the one the receiver reads from (source_host/port), on the same topics.
+ * ext_is_07_rest_api_url points at the source in the Events API, where a late
+ * joiner reads the current state.
+ *
+ * A sender's own values win. Where its /active leaves the source or the
+ * Events API out, IS-04 says them: the source of the sender's flow, and the
+ * device's Events API href with "sources/{source_id}/" appended (IS-07 Core
+ * models 4.5). An unresolved address or topic is refused rather than staged:
+ * a receiver would take it as "connect nowhere".
+ */
+export function is07EndpointFromActive(kind: string, active: any, fallback: Is07Fallback = {}): Is07Endpoint {
+    const leg = active?.transport_params?.[0] || {};
+    const out: Is07Endpoint = {};
+    const copy = (from: string, to: string = from) => { if (resolvedValue(leg[from])) { out[to] = leg[from]; } };
+    let restUrl = resolvedValue(leg.ext_is_07_rest_api_url) ? leg.ext_is_07_rest_api_url : "";
+    if (!restUrl && fallback.eventsHref && fallback.sourceId) {
+        restUrl = joinHref(fallback.eventsHref, "sources/" + fallback.sourceId + "/");
+    }
+    if (kind === "websocket") {
+        if (!resolvedValue(leg.connection_uri)) {
+            throw new Error("WebSocket sender has no resolved connection_uri in its active parameters (is it enabled?)");
+        }
+        copy("connection_uri");
+        copy("connection_authorization");
+        const sourceId = resolvedValue(leg.ext_is_07_source_id) ? leg.ext_is_07_source_id : (fallback.sourceId || "");
+        if (sourceId) { out.ext_is_07_source_id = sourceId; }
+    } else if (kind === "mqtt") {
+        if (!resolvedValue(leg.destination_host)) {
+            throw new Error("MQTT sender has no resolved destination_host (broker) in its active parameters (is it enabled?)");
+        }
+        if (!resolvedValue(leg.broker_topic)) {
+            throw new Error("MQTT sender has no broker_topic in its active parameters");
+        }
+        copy("destination_host", "source_host");
+        copy("destination_port", "source_port");
+        copy("broker_protocol");
+        copy("broker_authorization");
+        copy("broker_topic");
+        // null is a value here: "not using a connection status topic". A
+        // receiver keeping the previous sender's topic would read the wrong
+        // status.
+        out.connection_status_broker_topic = resolvedValue(leg.connection_status_broker_topic) ? leg.connection_status_broker_topic : null;
+    } else {
+        throw new Error("Not an IS-07 transport: " + (kind || "unknown"));
+    }
+    if (restUrl) { out.ext_is_07_rest_api_url = restUrl; }
+    return out;
+}
+
+/**
+ * The staged PATCH connecting an IS-07 receiver to a sender.
+ *
+ * Only parameters the receiver lists in its /constraints go out: a receiver
+ * answers one outside them with 400 (IS-07 lets a receiver list the ext_
+ * parameters with "an empty constraint object"). Without constraints the
+ * IS-05 core parameters go out and IS-07's own ext_ ones stay back. No
+ * transport_file: IS-07 has none.
+ */
+export function buildIs07ReceiverPatch(senderId: string | null, endpoint: Is07Endpoint, receiverConstraints: any, legCount: number): any {
+    const allowed = receiverConstraints?.[0];
+    const known = allowed && typeof allowed === "object" && !Array.isArray(allowed);
+    const params: any = {};
+    for (const k of Object.keys(endpoint)) {
+        if (known ? !(k in allowed) : k.startsWith("ext_")) continue;
+        params[k] = endpoint[k];
+    }
+    const transport_params: any[] = [params];
+    for (let i = 1; i < Math.max(1, legCount); i++) { transport_params.push({}); }
+    return {
+        sender_id: senderId,
+        master_enable: true,
+        activation: { mode: "activate_immediate" },
+        transport_params,
+    };
+}
+
+/** The staged PATCH disconnecting an IS-07 receiver. master_enable false
+ *  ends the subscription (IS-07: "a disconnection PATCH should remove the
+ *  source from the subscriptions list"); the parameters stay as they were,
+ *  nothing reads them while it is off. */
+export function buildIs07DisconnectPatch(): any {
+    return {
+        sender_id: null,
+        master_enable: false,
+        activation: { mode: "activate_immediate" },
+    };
+}

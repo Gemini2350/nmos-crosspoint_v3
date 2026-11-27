@@ -17,6 +17,17 @@
     import RenameDialog from "../lib/RenameDialog.svelte";
 
 
+    // IS-07 (Event & Tally) travels over WebSocket or MQTT: no transport file.
+    function isEventTransport(transport:string):boolean{
+      return transport === "websocket" || transport === "mqtt";
+    }
+    // What the type glyph's tooltip calls a flow: a data flow is ANC
+    // (ST 2110-40) on RTP, events (IS-07) on WebSocket or MQTT.
+    function typeName(type:string, transport:string):string{
+      if(type === "data") return isEventTransport(transport) ? "Events" : "ANC";
+      return type.toUpperCase();
+    }
+
     // Same icon set as Crosspoint sender side
     function getFlowTypeIcon(type:string){
       switch(type){
@@ -112,6 +123,8 @@
       // MXL receiver: what it reads (copied from the connected sender), or
       // isMxl with null when nothing is connected yet.
       isMxl:boolean;
+      // Transport family ("rtp", "mxl", "websocket", "mqtt"), "" when unknown.
+      transport:string;
       mxl:{ domainId:string, flowId:string } | null;
       // IS-08: which output channels its channels feed (server-computed).
       channelTargets:any[];
@@ -331,6 +344,7 @@
             format: r.format || "",
             bitrate: r.bitrate,
             legs: Array.isArray(r.legs) ? r.legs : [],
+            transport: r.capabilities?.transport || "",
             isMxl: r.capabilities?.transport === "mxl",
             mxl: r.mxl || null,
             channelTargets: Array.isArray(r.channelTargets) ? r.channelTargets : []
@@ -1237,7 +1251,7 @@
                       <span class={"cp-type det-toggle-active cp-type-"+flow.type + (flow.active ? " active" : "")}
                             on:click={()=>toggleSenderActive(flow)}
                             use:OverlayMenuService.tooltip
-                            data-tooltip="{flow.type === "data" ? "ANC" : flow.type.toUpperCase()} {flow.active ? "active – click to disable":"inactive – click to enable"}">
+                            data-tooltip="{typeName(flow.type, flow.transport)} {flow.active ? "active – click to disable":"inactive – click to enable"}">
                         <Icon src={getFlowTypeIcon(flow.type)}></Icon>
                       </span>
                     </td>
@@ -1373,7 +1387,7 @@
                           🎧
                         </button>
                       {/if}
-                      {#if !flow.mxl}
+                      {#if !flow.mxl && !isEventTransport(flow.transport)}
                       <button class="det-icon-btn det-hover" on:click={()=>openSdpView(flow)}
                               use:OverlayMenuService.tooltip data-tooltip="Show SDP file">
                         <Icon src={DocumentText}></Icon>
@@ -1404,7 +1418,7 @@
                       <span class={"cp-type det-toggle-active cp-type-"+recv.type + (recv.active ? " active" : "")}
                             on:click={()=>toggleReceiverActive(recv)}
                             use:OverlayMenuService.tooltip
-                            data-tooltip={(recv.type === "data" ? "ANC" : recv.type.toUpperCase())
+                            data-tooltip={typeName(recv.type, recv.transport)
                               + " " + (recv.active ? "active – click to disable" : "inactive – click to enable")
                               + (recv.connectedSenderLabel ? "\nConnected sender: " + recv.connectedSenderLabel : "")}>
                         <Icon src={getFlowTypeIcon(recv.type)}></Icon>

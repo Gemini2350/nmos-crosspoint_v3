@@ -102,6 +102,28 @@ export function capSignature(attrs: { [cap: string]: any }): string {
 }
 
 /**
+ * Whether one entry of a Receiver's IS-07 `event_types` accepts a flow's
+ * event type. Comparisons are case sensitive. A wildcard "must replace a
+ * whole word and can only be used at the end of an event type definition"
+ * ("number/*", "number/temperature/*"), so "number/*" takes
+ * "number/temperature/C" but not "number" itself, which has no word there to
+ * replace. A lone "*" replaces the first word and takes every type. A
+ * wildcard elsewhere ("number/tempera*", "number/*\/C") is not one the spec
+ * allows and matches only itself.
+ */
+export function eventTypeAccepted(pattern: any, eventType: any): boolean {
+    if (typeof pattern !== "string" || typeof eventType !== "string") return false;
+    if (pattern.endsWith("*")) {
+        const prefix = pattern.slice(0, -1);
+        const wholeWord = prefix === "" || prefix.endsWith("/");
+        if (wholeWord && !prefix.includes("*")) {
+            return eventType.length > prefix.length && eventType.startsWith(prefix);
+        }
+    }
+    return pattern === eventType;
+}
+
+/**
  * The signatures (keys of `sigs`) whose attributes a Receiver's caps accept.
  * IS-04 `media_types` / `event_types` and BCP-004-01 `constraint_sets` must
  * ALL be satisfied; within each, ANY alternative. No caps accepts everything.
@@ -112,7 +134,7 @@ export function acceptedSignatures(caps: any, sigs: { [sig: string]: { [cap: str
     for (const sig of Object.keys(sigs)) {
         const a = sigs[sig];
         if (Array.isArray(c.media_types) && a[C + "media_type"] !== undefined && !c.media_types.includes(a[C + "media_type"])) continue;
-        if (Array.isArray(c.event_types) && a[C + "event_type"] !== undefined && !c.event_types.includes(a[C + "event_type"])) continue;
+        if (Array.isArray(c.event_types) && a[C + "event_type"] !== undefined && !c.event_types.some((p: any) => eventTypeAccepted(p, a[C + "event_type"]))) continue;
         if (Array.isArray(c.constraint_sets)) {
             // meta:enabled false: "A Controller MUST NOT take into consideration"
             const live = c.constraint_sets.filter((cs: any) => cs && cs["urn:x-nmos:cap:meta:enabled"] !== false);
