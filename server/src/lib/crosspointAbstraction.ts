@@ -1817,6 +1817,9 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
             // only counts sender flows, the receiver ROW badge receivers.
             let monTx = { worst: 0, count: 0 };
             let monRx = { worst: 0, count: 0 };
+            // Receivers of the device that run (IS-04 subscription.active):
+            // what its "disconnect all" button would switch off.
+            let receiversActive = 0;
             // Total bandwidth per leg of what the device sends and receives
             // (bandwidth.ts). Only streams that are on: active, the device
             // online, on the network (not MXL, not IS-07 events).
@@ -1900,6 +1903,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
                             addUnknown(bwRx);
                         }
                     }
+                    if(r.active) receiversActive++;
                     if(r.available) totals.receivers.avail++;
                     totals.receivers.total++;
                 }
@@ -1907,6 +1911,7 @@ const md5 = data => crypto.createHash('md5').update(data).digest("hex")
 
             (dev as CrosspointDevice).monitorSummaryTx = monTx;
             (dev as CrosspointDevice).monitorSummaryRx = monRx;
+            (dev as CrosspointDevice).receiversActive = receiversActive;
             (dev as CrosspointDevice).bandwidth = bandwidthOf(bwTx, bwRx);
             const nodeId = (dev as CrosspointDevice).nodeId;
             if(nodeId){
@@ -2196,6 +2201,8 @@ export interface CrosspointDevice {
     // IS-13: the Node behind this device offers the Annotation API.
     annotatable?:boolean,
     monitorSummaryRx?:{ worst:number, count:number },
+    // Running receivers of the device (the matrix's "disconnect all").
+    receiversActive?:number,
     // What the device sends and receives, per leg (bandwidth.ts).
     bandwidth?:Bandwidth
   }

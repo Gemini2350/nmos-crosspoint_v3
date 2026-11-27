@@ -5,7 +5,7 @@
       import { afterUpdate, onDestroy, onMount } from "svelte";
       import { createEventDispatcher } from 'svelte';
 
-      import { Icon, ChevronRight, ChevronDoubleUp, ChevronDoubleDown, ChevronDown, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, Link, Power, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
+      import { Icon, ChevronRight, ChevronDoubleUp, ChevronDoubleDown, ChevronDown, VideoCamera, Microphone, CodeBracketSquare, MagnifyingGlass,  SpeakerWave, Tv,Pencil, Eye, EyeSlash, LinkSlash, Power, InformationCircle, ExclamationTriangle, ExclamationCircle, Heart, ArrowPath } from "svelte-hero-icons";
     import { getSearchTokens, tokenSearch, midSplit, transportFamily, transportsCompatible } from "../lib/functions";
     import MidLabel from "../lib/MidLabel.svelte";
     import RenameDialog from "../lib/RenameDialog.svelte";
@@ -1726,6 +1726,20 @@
       }).finally(()=>{})
     }
 
+    // Disconnect is a broken link: red while the receiver runs, grey while
+    // nothing is connected. Red follows the receiver (IS-04
+    // subscription.active), not whether its sender is known -- one taking a
+    // multicast no sender in the registry announces can still be stopped.
+    function disconnectTip(flow:any):string{
+      if(!flow.active) return "Not connected";
+      return flow.connectedSenderLabel ? "Disconnect from " + flow.connectedSenderLabel : "Disconnect";
+    }
+    function disconnectDeviceTip(dev:any, name:string):string{
+      const n = dev.receiversActive || 0;
+      if(n === 0) return "Nothing connected";
+      return n === 1 ? "Disconnect the 1 running receiver of " + name : "Disconnect all " + n + " running receivers of " + name;
+    }
+
     function toggleHidden(id:string){
       ServerConnector.post("togglehidden", {
         id:id
@@ -2140,7 +2154,7 @@
                           {:else}
                             <span on:click={(e)=>{e.stopPropagation(); editDevLabel(dev);}} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                             <span on:click={(e)=>{e.stopPropagation(); toggleHidden(dev.id);}} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip data-tooltip="toggle hidden"><Icon src={(dev.hidden ? Eye : EyeSlash)}></Icon></span>
-                            <span on:click={(e)=>{e.stopPropagation(); connect(null, null, dev,null);}} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip data-tooltip="disconnect"><Icon src={Link}></Icon></span>
+                            <span on:click={(e)=>{e.stopPropagation(); connect(null, null, dev,null);}} class="cp-button cp-button-disconnect" class:cp-disconnect-off={!dev.receiversActive} use:OverlayMenuService.tooltip data-tooltip={disconnectDeviceTip(dev, deviceRowLabel(dev, inStrip))}><Icon src={LinkSlash}></Icon></span>
                           {/if}
                         </span><!--
                     --></span><!--
@@ -2189,7 +2203,7 @@
                         --><span class="cp-edit">
                           <span on:click={()=>editFlowLabel(flow, "receiver")} class="cp-button cp-button-edit" use:OverlayMenuService.tooltip  data-tooltip="rename"><Icon src={Pencil}></Icon></span>
                           <span on:click={()=>toggleHidden(flow.id)} class="cp-button cp-button-visible" use:OverlayMenuService.tooltip  data-tooltip="toggle hidden"><Icon src={(flow.hidden ? Eye : EyeSlash)}></Icon></span>
-                          <span on:click={()=>connect(null, null, dev,flow)} class="cp-button cp-button-disconnect" use:OverlayMenuService.tooltip  data-tooltip="disconnect"><Icon src={Link}></Icon></span>
+                          <span on:click={()=>connect(null, null, dev,flow)} class="cp-button cp-button-disconnect" class:cp-disconnect-off={!flow.active} use:OverlayMenuService.tooltip data-tooltip={disconnectTip(flow)}><Icon src={LinkSlash}></Icon></span>
                         </span><!--
                         -->{#if eventFlows[flow.id]}<span class={liveClass(eventFlows[flow.id])}>{#if eventFlows[flow.id].kind !== "val"}<span class="cp-live-dot"></span>{/if}<span class="cp-live-text">{eventFlows[flow.id].text}</span></span>{/if}<!--
                         --></span><!--

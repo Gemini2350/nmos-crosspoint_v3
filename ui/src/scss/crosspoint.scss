@@ -523,10 +523,12 @@ $cp-border: 1px solid transparent;
 
             }
             // Activate / deactivate a sender: a power symbol that shows the
-            // state -- green while it sends, grey while it is off. The red
-            // link stays the receiver's "disconnect".
+            // state -- green while it sends, grey while it is off. The
+            // receiver's "disconnect", a broken link, does the same: red
+            // while something is connected, the same grey when nothing is.
             &.cp-button-power { background-color: theme('colors.green.700'); }
-            &.cp-button-power.cp-power-off {
+            &.cp-button-power.cp-power-off,
+            &.cp-button-disconnect.cp-disconnect-off {
                 background-color: theme('colors.neutral-600');
                 svg { color: theme('colors.neutral-300'); }
             }
@@ -1582,7 +1584,8 @@ html[data-theme="light"] {
                     background-color:theme('colors.red.800');
                 }
                 &.cp-button-power { background-color: theme('colors.green.700'); }
-                &.cp-button-power.cp-power-off {
+                &.cp-button-power.cp-power-off,
+                &.cp-button-disconnect.cp-disconnect-off {
                     background-color: theme('colors.neutral-600');
                     svg { color: theme('colors.neutral-300'); }
                 }
