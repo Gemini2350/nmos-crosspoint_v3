@@ -927,13 +927,6 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
                     next.eventMonitor = { enabled: postData.eventMonitor.enabled };
                 }
                 if(postData.audioMonitor && typeof postData.audioMonitor === "object" && typeof postData.audioMonitor.enabled === "boolean"){
-            if(next.bcp008 && typeof next.bcp008.enabled === "boolean"){
-                settings.bcp008 = { enabled: next.bcp008.enabled };
-                // Live-apply: tears down / re-establishes the IS-12
-                // connections without a restart.
-                try{ Bcp008Monitor.instance?.setEnabled(next.bcp008.enabled); }catch(e){}
-            }
-
                     if(next.audioMonitor){
                         next.audioMonitor.enabled = postData.audioMonitor.enabled;
                     }
@@ -1087,6 +1080,12 @@ server.addRoute("POST", "setupConfig","global", (client: WebsocketClient, query:
             if(next.eventMonitor && typeof next.eventMonitor.enabled === "boolean"){
                 settings.eventMonitor = { enabled: next.eventMonitor.enabled };
                 try{ crosspoint.setEventMonitor(next.eventMonitor.enabled); }catch(e){}
+            }
+            // BCP-008 status monitoring. Live-apply: tears down /
+            // re-establishes the IS-12 connections without a restart.
+            if(next.bcp008 && typeof next.bcp008.enabled === "boolean"){
+                settings.bcp008 = { enabled: next.bcp008.enabled };
+                try{ Bcp008Monitor.instance?.setEnabled(next.bcp008.enabled); }catch(e){}
             }
             // Strip the obsolete in-memory field too so the next settings.json
             // write doesn't carry it forward.
